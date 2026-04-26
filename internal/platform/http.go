@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"time"
 )
 
 type HTTPServer struct {
@@ -22,7 +23,26 @@ func (s *HTTPServer) Routes() http.Handler {
 	mux.HandleFunc("/v1/ingest", s.ingest)
 	mux.HandleFunc("/v1/detokenize", s.detokenize)
 	mux.HandleFunc("/v1/reveal", s.reveal)
-	return recoverMiddleware(corsMiddleware(mux))
+	return loggingMiddleware(recoverMiddleware(corsMiddleware(mux)))
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		log.Printf("http request method=%s path=%s status=%d duration_ms=%d remote=%s", r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds(), r.RemoteAddr)
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -70,9 +90,11 @@ func (s *HTTPServer) ingest(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.svc.Ingest(r.Context(), req)
 	if err != nil {
+		log.Printf("usage ingest tenant=%q doc=%q bytes=%d error=%q", req.TenantID, req.DocID, len(req.Content), err)
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	log.Printf("usage ingest tenant=%q doc=%q bytes=%d entities=%d tokens=%d", req.TenantID, req.DocID, len(req.Content), resp.DetectedEntitySize, len(resp.Tokens))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -94,9 +116,11 @@ func (s *HTTPServer) detokenize(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrPolicyDenied) {
 			status = http.StatusForbidden
 		}
+		log.Printf("usage detokenize tenant=%q doc=%q actor=%q purpose=%q tokens=%d status=%d error=%q", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Tokens), status, err)
 		writeErr(w, status, err)
 		return
 	}
+	log.Printf("usage detokenize tenant=%q doc=%q actor=%q purpose=%q requested_tokens=%d resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Tokens), len(resp.Resolved))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -118,9 +142,11 @@ func (s *HTTPServer) reveal(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrPolicyDenied) {
 			status = http.StatusForbidden
 		}
+		log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d status=%d error=%q", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), status, err)
 		writeErr(w, status, err)
 		return
 	}
+	log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), len(resp.Resolved))
 	writeJSON(w, http.StatusOK, resp)
 }
 
