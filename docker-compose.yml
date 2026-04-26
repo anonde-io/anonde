@@ -1,0 +1,92 @@
+name: anonde-local-platform
+
+services:
+  platform-prose:
+    build:
+      context: .
+      dockerfile: Dockerfile.platform
+    image: anonde/platform:local
+    ports:
+      - "${PLATFORM_PROSE_PORT:-8082}:8080"
+    environment:
+      PLATFORM_ADDR: ":8080"
+      ANALYZER_BACKEND: "prose"
+      PRESIDIO_ENDPOINT: "${PRESIDIO_ENDPOINT:-http://presidio-analyzer:3000}"
+    networks:
+      - local_data_plane
+    restart: unless-stopped
+
+  platform-presidio:
+    build:
+      context: .
+      dockerfile: Dockerfile.platform
+    image: anonde/platform:local
+    profiles:
+      - presidio
+    depends_on:
+      - presidio-analyzer
+    ports:
+      - "${PLATFORM_PRESIDIO_PORT:-8081}:8080"
+    environment:
+      PLATFORM_ADDR: ":8080"
+      ANALYZER_BACKEND: "presidio"
+      PRESIDIO_ENDPOINT: "${PRESIDIO_ENDPOINT:-http://presidio-analyzer:3000}"
+    networks:
+      - local_data_plane
+    restart: unless-stopped
+
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    profiles:
+      - presidio
+    ports:
+      - "3000:3000"
+    networks:
+      - local_data_plane
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - local_data_plane
+    restart: unless-stopped
+
+  # Optional production-oriented primitives for moving beyond in-memory stubs.
+  vault-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vault
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD: vault_local_only
+    volumes:
+      - vault_db_data:/var/lib/postgresql/data
+    networks:
+      - local_data_plane
+    restart: unless-stopped
+
+  policy:
+    image: openpolicyagent/opa:latest-static
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+    ports:
+      - "8181:8181"
+    networks:
+      - local_data_plane
+    restart: unless-stopped
+
+networks:
+  local_data_plane:
+    driver: bridge
+
+volumes:
+  ollama_data:
+  vault_db_data:
+
