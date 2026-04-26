@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	addr := getenvDefault("PLATFORM_ADDR", ":8080")
+	addr := platformAddr()
 	analyzerEngine := analyzerFromEnv()
 
 	svc := platform.NewService(
@@ -34,6 +34,16 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func platformAddr() string {
+	if addr := strings.TrimSpace(os.ExpandEnv(os.Getenv("PLATFORM_ADDR"))); addr != "" {
+		return addr
+	}
+	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
+		return ":" + port
+	}
+	return ":8080"
 }
 
 func analyzerFromEnv() *analyzer.AnalyzerEngine {
