@@ -69,6 +69,9 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	if format == "" {
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
+	if format == contentFormatAuto {
+		format = resolveAutoContentFormat(req.Content)
+	}
 
 	analyzableContent, err := extractAnalyzableText(req.Content, format)
 	if err != nil {
@@ -271,6 +274,9 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 	requestedFormat := normalizeContentFormat(req.ContentFormat)
 	if requestedFormat == "" {
 		requestedFormat = record.ContentFormat
+	}
+	if requestedFormat == contentFormatAuto {
+		requestedFormat = resolveAutoContentFormat(req.Content)
 	}
 	if requestedFormat == "" {
 		requestedFormat = contentFormatText
