@@ -90,11 +90,11 @@ func (s *HTTPServer) ingest(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.svc.Ingest(r.Context(), req)
 	if err != nil {
-		log.Printf("usage ingest tenant=%q doc=%q bytes=%d error=%q", req.TenantID, req.DocID, len(req.Content), err)
+		log.Printf("usage ingest tenant=%q doc=%q bytes=%d msg=%q error=%q", req.TenantID, req.DocID, len(req.Content), req.Content, err)
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	log.Printf("usage ingest tenant=%q doc=%q bytes=%d entities=%d tokens=%d", req.TenantID, req.DocID, len(req.Content), resp.DetectedEntitySize, len(resp.Tokens))
+	log.Printf("usage ingest tenant=%q doc=%q bytes=%d msg=%q entities=%d tokens=%d", req.TenantID, req.DocID, len(req.Content), req.Content, resp.DetectedEntitySize, len(resp.Tokens))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -142,11 +142,11 @@ func (s *HTTPServer) reveal(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrPolicyDenied) {
 			status = http.StatusForbidden
 		}
-		log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d status=%d error=%q", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), status, err)
+		log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d msg=%q status=%d error=%q", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), req.Content, status, err)
 		writeErr(w, status, err)
 		return
 	}
-	log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), len(resp.Resolved))
+	log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d msg=%q resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), req.Content, len(resp.Resolved))
 	writeJSON(w, http.StatusOK, resp)
 }
 
