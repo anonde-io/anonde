@@ -15,6 +15,7 @@ const (
 	contentFormatText = "text"
 	contentFormatJSON = "json"
 	contentFormatPDF  = "pdf"
+	contentFormatAuto = "auto"
 )
 
 func normalizeContentFormat(v string) string {
@@ -25,9 +26,19 @@ func normalizeContentFormat(v string) string {
 		return contentFormatJSON
 	case contentFormatPDF:
 		return contentFormatPDF
+	case contentFormatAuto:
+		return contentFormatAuto
 	default:
 		return ""
 	}
+}
+
+func resolveAutoContentFormat(content string) string {
+	var doc any
+	if err := json.Unmarshal([]byte(content), &doc); err == nil {
+		return contentFormatJSON
+	}
+	return contentFormatText
 }
 
 func extractAnalyzableText(content, format string) (string, error) {

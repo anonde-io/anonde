@@ -149,3 +149,105 @@ func TestIngestReveal_JSONFixtureRoundTrip(t *testing.T) {
 		t.Fatalf("expected reveal output to match original json")
 	}
 }
+
+func TestIngest_AutoDetectsJSON(t *testing.T) {
+	svc := NewService(
+		anonde.DefaultAnalyzerEngine(),
+		anonde.DefaultAnonymizerEngine(),
+		NewMemoryVault(),
+		NewMemoryStore(),
+		allowAllPolicy{},
+	)
+
+	in := `{"email":"john@example.com","note":"SSN 123-45-6789"}`
+	out, err := svc.Ingest(context.Background(), IngestRequest{
+		TenantID:      "acme",
+		DocID:         "doc-auto-json",
+		ContentFormat: "auto",
+		Content:       in,
+	})
+	if err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out.AnonymizedContent), "{") {
+		t.Fatalf("expected json-shaped anonymized content, got %q", out.AnonymizedContent)
+	}
+	if strings.Contains(out.AnonymizedContent, "john@example.com") {
+		t.Fatalf("expected email to be anonymized")
+	}
+}
+
+func TestIngest_AutoDetectsText(t *testing.T) {
+	svc := NewService(
+		anonde.DefaultAnalyzerEngine(),
+		anonde.DefaultAnonymizerEngine(),
+		NewMemoryVault(),
+		NewMemoryStore(),
+		allowAllPolicy{},
+	)
+
+	in := "Contact john@example.com"
+	out, err := svc.Ingest(context.Background(), IngestRequest{
+		TenantID:      "acme",
+		DocID:         "doc-auto-text",
+		ContentFormat: "auto",
+		Content:       in,
+	})
+	if err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(out.AnonymizedContent), "{") {
+		t.Fatalf("expected text anonymized content, got %q", out.AnonymizedContent)
+	}
+	if strings.Contains(out.AnonymizedContent, "john@example.com") {
+		t.Fatalf("expected email to be anonymized")
+	}
+}
+
+func TestIngestReveal_AutoWithMixedTextAndJSONSnippet(t *testing.T) {
+	svc := NewService(
+		anonde.DefaultAnalyzerEngine(),
+		anonde.DefaultAnonymizerEngine(),
+		NewMemoryVault(),
+		NewMemoryStore(),
+		allowAllPolicy{},
+	)
+
+	// Mixed payload in one message: free text plus an embedded JSON-looking snippet.
+	// This is not valid top-level JSON, so auto mode should treat it as text.
+	input := `Please review this payload {"email":"john@example.com","phone":"+1-800-555-0199"} and contact John Doe.`
+
+	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
+		TenantID:      "acme",
+		DocID:         "doc-auto-mixed",
+		ContentFormat: "auto",
+		Content:       input,
+	})
+	if err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	if len(ingestResp.Tokens) == 0 {
+		t.Fatalf("expected tokens for mixed payload")
+	}
+	if strings.Contains(ingestResp.AnonymizedContent, "john@example.com") {
+		t.Fatalf("expected email to be anonymized")
+	}
+	if strings.Contains(ingestResp.AnonymizedContent, "John Doe") {
+		t.Fatalf("expected person name to be anonymized")
+	}
+
+	revealResp, err := svc.Reveal(context.Background(), RevealRequest{
+		TenantID:      "acme",
+		DocID:         "doc-auto-mixed",
+		Actor:         "tester",
+		Purpose:       "roundtrip-check",
+		ContentFormat: "auto",
+		Content:       ingestResp.AnonymizedContent,
+	})
+	if err != nil {
+		t.Fatalf("reveal failed: %v", err)
+	}
+	if revealResp.DeanonymizedContent != input {
+		t.Fatalf("expected roundtrip content match")
+	}
+}
