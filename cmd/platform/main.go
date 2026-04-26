@@ -15,12 +15,14 @@ import (
 func main() {
 	addr := platformAddr()
 	analyzerEngine := analyzerFromEnv()
+	vaultTTL := durationFromEnv("MEMORY_VAULT_TTL", 5*time.Minute)
+	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
 
 	svc := platform.NewService(
 		analyzerEngine,
 		anonde.DefaultAnonymizerEngine(),
-		platform.NewMemoryVault(),
-		platform.NewMemoryStore(),
+		platform.NewMemoryVaultWithTTL(vaultTTL),
+		platform.NewMemoryStoreWithTTL(storeTTL),
 		&platform.StaticPolicy{},
 	)
 
@@ -64,6 +66,18 @@ func analyzerFromEnv() *analyzer.AnalyzerEngine {
 
 	log.Printf("analyzer backend: prose")
 	return anonde.DefaultAnalyzerEngine()
+}
+
+func durationFromEnv(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		log.Fatalf("invalid duration for %s=%q: %v", key, raw, err)
+	}
+	return parsed
 }
 
 func getenvDefault(key, fallback string) string {
