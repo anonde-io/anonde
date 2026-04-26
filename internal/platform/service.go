@@ -65,65 +65,109 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	if req.TenantID == "" || req.DocID == "" || req.Content == "" {
 		return nil, fmt.Errorf("tenant_id, doc_id and content are required")
 	}
-
-	findings, err := s.analyzer.Analyze(ctx, req.Content, analyzer.AnalysisConfig{
-		Language:        "en",
-		ScoreThreshold:  0.3,
-		RemoveConflicts: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("analyze content: %w", err)
+	format := normalizeContentFormat(req.ContentFormat)
+	if format == "" {
+		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
 
-	cfg := anonymizer.AnonymizerConfig{}
-	entityOperators := map[string]*tokenOperator{}
-	tokens := make([]TokenRef, 0, len(findings))
-	for _, finding := range findings {
-		if finding.Start < 0 || finding.End < 0 || finding.Start > finding.End || finding.End > len(req.Content) {
-			return nil, fmt.Errorf(
-				"invalid finding span start=%d end=%d text_bytes=%d entity=%q",
-				finding.Start, finding.End, len(req.Content), finding.EntityType,
-			)
-		}
-		original := req.Content[finding.Start:finding.End]
-		entityOp := entityOperators[finding.EntityType]
-		if entityOp == nil {
-			entityOp = &tokenOperator{byCleartext: map[string]string{}}
-			entityOperators[finding.EntityType] = entityOp
-			cfg[finding.EntityType] = entityOp
-		}
+	analyzableContent, err := extractAnalyzableText(req.Content, format)
+	if err != nil {
+		return nil, err
+	}
+	tokens := make([]TokenRef, 0, 16)
+	findings := make([]analyzer.RecognizerResult, 0, 16)
+	nextTokenIdx := 0
 
-		cleartext := original
-		token, ok := entityOp.byCleartext[cleartext]
-		if !ok {
-			token = buildToken(req.TenantID, finding.EntityType, len(tokens))
-			entityOp.byCleartext[cleartext] = token
+	anonymizeText := func(input string) (string, []analyzer.RecognizerResult, error) {
+		if strings.TrimSpace(input) == "" {
+			return input, nil, nil
 		}
-		tokens = append(tokens, TokenRef{
-			Token:      token,
-			EntityType: finding.EntityType,
-			Start:      finding.Start,
-			End:        finding.End,
+		localFindings, err := s.analyzer.Analyze(ctx, input, analyzer.AnalysisConfig{
+			Language:        "en",
+			ScoreThreshold:  0.3,
+			RemoveConflicts: true,
 		})
-
-		if err := s.vault.Put(ctx, req.TenantID, VaultEntry{
-			Token:      token,
-			EntityType: finding.EntityType,
-			Cleartext:  cleartext,
-		}); err != nil {
-			return nil, fmt.Errorf("store vault mapping: %w", err)
+		if err != nil {
+			return "", nil, fmt.Errorf("analyze content: %w", err)
 		}
+		if len(localFindings) == 0 {
+			return input, localFindings, nil
+		}
+
+		cfg := anonymizer.AnonymizerConfig{}
+		entityOperators := map[string]*tokenOperator{}
+		for _, finding := range localFindings {
+			if finding.Start < 0 || finding.End < 0 || finding.Start > finding.End || finding.End > len(input) {
+				return "", nil, fmt.Errorf(
+					"invalid finding span start=%d end=%d text_bytes=%d entity=%q",
+					finding.Start, finding.End, len(input), finding.EntityType,
+				)
+			}
+			cleartext := input[finding.Start:finding.End]
+			entityOp := entityOperators[finding.EntityType]
+			if entityOp == nil {
+				entityOp = &tokenOperator{byCleartext: map[string]string{}}
+				entityOperators[finding.EntityType] = entityOp
+				cfg[finding.EntityType] = entityOp
+			}
+			token, ok := entityOp.byCleartext[cleartext]
+			if !ok {
+				token = buildToken(req.TenantID, finding.EntityType, nextTokenIdx)
+				nextTokenIdx++
+				entityOp.byCleartext[cleartext] = token
+			}
+			tokens = append(tokens, TokenRef{
+				Token:      token,
+				EntityType: finding.EntityType,
+				Start:      finding.Start,
+				End:        finding.End,
+			})
+			if err := s.vault.Put(ctx, req.TenantID, VaultEntry{
+				Token:      token,
+				EntityType: finding.EntityType,
+				Cleartext:  cleartext,
+			}); err != nil {
+				return "", nil, fmt.Errorf("store vault mapping: %w", err)
+			}
+		}
+		result, err := s.anonymize.Anonymize(input, localFindings, cfg)
+		if err != nil {
+			return "", nil, fmt.Errorf("anonymize content: %w", err)
+		}
+		return result.Text, localFindings, nil
 	}
 
-	result, err := s.anonymize.Anonymize(req.Content, findings, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("anonymize content: %w", err)
+	anonymizedContent := analyzableContent
+	switch format {
+	case contentFormatText, contentFormatPDF:
+		out, localFindings, err := anonymizeText(analyzableContent)
+		if err != nil {
+			return nil, err
+		}
+		anonymizedContent = out
+		findings = append(findings, localFindings...)
+	case contentFormatJSON:
+		out, err := transformJSONStringLeaves(analyzableContent, func(value string) (string, error) {
+			updated, localFindings, err := anonymizeText(value)
+			if err != nil {
+				return "", err
+			}
+			findings = append(findings, localFindings...)
+			return updated, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		anonymizedContent = out
+	default:
+		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
 
 	record := StoreRecord{
 		TenantID:          req.TenantID,
 		DocID:             req.DocID,
-		AnonymizedContent: result.Text,
+		ContentFormat:     format,
+		AnonymizedContent: anonymizedContent,
 		Tokens:            tokens,
 	}
 	if err := s.store.Put(ctx, record); err != nil {
@@ -133,7 +177,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	return &IngestResponse{
 		TenantID:           req.TenantID,
 		DocID:              req.DocID,
-		AnonymizedContent:  result.Text,
+		AnonymizedContent:  anonymizedContent,
 		DetectedEntitySize: len(findings),
 		Findings:           findings,
 		Tokens:             tokens,
@@ -224,13 +268,40 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		return nil, err
 	}
 
-	out := req.Content
-	for _, token := range orderedTokens {
-		value, ok := detok.Resolved[token]
-		if !ok {
-			continue
+	requestedFormat := normalizeContentFormat(req.ContentFormat)
+	if requestedFormat == "" {
+		requestedFormat = record.ContentFormat
+	}
+	if requestedFormat == "" {
+		requestedFormat = contentFormatText
+	}
+
+	replaceTokens := func(v string) string {
+		out := v
+		for _, token := range orderedTokens {
+			value, ok := detok.Resolved[token]
+			if !ok {
+				continue
+			}
+			out = strings.ReplaceAll(out, token, value)
 		}
-		out = strings.ReplaceAll(out, token, value)
+		return out
+	}
+
+	out := req.Content
+	switch requestedFormat {
+	case contentFormatText, contentFormatPDF:
+		out = replaceTokens(req.Content)
+	case contentFormatJSON:
+		jsonOutput, err := transformJSONStringLeaves(req.Content, func(v string) (string, error) {
+			return replaceTokens(v), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = jsonOutput
+	default:
+		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
 
 	return &RevealResponse{

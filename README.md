@@ -323,6 +323,7 @@ curl -sS http://localhost:8080/v1/ingest \
   -d '{
     "tenant_id":"acme",
     "doc_id":"doc-1",
+    "content_format":"text",
     "content":"John Doe SSN 123-45-6789 and email john@example.com"
   }'
 ```
@@ -354,11 +355,18 @@ curl -sS http://localhost:8080/v1/reveal \
     "doc_id":"doc-1",
     "actor":"local-tester",
     "purpose":"manual verification",
+    "content_format":"text",
     "content":"Hi I am <PERSON_ACME_000001> SSN <US_SSN_ACME_000002> and email <EMAIL_ADDRESS_ACME_000003>"
   }'
 ```
 
 The response includes `deanonymized_content` with tokens replaced inline, plus the `resolved` token map.
+
+`content_format` options:
+
+- `text` (default) - treats `content` as plain text
+- `json` - anonymizes/de-anonymizes string values recursively in a JSON document
+- `pdf` - expects base64 encoded PDF bytes in `content`; text is extracted from the PDF and anonymized/de-anonymized as plain text output
 
 Enable Ollama only when needed:
 

@@ -2,7 +2,14 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/moogacs/anonde"
 )
 
 type allowAllPolicy struct{}
@@ -46,5 +53,99 @@ func TestReveal_NoTokensReturnsInputContent(t *testing.T) {
 	}
 	if len(out.Resolved) != 0 {
 		t.Fatalf("expected no resolved tokens, got %d", len(out.Resolved))
+	}
+}
+
+func TestIngestReveal_JSONContent(t *testing.T) {
+	svc := NewService(
+		anonde.DefaultAnalyzerEngine(),
+		anonde.DefaultAnonymizerEngine(),
+		NewMemoryVault(),
+		NewMemoryStore(),
+		allowAllPolicy{},
+	)
+
+	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
+		TenantID:      "tenant-json",
+		DocID:         "doc-json-1",
+		ContentFormat: "json",
+		Content:       `{"user":"John Doe","email":"john@example.com","nested":{"note":"call +1-800-555-0199"}}`,
+	})
+	if err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	if !strings.Contains(ingestResp.AnonymizedContent, "<EMAIL_ADDRESS_") {
+		t.Fatalf("expected anonymized email token, got %q", ingestResp.AnonymizedContent)
+	}
+
+	revealResp, err := svc.Reveal(context.Background(), RevealRequest{
+		TenantID:      "tenant-json",
+		DocID:         "doc-json-1",
+		Actor:         "tester",
+		Purpose:       "verification",
+		ContentFormat: "json",
+		Content:       ingestResp.AnonymizedContent,
+	})
+	if err != nil {
+		t.Fatalf("reveal failed: %v", err)
+	}
+	if !strings.Contains(revealResp.DeanonymizedContent, "john@example.com") {
+		t.Fatalf("expected deanonymized email, got %q", revealResp.DeanonymizedContent)
+	}
+}
+
+func TestIngestReveal_JSONFixtureRoundTrip(t *testing.T) {
+	svc := NewService(
+		anonde.DefaultAnalyzerEngine(),
+		anonde.DefaultAnonymizerEngine(),
+		NewMemoryVault(),
+		NewMemoryStore(),
+		allowAllPolicy{},
+	)
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "testdata", "pii-sample.json"))
+	if err != nil {
+		t.Fatalf("read json fixture: %v", err)
+	}
+	original := string(raw)
+
+	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
+		TenantID:      "acme",
+		DocID:         "doc-json-fixture-1",
+		ContentFormat: "json",
+		Content:       original,
+	})
+	if err != nil {
+		t.Fatalf("ingest failed: %v", err)
+	}
+	if len(ingestResp.Tokens) == 0 {
+		t.Fatalf("expected at least one token from fixture")
+	}
+	if strings.Contains(ingestResp.AnonymizedContent, "john.doe@example.com") {
+		t.Fatalf("expected email to be anonymized, got %q", ingestResp.AnonymizedContent)
+	}
+
+	revealResp, err := svc.Reveal(context.Background(), RevealRequest{
+		TenantID:      "acme",
+		DocID:         "doc-json-fixture-1",
+		Actor:         "tester",
+		Purpose:       "roundtrip-check",
+		ContentFormat: "json",
+		Content:       ingestResp.AnonymizedContent,
+	})
+	if err != nil {
+		t.Fatalf("reveal failed: %v", err)
+	}
+
+	var originalJSON any
+	if err := json.Unmarshal([]byte(original), &originalJSON); err != nil {
+		t.Fatalf("parse original fixture json: %v", err)
+	}
+	var revealedJSON any
+	if err := json.Unmarshal([]byte(revealResp.DeanonymizedContent), &revealedJSON); err != nil {
+		t.Fatalf("parse revealed json: %v", err)
+	}
+	if !reflect.DeepEqual(originalJSON, revealedJSON) {
+		t.Fatalf("expected reveal output to match original json")
 	}
 }
