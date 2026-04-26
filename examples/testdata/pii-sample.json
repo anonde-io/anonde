@@ -1,0 +1,35 @@
+{
+  "tenant": "acme",
+  "document_id": "doc-json-001",
+  "customer": {
+    "name": "John Doe",
+    "email": "john.doe@example.com",
+    "phone": "+1-800-555-0199",
+    "ssn": "123-45-6789",
+    "passport": "123456789"
+  },
+  "billing": {
+    "card_number": "4111111111111111",
+    "iban": "GB82WEST12345698765432",
+    "wallet": "0xde709f2102306220921060314715629080e2fb77"
+  },
+  "metadata": {
+    "ip": "203.0.113.10",
+    "mac": "00:1A:2B:3C:4D:5E",
+    "url": "https://example.com/account?user=john.doe@example.com",
+    "notes": "Call John Doe tomorrow at +1-800-555-0199."
+  },
+  "events": [
+    {
+      "type": "signup",
+      "actor": "John Doe",
+      "location": "New York",
+      "message": "User john.doe@example.com created account at 2026-04-20 10:30:00."
+    },
+    {
+      "type": "payment",
+      "actor": "Jane Smith",
+      "message": "Paid with card 5555555555554444 from IP 198.51.100.25."
+    }
+  ]
+}

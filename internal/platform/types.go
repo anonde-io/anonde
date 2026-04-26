@@ -3,9 +3,10 @@ package platform
 import "github.com/moogacs/anonde/analyzer"
 
 type IngestRequest struct {
-	TenantID string `json:"tenant_id"`
-	DocID    string `json:"doc_id"`
-	Content  string `json:"content"`
+	TenantID      string `json:"tenant_id"`
+	DocID         string `json:"doc_id"`
+	Content       string `json:"content"`
+	ContentFormat string `json:"content_format,omitempty"`
 }
 
 type IngestResponse struct {
@@ -27,6 +28,7 @@ type TokenRef struct {
 type StoreRecord struct {
 	TenantID          string     `json:"tenant_id"`
 	DocID             string     `json:"doc_id"`
+	ContentFormat     string     `json:"content_format,omitempty"`
 	AnonymizedContent string     `json:"anonymized_content"`
 	Tokens            []TokenRef `json:"tokens"`
 }
@@ -46,11 +48,12 @@ type DetokenizeResponse struct {
 }
 
 type RevealRequest struct {
-	TenantID string `json:"tenant_id"`
-	DocID    string `json:"doc_id"`
-	Actor    string `json:"actor"`
-	Purpose  string `json:"purpose"`
-	Content  string `json:"content"`
+	TenantID      string `json:"tenant_id"`
+	DocID         string `json:"doc_id"`
+	Actor         string `json:"actor"`
+	Purpose       string `json:"purpose"`
+	Content       string `json:"content"`
+	ContentFormat string `json:"content_format,omitempty"`
 }
 
 type RevealResponse struct {
