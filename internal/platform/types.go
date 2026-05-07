@@ -7,6 +7,12 @@ type IngestRequest struct {
 	DocID         string `json:"doc_id"`
 	Content       string `json:"content"`
 	ContentFormat string `json:"content_format,omitempty"`
+
+	// Optional analyzer overrides. Empty/zero means use service defaults.
+	Language       string   `json:"language,omitempty"`
+	Entities       []string `json:"entities,omitempty"`
+	ScoreThreshold float64  `json:"score_threshold,omitempty"`
+	DisableNER     bool     `json:"disable_ner,omitempty"`
 }
 
 type IngestResponse struct {

@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"unicode"
@@ -20,6 +21,23 @@ type AnalysisConfig struct {
 	// DisableNER skips NER-based recognizers (PERSON, LOCATION, ORGANIZATION, NRP).
 	// Use when you only need pattern-based entities and want maximum throughput.
 	DisableNER bool
+
+	// AllowList drops findings whose matched substring (case-insensitive,
+	// trimmed) equals any value here. Use to suppress known false positives
+	// like fixture emails.
+	AllowList []string
+	// DenyList forces findings for the given strings even if no recognizer
+	// fired. Matches are emitted with EntityType="DENY_LIST" and score 1.0.
+	// Use sparingly — for code-names / brand strings that must always be
+	// redacted regardless of recognizer coverage.
+	DenyList []string
+
+	// ContextEnhancement overrides defaults for the context-keyword score
+	// boost. Zero values fall back to DefaultContextEnhancement().
+	ContextEnhancement ContextEnhancement
+
+	// DisableContextEnhancement turns off the context boost entirely.
+	DisableContextEnhancement bool
 }
 
 // AnalyzerEngine detects PII entities in text.
@@ -57,8 +75,12 @@ func isNERBasedRecognizer(rec EntityRecognizer) bool {
 
 // usesCapitalisedTextHeuristic returns true for recognizers that rely heavily on
 // case cues and can be safely skipped when no interior capitalized words exist.
+//
+// "NERRecognizer" historically named both the (now-removed) prose recognizer
+// and the Ollama recognizer; Ollama still reports that name and benefits from
+// the heuristic.
 func usesCapitalisedTextHeuristic(rec EntityRecognizer) bool {
-	return rec.Name() == "NERRecognizer"
+	return rec.Name() == "NERRecognizer" || rec.Name() == "HugotNERRecognizer"
 }
 
 // NewAnalyzerEngine returns an engine backed by the given registry.
@@ -67,6 +89,17 @@ func NewAnalyzerEngine(registry *RecognizerRegistry) *AnalyzerEngine {
 }
 
 // Analyze runs all applicable recognizers against text and returns deduplicated results.
+//
+// Pipeline order (matching Presidio's AnalyzerEngine):
+//  1. Filter recognizers by language and (optional) requested entity set.
+//  2. Skip NER recognizers when DisableNER is set or no capitalised words exist.
+//  3. Dispatch surviving recognizers concurrently.
+//  4. Merge results.
+//  5. Apply context-keyword score boost (so a weak pattern hit can clear a
+//     score threshold when "phone:" / "ssn:" / etc. appears nearby).
+//  6. Apply DenyList (forced findings) and AllowList (drop false positives).
+//  7. Filter below ScoreThreshold.
+//  8. Resolve span conflicts (keep highest score, then longest).
 func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisConfig) ([]RecognizerResult, error) {
 	if cfg.Language == "" {
 		cfg.Language = "en"
@@ -76,8 +109,6 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 
 	hasCaps := hasCapitalisedWords(text)
 
-	// Drop NER-based recognizers when disabled.
-	// Also apply the capitalised-word heuristic only to recognizers that opt in.
 	if cfg.DisableNER || !hasCaps {
 		filtered := candidates[:0:0]
 		for _, rec := range candidates {
@@ -120,6 +151,14 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		wg.Add(1)
 		go func(r EntityRecognizer) {
 			defer wg.Done()
+			// Defensive recovery — a misbehaving recognizer (notably
+			// upstream model bindings) must not bring down the whole batch.
+			// We surface the panic to the caller as a normal error.
+			defer func() {
+				if rec := recover(); rec != nil {
+					ch <- partial{nil, fmt.Errorf("recognizer %s panicked: %v", r.Name(), rec)}
+				}
+			}()
 			res, err := r.Analyze(ctx, text, cfg.Entities, cfg.Language)
 			ch <- partial{res, err}
 		}(rec)
@@ -127,22 +166,119 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	wg.Wait()
 	close(ch)
 
-	var all []RecognizerResult
+	// Per-recognizer failures must not destroy partial results: a flaky NER
+	// backend should not erase findings produced by the pattern recognizers
+	// that ran successfully alongside it. Errors are aggregated and surfaced
+	// only if EVERY recognizer failed.
+	var (
+		all      []RecognizerResult
+		errs     []error
+		okCount  int
+	)
 	for p := range ch {
 		if p.err != nil {
-			return nil, p.err
+			errs = append(errs, p.err)
+			continue
 		}
-		for _, r := range p.results {
-			if r.Score >= cfg.ScoreThreshold {
-				all = append(all, r)
-			}
-		}
+		okCount++
+		all = append(all, p.results...)
+	}
+	if okCount == 0 && len(errs) > 0 {
+		return nil, fmt.Errorf("all recognizers failed: %v", errs[0])
 	}
 
+	// 5. Context-keyword score enhancement.
+	if !cfg.DisableContextEnhancement && len(all) > 0 {
+		ctxCfg := cfg.ContextEnhancement
+		if ctxCfg.WindowChars == 0 && ctxCfg.Boost == 0 {
+			ctxCfg = DefaultContextEnhancement()
+		}
+		keywords := CollectContextKeywords(candidates)
+		all = EnhanceWithContext(text, all, keywords, ctxCfg)
+	}
+
+	// 6. DenyList (forced redaction) and AllowList (drop false positives).
+	if len(cfg.DenyList) > 0 {
+		all = append(all, scanDenyList(text, cfg.DenyList)...)
+	}
+	if len(cfg.AllowList) > 0 {
+		all = applyAllowList(text, all, cfg.AllowList)
+	}
+
+	// 7. ScoreThreshold filter.
+	if cfg.ScoreThreshold > 0 {
+		filtered := all[:0]
+		for _, r := range all {
+			if r.Score >= cfg.ScoreThreshold {
+				filtered = append(filtered, r)
+			}
+		}
+		all = filtered
+	}
+
+	// 8. Conflict resolution.
 	if cfg.RemoveConflicts {
 		all = RemoveConflicts(all)
 	} else {
 		SortResults(all)
 	}
 	return all, nil
+}
+
+// scanDenyList returns RecognizerResult for every case-insensitive occurrence
+// of any denylisted string in text. Each finding lands at score 1.0 and is
+// tagged DENY_LIST so callers can route it to a default operator.
+func scanDenyList(text string, deny []string) []RecognizerResult {
+	if text == "" {
+		return nil
+	}
+	lower := strings.ToLower(text)
+	var out []RecognizerResult
+	for _, raw := range deny {
+		needle := strings.ToLower(strings.TrimSpace(raw))
+		if needle == "" {
+			continue
+		}
+		idx := 0
+		for idx < len(lower) {
+			i := strings.Index(lower[idx:], needle)
+			if i < 0 {
+				break
+			}
+			pos := idx + i
+			out = append(out, RecognizerResult{
+				Start:          pos,
+				End:            pos + len(needle),
+				Score:          1.0,
+				EntityType:     "DENY_LIST",
+				RecognizerName: "DenyListScanner",
+			})
+			idx = pos + len(needle)
+		}
+	}
+	return out
+}
+
+// applyAllowList drops findings whose matched substring (trimmed,
+// case-insensitive) equals any allowlisted value.
+func applyAllowList(text string, results []RecognizerResult, allow []string) []RecognizerResult {
+	if len(results) == 0 {
+		return results
+	}
+	allowed := make(map[string]struct{}, len(allow))
+	for _, a := range allow {
+		allowed[strings.ToLower(strings.TrimSpace(a))] = struct{}{}
+	}
+	out := results[:0]
+	for _, r := range results {
+		if r.Start < 0 || r.End > len(text) || r.Start > r.End {
+			continue
+		}
+		match := strings.ToLower(strings.TrimSpace(text[r.Start:r.End]))
+		if _, skip := allowed[match]; skip {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }

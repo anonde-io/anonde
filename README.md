@@ -7,12 +7,12 @@ Detect and anonymize personally identifiable information (PII) in text with patt
 ## Features
 
 - **15 pattern recognizers** — email, phone, credit card, SSN, passport, IBAN, IP, MAC, URL, crypto wallets, dates, and more
-- **Three NER backends** — prose (local, zero deps), Ollama (local inference), and Python Presidio (remote sidecar)
+- **Two NER backends** — Hugot/ONNX (default, in-process transformer) and Ollama (local LLM inference). Plus a patterns-only mode when no NER is wanted.
 - **5 anonymization operators** — replace, redact, mask, hash, encrypt (AES-GCM)
 - **Parallel dispatch** — all recognizers run concurrently via goroutines
 - **Conflict resolution** — overlapping spans are resolved by score then length
 - **`DisableNER` flag** — pattern-only mode for maximum throughput (200–400× faster)
-- **Capitalised-word pre-filter** — applied to local prose/Ollama NER for speed; remote Presidio backend always evaluates text
+- **Capitalised-word pre-filter** — applied to Hugot/Ollama NER to skip lowercase-only text without losing recall
 
 ## Installation
 
@@ -84,10 +84,9 @@ anonde
 │   ├── RecognizerRegistry      # thread-safe recognizer store
 │   ├── AnalysisConfig          # per-call settings
 │   └── recognizers/
-│       ├── Pattern recognizers (15) — regex + validation
-│       ├── NERRecognizer       # prose-based, zero deps
-│       ├── OllamaNERRecognizer # local Ollama inference
-│       └── PresidioRemoteNERRecognizer # Python Presidio sidecar
+│       ├── Pattern recognizers (40+) — regex + validation + checksums
+│       ├── HugotNERRecognizer  # in-process ONNX transformer (default)
+│       └── OllamaNERRecognizer # local Ollama inference (opt-in)
 └── anonymizer/
     ├── AnonymizerEngine        # applies operators to detected spans
     ├── AnonymizerConfig        # entity → operator map (supports "*" wildcard)
@@ -127,17 +126,49 @@ The `AnalyzerEngine.Analyze` call:
 
 Named entity recognition detects `PERSON`, `LOCATION`, `ORGANIZATION`, and `NRP` (nationalities/religions/political groups).
 
-### prose (default — zero dependencies)
+### Hugot / ONNX (default — recommended)
 
-Uses the [prose](https://github.com/jdkato/prose) NLP library. No API keys, no model downloads, works offline.
+Runs a pre-trained transformer NER model in-process via ONNX Runtime. No Python sidecar, no external service. The model is downloaded automatically on first run into `~/.cache/anonde/models` (~270 MB for the default `Isotonic/distilbert_finetuned_ai4privacy_v2`).
 
 ```go
-engine := anonde.DefaultAnalyzerEngine()
+// auto-downloads the default model on first call
+engine := anonde.DefaultAnalyzerEngineWithHugot("", "", true)
+
+// custom models dir + model id
+engine := anonde.DefaultAnalyzerEngineWithHugot(
+    "/var/lib/anonde/models",
+    "Isotonic/distilbert_finetuned_ai4privacy_v2",
+    true,
+)
 ```
 
-### Ollama (local inference — data never leaves the machine)
+Benchmark results vs Microsoft Presidio default (`en_core_web_lg`) on a 500-doc slice of `ai4privacy/pii-masking-200k`:
 
-Calls a local [Ollama](https://ollama.com) daemon. GPU-accelerated on Apple Silicon (MPS) and NVIDIA (CUDA). No API keys, no internet required after the model is pulled.
+| Entity | anonde+Hugot F1 | Presidio F1 |
+|---|---:|---:|
+| PERSON | 0.93 | 0.44 |
+| LOCATION | 0.86 | 0.26 |
+| EMAIL_ADDRESS | 1.00 | 1.00 |
+| IP_ADDRESS | 1.00 | 1.00 |
+| US_SSN | 0.71 | 0.71 |
+| CREDIT_CARD | 0.76 | 0.06 |
+| PHONE_NUMBER | 0.72 | 0.47 |
+
+8 wins, 4 ties, 0 losses across 12 entity types. Reproduce: `bench/parity/`. Full report: `bench/parity/REPORT_FULL.md`.
+
+### Patterns-only (no NER, no model)
+
+Use this when you can't tolerate a model download and the entities you care about are all pattern-detectable (email, phone, IP, MAC, IBAN, credit card, US SSN, crypto, regional IDs). Faster than any NER backend; gives up PERSON / LOCATION / ORGANIZATION detection entirely.
+
+```go
+engine := anonde.DefaultAnalyzerEngine() // patterns only — no NER
+```
+
+Or via the platform service: `ANALYZER_BACKEND=patterns`.
+
+### Ollama (local LLM inference)
+
+Calls a local [Ollama](https://ollama.com) daemon. GPU-accelerated on Apple Silicon (MPS) and NVIDIA (CUDA). Slower per call than Hugot; useful when you already have an Ollama setup.
 
 ```go
 // defaults: endpoint="http://localhost:11434", model="phi3:mini"
@@ -147,34 +178,49 @@ engine := anonde.DefaultAnalyzerEngineWithOllama("", "")
 engine := anonde.DefaultAnalyzerEngineWithOllama("http://localhost:11434", "llama3.2:1b")
 ```
 
-**Setup Ollama:**
-```bash
-brew install ollama
-ollama serve
-ollama pull phi3:mini   # ~2.3 GB, good accuracy/speed balance
-# or
-ollama pull llama3.2:1b # ~1.3 GB, fastest
-```
-
-### Python Presidio sidecar (highest quality, remote service)
-
-Calls a Python Presidio Analyzer service over HTTP (`POST /analyze`) and maps the response into `PERSON`, `LOCATION`, `ORGANIZATION`, and `NRP`.
-
-```go
-// default endpoint: http://localhost:3000
-engine := anonde.DefaultAnalyzerEngineWithPresidioRemote("")
-
-// custom endpoint
-engine := anonde.DefaultAnalyzerEngineWithPresidioRemote("http://localhost:3000")
-```
-
 ### Comparison
 
-| Backend | Accuracy | Latency | Dependencies | Data leaves machine |
+| Backend | NER quality | Latency (median) | Dependencies | Data leaves machine |
 |---|---|---|---|---|
-| prose | Good | ~1 ms | none | No |
-| Ollama | High | ~50–200 ms | Ollama daemon | No |
-| Python Presidio (remote) | Highest | ~20–150 ms + network | Presidio service | No (if self-hosted) |
+| Hugot (default) | High (≥ Presidio default) | ~140 ms | model download on first run (~270 MB) | No |
+| Patterns-only | n/a (no NER) | ~1 ms | none | No |
+| Ollama | Depends on model | ~50–500 ms | Ollama daemon | No |
+
+> The previous `prose`-based NER backend was removed — its quality fell below the parity bar (PERSON F1 0.58 on the benchmark corpus, vs Hugot's 0.93 and the 0.7 absolute floor). If you don't want a model download, prefer patterns-only over a known-low-quality NER fallback.
+
+Microsoft Presidio is **not** a runtime backend. It is retained only as a benchmarking partner under `bench/parity/` — see that directory's `README.md` to reproduce the comparison. The `analyzer/recognizers/ner_presidio_remote.go` recognizer was removed in the Phase B detach; if you need Presidio's runtime API, run it yourself and call it from your application code.
+
+## Deployment & Model Distribution
+
+The "single binary" guarantee is about **no Python sidecar at runtime**, not about embedding all weights into the executable. The Go binary itself is ~30 MB; the default Hugot model is a separate ~270 MB asset, fetched once and cached. This is the same shape as Ollama, llama.cpp, and transformers.
+
+### Three deployment shapes
+
+| Shape | Binary | Model | When to use |
+|---|---|---|---|
+| **Default (auto-download)** | shipped, small | fetched from HuggingFace Hub on first request into `~/.cache/anonde/models` | library users (`go get`), dev, any environment with network at deploy time |
+| **Docker with named volume** | in image | fetched into the `hugot_models` named volume on first request | production self-hosting via `docker-compose.yml` |
+| **Air-gapped / pre-staged** | shipped | operator pre-populates the cache or volume before first request | no-egress production, regulated environments, reproducible builds |
+
+### Pre-staging the model (air-gapped)
+
+```go
+// In an init container or build step:
+import "github.com/knights-analytics/hugot"
+
+opts := hugot.NewDownloadOptions()
+_, _ = hugot.DownloadModel(ctx,
+    "Isotonic/distilbert_finetuned_ai4privacy_v2",
+    "/var/lib/anonde/models",
+    opts,
+)
+```
+
+Then run anonde with `AutoDownload: false` and `ModelsDir: "/var/lib/anonde/models"`. Subsequent requests use the cache without ever calling out to HuggingFace.
+
+### Should we ever `go:embed` the model?
+
+By default, no. 270 MB embedded into a Go binary makes `go build` slow, bloats container images, and couples binary version to model version (independent rotation breaks). Teams that genuinely want one fat artifact can add a build-tag-gated `//go:embed` themselves — it's a ~10-line addition. The benchmark numbers in `bench/parity/REPORT_FULL.md` are reproducible without it.
 
 ## Anonymization Operators
 
@@ -271,25 +317,26 @@ func (r *MyRecognizer) Analyze(ctx context.Context, text string, entities []stri
 
 ## Benchmarks
 
-Run benchmarks:
-```bash
-# prose NER (default)
-go test ./benchmark/ -bench=. -benchmem
+Two benchmark surfaces:
 
-# pattern-only (DisableNER: true) — maximum throughput
+```bash
+# Throughput micro-benchmarks (in-process, no model)
+go test ./benchmark/ -bench=. -benchmem
 go test ./benchmark/ -bench=BenchmarkBulkPatternOnly -benchmem
+
+# End-to-end PII parity comparison vs Microsoft Presidio
+# (5000-doc subset of ai4privacy/pii-masking-200k)
+# See bench/parity/README.md for the full reproduction recipe.
 ```
 
-Representative results on Apple M-series (prose NER backend):
+Representative micro-bench results on Apple M-series (patterns-only mode):
 
 | Benchmark | Throughput |
 |---|---|
-| Analyze short (1 entity) | ~5,000 ops/s |
-| Analyze corpus (5 mixed docs) | ~800 ops/s |
 | Pattern-only 1 MB | ~150 MB/s |
 | Pattern-only batch 1000 docs parallel | ~400 MB/s |
 
-Pattern-only mode (`DisableNER: true`) is 200–400× faster than Python Presidio for structured PII (emails, SSNs, credit cards).
+Patterns-only mode (`DisableNER: true`) skips NER entirely and is dramatically faster than any NER-enabled pipeline for structured PII (emails, SSNs, credit cards, IBAN, IP, MAC, etc.). End-to-end parity numbers vs Presidio are in `bench/parity/REPORT_FULL.md`.
 
 ## Running the Example
 
@@ -307,66 +354,46 @@ This repo now includes a local-first service scaffold for anonymize/de-anonymize
   - `POST /v1/reveal`
   - `GET /healthz`
 - `internal/platform` — service contracts for policy, vault, and store
-- `docker-compose.yml` — local deployment with `platform` (default analyzer backend: `prose`, no model downloads) and optional `presidio-analyzer`, `ollama`, `policy`, and `vault-db`
+- `docker-compose.yml` — local deployment with `platform` (default analyzer backend: `hugot`, model auto-downloaded into a named volume) and optional `ollama`, `policy`, and `vault-db`
 
-Run with Docker (no Ollama required):
+Endpoint request/response examples are documented in:
+`PLATFORM_ENDPOINTS.md`
 
-```bash
-docker compose up --build -d
-```
+A standalone guide for ingest/reveal flows is available at:
+`INGEST_REVEAL_README.md`
 
-Test ingest (anonymize):
+In-memory retention controls (to avoid unbounded growth):
 
-```bash
-curl -sS http://localhost:8080/v1/ingest \
-  -H 'content-type: application/json' \
-  -d '{
-    "tenant_id":"acme",
-    "doc_id":"doc-1",
-    "content_format":"text",
-    "content":"John Doe SSN 123-45-6789 and email john@example.com"
-  }'
-```
+- `MEMORY_VAULT_TTL` (default: `5m`) — token-to-cleartext mappings retention
+- `MEMORY_STORE_TTL` (default: `5m`) — anonymized document retention
+- Set either of the above to `0` to disable expiry for that store
 
-The response includes `anonymized_content` and `tokens`, for example:
-`<US_SSN_ACME_000001>` and `<EMAIL_ADDRESS_ACME_000002>`.
+Request-size limit:
 
-Test detokenize (de-anonymize) with returned tokens:
+- `MAX_CONTENT_BYTES` (default `10485760` = 10 MiB) — caps every ingest / reveal / detokenize request body. Oversized requests return HTTP `413`. Set to `0` to disable.
 
-```bash
-curl -sS http://localhost:8080/v1/detokenize \
-  -H 'content-type: application/json' \
-  -d '{
-    "tenant_id":"acme",
-    "doc_id":"doc-1",
-    "actor":"local-tester",
-    "purpose":"manual verification",
-    "tokens":["<US_SSN_ACME_000001>","<EMAIL_ADDRESS_ACME_000002>"]
-  }'
-```
+### Server-log ingestion
 
-Test reveal (de-anonymize in place) by passing anonymized content directly:
+For line-oriented server logs use `content_format: "logs"` (alias `log`):
 
-```bash
-curl -sS http://localhost:8080/v1/reveal \
-  -H 'content-type: application/json' \
-  -d '{
-    "tenant_id":"acme",
-    "doc_id":"doc-1",
-    "actor":"local-tester",
-    "purpose":"manual verification",
-    "content_format":"text",
-    "content":"Hi I am <PERSON_ACME_000001> SSN <US_SSN_ACME_000002> and email <EMAIL_ADDRESS_ACME_000003>"
-  }'
-```
+- Each line is processed independently; line structure is preserved.
+- ANSI escape sequences (e.g. `\x1b[31m`) are stripped before analysis.
+- Invalid UTF-8 bytes are replaced with `U+FFFD` so non-UTF-8 input never trips the recognizers.
+- Each line is auto-classified per line as JSON (recursed through string leaves) or plain text.
 
-The response includes `deanonymized_content` with tokens replaced inline, plus the `resolved` token map.
+For strictly newline-delimited JSON streams use `content_format: "ndjson"` — every non-empty line must parse as JSON or the request is rejected.
 
-`content_format` options:
+To narrow the recognizer pipeline for log volume, IngestRequest accepts:
 
-- `text` (default) - treats `content` as plain text
-- `json` - anonymizes/de-anonymizes string values recursively in a JSON document
-- `pdf` - expects base64 encoded PDF bytes in `content`; text is extracted from the PDF and anonymized/de-anonymized as plain text output
+- `entities`: allow-list of entity types (e.g. `["EMAIL_ADDRESS","IP_ADDRESS"]`)
+- `disable_ner`: skip PERSON/LOCATION/ORGANIZATION/NRP for maximum throughput
+- `score_threshold`: drop findings below the given confidence
+- `language`: recognizer language filter
+> Tokens are always minted per-document. Tenant-scoped token reuse (the same email getting the same token across many docs) was scoped out — tracked in `TODO.md`.
+
+See `PLATFORM_ENDPOINTS.md` for full request/response schemas.
+
+Default `docker compose up` brings up `platform` with the Hugot backend. The model is downloaded into the `hugot_models` named volume on first request.
 
 Enable Ollama only when needed:
 
@@ -376,13 +403,9 @@ docker compose --profile ollama up --build -d
 
 Then set `ANALYZER_BACKEND=ollama` for `platform` (and optionally `OLLAMA_ENDPOINT` / `OLLAMA_MODEL`).
 
-Enable Python Presidio only when needed:
+### Benchmarking against Microsoft Presidio
 
-```bash
-docker compose --profile presidio up --build -d
-```
-
-Then set `ANALYZER_BACKEND=presidio` for `platform` (and optionally `PRESIDIO_ENDPOINT`; default inside Docker network is `http://presidio-analyzer:3000`).
+Presidio is no longer a runtime backend. To compare anonde against Presidio's detection on a labeled corpus, see `bench/parity/README.md` — it provisions a Python venv with `presidio-analyzer`, runs both engines over `ai4privacy/pii-masking-200k`, and emits a span-exact F1 comparison report.
 
 ## License
 

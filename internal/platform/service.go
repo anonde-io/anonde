@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/moogacs/anonde/analyzer"
 	"github.com/moogacs/anonde/anonymizer"
@@ -36,11 +39,15 @@ type VaultEntry struct {
 
 // Service coordinates recognition, tokenization and controlled reveal.
 type Service struct {
-	analyzer  *analyzer.AnalyzerEngine
-	anonymize *anonymizer.AnonymizerEngine
-	vault     Vault
-	store     Store
-	policy    PolicyAuthorizer
+	analyzer       *analyzer.AnalyzerEngine
+	anonymize      *anonymizer.AnonymizerEngine
+	vault          Vault
+	store          Store
+	policy         PolicyAuthorizer
+	defaultScore   float64
+	defaultLang    string
+	docSeqMu       sync.Mutex
+	docSeqByTenant map[string]int
 }
 
 var ErrPolicyDenied = errors.New("policy denied")
@@ -53,11 +60,14 @@ func NewService(
 	policy PolicyAuthorizer,
 ) *Service {
 	return &Service{
-		analyzer:  analyzerEngine,
-		anonymize: anonymizerEngine,
-		vault:     vault,
-		store:     store,
-		policy:    policy,
+		analyzer:       analyzerEngine,
+		anonymize:      anonymizerEngine,
+		vault:          vault,
+		store:          store,
+		policy:         policy,
+		defaultScore:   0.3,
+		defaultLang:    "en",
+		docSeqByTenant: map[string]int{},
 	}
 }
 
@@ -77,19 +87,37 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	if err != nil {
 		return nil, err
 	}
+
+	// Per-ingest accumulators are shared across all calls to anonymizeText
+	// (for line-based formats this means per-line findings/tokens accumulate
+	// into a single response).
 	tokens := make([]TokenRef, 0, 16)
 	findings := make([]analyzer.RecognizerResult, 0, 16)
-	nextTokenIdx := 0
+	// Per-doc cleartext->token mapping; serves both as cache (so the same
+	// cleartext within one doc gets one token) and as the reveal source.
+	docTokenByKey := map[string]string{} // key = entityType+"\x00"+cleartext
+
+	analysisCfg := analyzer.AnalysisConfig{
+		Language:        firstNonEmpty(req.Language, s.defaultLang),
+		ScoreThreshold:  req.ScoreThreshold,
+		RemoveConflicts: true,
+		Entities:        req.Entities,
+		DisableNER:      req.DisableNER,
+	}
+	if req.ScoreThreshold == 0 {
+		analysisCfg.ScoreThreshold = s.defaultScore
+	}
 
 	anonymizeText := func(input string) (string, []analyzer.RecognizerResult, error) {
+		// All raw input is sanitized: invalid UTF-8 broken before the
+		// recognizers and ANSI escapes stripped. For text/json/pdf paths the
+		// caller hasn't done this; for ndjson/logs the line splitter has —
+		// idempotent calls are cheap.
+		input = sanitizeUTF8(stripANSI(input))
 		if strings.TrimSpace(input) == "" {
 			return input, nil, nil
 		}
-		localFindings, err := s.analyzer.Analyze(ctx, input, analyzer.AnalysisConfig{
-			Language:        "en",
-			ScoreThreshold:  0.3,
-			RemoveConflicts: true,
-		})
+		localFindings, err := s.analyzer.Analyze(ctx, input, analysisCfg)
 		if err != nil {
 			return "", nil, fmt.Errorf("analyze content: %w", err)
 		}
@@ -113,31 +141,55 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 				entityOperators[finding.EntityType] = entityOp
 				cfg[finding.EntityType] = entityOp
 			}
-			token, ok := entityOp.byCleartext[cleartext]
-			if !ok {
-				token = buildToken(req.TenantID, finding.EntityType, nextTokenIdx)
-				nextTokenIdx++
-				entityOp.byCleartext[cleartext] = token
+
+			cacheKey := finding.EntityType + "\x00" + cleartext
+			token, hit := docTokenByKey[cacheKey]
+			if !hit {
+				token = s.mintToken(req.TenantID, finding.EntityType)
+				docTokenByKey[cacheKey] = token
+				if err := s.vault.Put(ctx, req.TenantID, VaultEntry{
+					Token:      token,
+					EntityType: finding.EntityType,
+					Cleartext:  cleartext,
+				}); err != nil {
+					return "", nil, fmt.Errorf("store vault mapping: %w", err)
+				}
 			}
+			entityOp.byCleartext[cleartext] = token
 			tokens = append(tokens, TokenRef{
 				Token:      token,
 				EntityType: finding.EntityType,
 				Start:      finding.Start,
 				End:        finding.End,
 			})
-			if err := s.vault.Put(ctx, req.TenantID, VaultEntry{
-				Token:      token,
-				EntityType: finding.EntityType,
-				Cleartext:  cleartext,
-			}); err != nil {
-				return "", nil, fmt.Errorf("store vault mapping: %w", err)
-			}
 		}
 		result, err := s.anonymize.Anonymize(input, localFindings, cfg)
 		if err != nil {
 			return "", nil, fmt.Errorf("anonymize content: %w", err)
 		}
 		return result.Text, localFindings, nil
+	}
+
+	// jsonLeafFn handles a single JSON document (or an NDJSON line) by
+	// recursing through string leaves. textFn handles a plain text segment.
+	jsonLeafFn := func(value string) (string, error) {
+		out, localFindings, err := anonymizeText(value)
+		if err != nil {
+			return "", err
+		}
+		findings = append(findings, localFindings...)
+		return out, nil
+	}
+	jsonDocFn := func(value string) (string, error) {
+		return transformJSONStringLeaves(value, jsonLeafFn)
+	}
+	textFn := func(value string) (string, error) {
+		out, localFindings, err := anonymizeText(value)
+		if err != nil {
+			return "", err
+		}
+		findings = append(findings, localFindings...)
+		return out, nil
 	}
 
 	anonymizedContent := analyzableContent
@@ -150,14 +202,19 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		anonymizedContent = out
 		findings = append(findings, localFindings...)
 	case contentFormatJSON:
-		out, err := transformJSONStringLeaves(analyzableContent, func(value string) (string, error) {
-			updated, localFindings, err := anonymizeText(value)
-			if err != nil {
-				return "", err
-			}
-			findings = append(findings, localFindings...)
-			return updated, nil
-		})
+		out, err := transformJSONStringLeaves(analyzableContent, jsonLeafFn)
+		if err != nil {
+			return nil, err
+		}
+		anonymizedContent = out
+	case contentFormatNDJSON:
+		out, err := transformLines(analyzableContent, true, jsonDocFn, textFn)
+		if err != nil {
+			return nil, err
+		}
+		anonymizedContent = out
+	case contentFormatLogs:
+		out, err := transformLines(analyzableContent, false, jsonDocFn, textFn)
 		if err != nil {
 			return nil, err
 		}
@@ -185,6 +242,20 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		Findings:           findings,
 		Tokens:             tokens,
 	}, nil
+}
+
+// mintToken returns a fresh token for (tenant, entity), using a per-tenant
+// counter held by the service. Tokens are always referenced via the doc's
+// StoreRecord on reveal, so persistence of the counter isn't required.
+//
+// Cross-document token reuse for the same cleartext is intentionally NOT
+// supported here — see TODO.md ("Tenant-scoped token reuse").
+func (s *Service) mintToken(tenantID, entityType string) string {
+	s.docSeqMu.Lock()
+	idx := s.docSeqByTenant[tenantID]
+	s.docSeqByTenant[tenantID] = idx + 1
+	s.docSeqMu.Unlock()
+	return buildToken(tenantID, entityType, idx)
 }
 
 func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*DetokenizeResponse, error) {
@@ -238,8 +309,6 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		return nil, fmt.Errorf("load anonymized document: %w", err)
 	}
 
-	// Build ordered token list from stored document metadata so policy and linkage checks
-	// remain equivalent to explicit /v1/detokenize calls.
 	tokenSet := make(map[string]struct{}, len(record.Tokens))
 	orderedTokens := make([]string, 0, len(record.Tokens))
 	for _, tokenRef := range record.Tokens {
@@ -250,7 +319,6 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		orderedTokens = append(orderedTokens, tokenRef.Token)
 	}
 
-	// Nothing to resolve: return input as-is for better UX.
 	if len(orderedTokens) == 0 {
 		return &RevealResponse{
 			TenantID:            req.TenantID,
@@ -282,30 +350,36 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		requestedFormat = contentFormatText
 	}
 
-	replaceTokens := func(v string) string {
-		out := v
-		for _, token := range orderedTokens {
-			value, ok := detok.Resolved[token]
-			if !ok {
-				continue
-			}
-			out = strings.ReplaceAll(out, token, value)
-		}
-		return out
+	replacer, err := buildTokenReplacer(orderedTokens, detok.Resolved)
+	if err != nil {
+		return nil, err
 	}
 
 	out := req.Content
 	switch requestedFormat {
 	case contentFormatText, contentFormatPDF:
-		out = replaceTokens(req.Content)
+		out = replacer(req.Content)
 	case contentFormatJSON:
 		jsonOutput, err := transformJSONStringLeaves(req.Content, func(v string) (string, error) {
-			return replaceTokens(v), nil
+			return replacer(v), nil
 		})
 		if err != nil {
 			return nil, err
 		}
 		out = jsonOutput
+	case contentFormatNDJSON, contentFormatLogs:
+		forceJSON := requestedFormat == contentFormatNDJSON
+		jsonFn := func(v string) (string, error) {
+			return transformJSONStringLeaves(v, func(s string) (string, error) {
+				return replacer(s), nil
+			})
+		}
+		textFn := func(v string) (string, error) { return replacer(v), nil }
+		lineOut, err := transformLines(req.Content, forceJSON, jsonFn, textFn)
+		if err != nil {
+			return nil, err
+		}
+		out = lineOut
 	default:
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
@@ -316,6 +390,43 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		DeanonymizedContent: out,
 		Resolved:            detok.Resolved,
 	}, nil
+}
+
+// buildTokenReplacer returns a function that replaces every known token in
+// the input with its cleartext in a single pass. Tokens are sorted
+// longest-first so a longer token is never shadowed by a shorter prefix.
+func buildTokenReplacer(orderedTokens []string, resolved map[string]string) (func(string) string, error) {
+	if len(orderedTokens) == 0 {
+		return func(s string) string { return s }, nil
+	}
+	sorted := make([]string, len(orderedTokens))
+	copy(sorted, orderedTokens)
+	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i]) > len(sorted[j]) })
+	parts := make([]string, 0, len(sorted))
+	for _, t := range sorted {
+		parts = append(parts, regexp.QuoteMeta(t))
+	}
+	re, err := regexp.Compile(strings.Join(parts, "|"))
+	if err != nil {
+		return nil, fmt.Errorf("compile token replacer: %w", err)
+	}
+	return func(s string) string {
+		return re.ReplaceAllStringFunc(s, func(match string) string {
+			if v, ok := resolved[match]; ok {
+				return v
+			}
+			return match
+		})
+	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func buildToken(tenantID, entityType string, idx int) string {

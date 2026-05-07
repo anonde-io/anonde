@@ -1,46 +1,20 @@
 name: anonde-local-platform
 
 services:
-  platform-prose:
+  platform:
     build:
       context: .
       dockerfile: Dockerfile.platform
     image: anonde/platform:local
     ports:
-      - "${PLATFORM_PROSE_PORT:-8082}:8080"
+      - "${PLATFORM_PORT:-8082}:8080"
     environment:
       PLATFORM_ADDR: ":8080"
-      ANALYZER_BACKEND: "prose"
-      PRESIDIO_ENDPOINT: "${PRESIDIO_ENDPOINT:-http://presidio-analyzer:3000}"
-    networks:
-      - local_data_plane
-    restart: unless-stopped
-
-  platform-presidio:
-    build:
-      context: .
-      dockerfile: Dockerfile.platform
-    image: anonde/platform:local
-    profiles:
-      - presidio
-    depends_on:
-      - presidio-analyzer
-    ports:
-      - "${PLATFORM_PRESIDIO_PORT:-8081}:8080"
-    environment:
-      PLATFORM_ADDR: ":8080"
-      ANALYZER_BACKEND: "presidio"
-      PRESIDIO_ENDPOINT: "${PRESIDIO_ENDPOINT:-http://presidio-analyzer:3000}"
-    networks:
-      - local_data_plane
-    restart: unless-stopped
-
-  presidio-analyzer:
-    image: mcr.microsoft.com/presidio-analyzer:latest
-    profiles:
-      - presidio
-    ports:
-      - "3000:3000"
+      ANALYZER_BACKEND: "${ANALYZER_BACKEND:-hugot}"
+      HUGOT_MODEL: "${HUGOT_MODEL:-Isotonic/distilbert_finetuned_ai4privacy_v2}"
+      HUGOT_MODELS_DIR: "/models"
+    volumes:
+      - hugot_models:/models
     networks:
       - local_data_plane
     restart: unless-stopped
@@ -87,6 +61,6 @@ networks:
     driver: bridge
 
 volumes:
+  hugot_models:
   ollama_data:
   vault_db_data:
-
