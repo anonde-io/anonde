@@ -3,18 +3,33 @@ package platform
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
+// DefaultMaxRequestBytes caps a single ingest/reveal request body. Configurable
+// via NewHTTPServer/SetMaxRequestBytes; the platform main reads MAX_CONTENT_BYTES.
+const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
+
 type HTTPServer struct {
-	svc *Service
+	svc             *Service
+	maxRequestBytes int64
 }
 
 func NewHTTPServer(svc *Service) *HTTPServer {
-	return &HTTPServer{svc: svc}
+	return &HTTPServer{svc: svc, maxRequestBytes: DefaultMaxRequestBytes}
+}
+
+// SetMaxRequestBytes overrides the per-request body cap. Use 0 to disable.
+func (s *HTTPServer) SetMaxRequestBytes(n int64) {
+	if n < 0 {
+		n = 0
+	}
+	s.maxRequestBytes = n
 }
 
 func (s *HTTPServer) Routes() http.Handler {
@@ -82,9 +97,10 @@ func (s *HTTPServer) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body := s.limitBody(w, r)
 	var req IngestRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		writeErr(w, requestBodyErrStatus(err), err)
 		return
 	}
 
@@ -104,9 +120,10 @@ func (s *HTTPServer) detokenize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body := s.limitBody(w, r)
 	var req DetokenizeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		writeErr(w, requestBodyErrStatus(err), err)
 		return
 	}
 
@@ -130,9 +147,10 @@ func (s *HTTPServer) reveal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body := s.limitBody(w, r)
 	var req RevealRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		writeErr(w, requestBodyErrStatus(err), err)
 		return
 	}
 
@@ -148,6 +166,29 @@ func (s *HTTPServer) reveal(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d msg=%q resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), req.Content, len(resp.Resolved))
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *HTTPServer) limitBody(w http.ResponseWriter, r *http.Request) io.Reader {
+	if s.maxRequestBytes <= 0 {
+		return r.Body
+	}
+	return http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+}
+
+// requestBodyErrStatus returns 413 for MaxBytesReader errors (best-effort —
+// http.MaxBytesError is in stdlib since Go 1.19) and 400 for everything else.
+func requestBodyErrStatus(err error) int {
+	if err == nil {
+		return http.StatusBadRequest
+	}
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return http.StatusRequestEntityTooLarge
+	}
+	if strings.Contains(err.Error(), "request body too large") {
+		return http.StatusRequestEntityTooLarge
+	}
+	return http.StatusBadRequest
 }
 
 func writeErr(w http.ResponseWriter, status int, err error) {

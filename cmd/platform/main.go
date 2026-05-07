@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ func main() {
 	analyzerEngine := analyzerFromEnv()
 	vaultTTL := durationFromEnv("MEMORY_VAULT_TTL", 5*time.Minute)
 	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
+	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", platform.DefaultMaxRequestBytes)
 
 	svc := platform.NewService(
 		analyzerEngine,
@@ -26,13 +28,16 @@ func main() {
 		&platform.StaticPolicy{},
 	)
 
+	httpAPI := platform.NewHTTPServer(svc)
+	httpAPI.SetMaxRequestBytes(maxBytes)
+
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           platform.NewHTTPServer(svc).Routes(),
+		Handler:           httpAPI.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("platform server listening on %s", addr)
+	log.Printf("platform server listening on %s (max_request_bytes=%d)", addr, maxBytes)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -48,24 +53,47 @@ func platformAddr() string {
 	return ":8080"
 }
 
+// analyzerFromEnv selects the NER backend.
+//
+// Default: hugot (in-process ONNX transformer; downloads the model on first
+// run into ~/.cache/anonde/models). This is the recommended path —
+// benchmarks show parity with Presidio default on the core entities. See
+// bench/parity/REPORT_FULL.md.
+//
+// Opt-ins:
+//
+//   - ANALYZER_BACKEND=patterns — pattern recognizers only, no NER. Use when
+//     you can't tolerate a model download and the entities you care about
+//     are all pattern-detectable (email, phone, IP, SSN, CC, etc.).
+//   - ANALYZER_BACKEND=ollama — local Ollama daemon for users with an
+//     existing Ollama setup.
+//
+// Presidio is no longer a runtime backend. To benchmark anonde against
+// Presidio, see bench/parity/.
 func analyzerFromEnv() *analyzer.AnalyzerEngine {
-	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "prose")))
-	if backend == "ollama" {
+	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "hugot")))
+	switch backend {
+	case "patterns", "patterns-only":
+		log.Printf("analyzer backend: patterns-only (no NER)")
+		return anonde.DefaultAnalyzerEngine()
+	case "ollama":
 		log.Printf("analyzer backend: ollama")
 		return anonde.DefaultAnalyzerEngineWithOllama(
 			os.Getenv("OLLAMA_ENDPOINT"),
 			os.Getenv("OLLAMA_MODEL"),
 		)
-	}
-	if backend == "presidio" || backend == "presidio-remote" {
-		log.Printf("analyzer backend: presidio-remote")
-		return anonde.DefaultAnalyzerEngineWithPresidioRemote(
-			os.Getenv("PRESIDIO_ENDPOINT"),
+	case "hugot", "":
+		modelName := getenvDefault("HUGOT_MODEL", "Isotonic/distilbert_finetuned_ai4privacy_v2")
+		log.Printf("analyzer backend: hugot (model=%s)", modelName)
+		return anonde.DefaultAnalyzerEngineWithHugot(
+			os.Getenv("HUGOT_MODELS_DIR"),
+			modelName,
+			true, // auto-download on first run
 		)
+	default:
+		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: hugot, patterns, ollama)", backend)
+		return nil
 	}
-
-	log.Printf("analyzer backend: prose")
-	return anonde.DefaultAnalyzerEngine()
 }
 
 func durationFromEnv(key string, fallback time.Duration) time.Duration {
@@ -78,6 +106,21 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 		log.Fatalf("invalid duration for %s=%q: %v", key, raw, err)
 	}
 	return parsed
+}
+
+func bytesFromEnv(key string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		log.Fatalf("invalid byte count for %s=%q: %v", key, raw, err)
+	}
+	if n < 0 {
+		log.Fatalf("invalid byte count for %s=%d: must be >= 0", key, n)
+	}
+	return n
 }
 
 func getenvDefault(key, fallback string) string {
