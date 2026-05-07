@@ -16,7 +16,7 @@ var (
 
 // NewIPAddressRecognizer detects IP_ADDRESS (both v4 and v6).
 func NewIPAddressRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"IPAddressRecognizer",
 		[]string{"IP_ADDRESS"},
 		[]string{"*"},
@@ -24,5 +24,6 @@ func NewIPAddressRecognizer() *PatternRecognizer {
 			{re: ipv4RE, score: 0.95},
 			{re: ipv6RE, score: 0.95},
 		},
+		[]string{"ip", "ipv4", "ipv6", "ip address", "host", "client", "server", "remote", "addr"},
 	)
 }

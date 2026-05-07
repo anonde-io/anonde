@@ -21,6 +21,13 @@ func (r *IBANRecognizer) Name() string                 { return "IBANRecognizer"
 func (r *IBANRecognizer) SupportedEntities() []string  { return []string{"IBAN_CODE"} }
 func (r *IBANRecognizer) SupportedLanguages() []string { return []string{"*"} }
 
+// ContextKeywords implements analyzer.ContextProvider.
+func (r *IBANRecognizer) ContextKeywords() map[string][]string {
+	return map[string][]string{
+		"IBAN_CODE": {"iban", "bank", "account", "wire", "swift", "transfer", "bic"},
+	}
+}
+
 func (r *IBANRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
 	var results []analyzer.RecognizerResult
 	for _, m := range ibanRE.FindAllStringIndex(text, -1) {

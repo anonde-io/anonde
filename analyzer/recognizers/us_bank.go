@@ -7,10 +7,11 @@ var usBankRE = regexp.MustCompile(`\b\d{8,17}\b`)
 
 // NewUSBankRecognizer detects US_BANK_NUMBER entities (low confidence, context-dependent).
 func NewUSBankRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"USBankRecognizer",
 		[]string{"US_BANK_NUMBER"},
 		[]string{"en"},
 		[]namedPattern{{re: usBankRE, score: 0.3}},
+		[]string{"bank", "account", "checking", "savings", "routing", "ach", "wire"},
 	)
 }

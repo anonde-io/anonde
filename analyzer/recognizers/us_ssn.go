@@ -21,6 +21,13 @@ func (r *USSocialSecurityRecognizer) Name() string                 { return "USS
 func (r *USSocialSecurityRecognizer) SupportedEntities() []string  { return []string{"US_SSN"} }
 func (r *USSocialSecurityRecognizer) SupportedLanguages() []string { return []string{"en"} }
 
+// ContextKeywords implements analyzer.ContextProvider.
+func (r *USSocialSecurityRecognizer) ContextKeywords() map[string][]string {
+	return map[string][]string{
+		"US_SSN": {"ssn", "social security", "social-security", "ss number", "tax id", "taxpayer"},
+	}
+}
+
 func (r *USSocialSecurityRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
 	var results []analyzer.RecognizerResult
 	for _, m := range ssnRE.FindAllStringSubmatchIndex(text, -1) {

@@ -19,6 +19,13 @@ func (r *USITINRecognizer) Name() string                 { return "USITINRecogni
 func (r *USITINRecognizer) SupportedEntities() []string  { return []string{"US_ITIN"} }
 func (r *USITINRecognizer) SupportedLanguages() []string { return []string{"en"} }
 
+// ContextKeywords implements analyzer.ContextProvider.
+func (r *USITINRecognizer) ContextKeywords() map[string][]string {
+	return map[string][]string{
+		"US_ITIN": {"itin", "individual taxpayer", "tax id", "irs", "taxpayer identification"},
+	}
+}
+
 func (r *USITINRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
 	var results []analyzer.RecognizerResult
 	for _, m := range usITINRE.FindAllStringSubmatchIndex(text, -1) {

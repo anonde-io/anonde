@@ -9,10 +9,11 @@ var urlRE = regexp.MustCompile(
 
 // NewURLRecognizer detects URL entities.
 func NewURLRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"URLRecognizer",
 		[]string{"URL"},
 		[]string{"*"},
 		[]namedPattern{{re: urlRE, score: 0.6}},
+		[]string{"url", "link", "website", "site", "domain", "endpoint"},
 	)
 }

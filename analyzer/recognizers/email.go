@@ -6,10 +6,11 @@ var emailRE = regexp.MustCompile(`(?i)\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-z
 
 // NewEmailRecognizer detects EMAIL_ADDRESS entities.
 func NewEmailRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"EmailRecognizer",
 		[]string{"EMAIL_ADDRESS"},
 		[]string{"*"},
 		[]namedPattern{{re: emailRE, score: 1.0}},
+		[]string{"email", "e-mail", "mail", "address", "sender", "recipient"},
 	)
 }
