@@ -9,10 +9,11 @@ var medLicenseRE = regexp.MustCompile(
 
 // NewMedicalLicenseRecognizer detects MEDICAL_LICENSE entities.
 func NewMedicalLicenseRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"MedicalLicenseRecognizer",
 		[]string{"MEDICAL_LICENSE"},
 		[]string{"en"},
 		[]namedPattern{{re: medLicenseRE, score: 0.5}},
+		[]string{"medical", "license", "licence", "physician", "doctor", "dea", "npi", "practitioner"},
 	)
 }

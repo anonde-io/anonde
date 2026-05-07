@@ -11,10 +11,11 @@ var usDriverLicenseRE = regexp.MustCompile(
 
 // NewUSDriverLicenseRecognizer detects US_DRIVER_LICENSE entities.
 func NewUSDriverLicenseRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"USDriverLicenseRecognizer",
 		[]string{"US_DRIVER_LICENSE"},
 		[]string{"en"},
 		[]namedPattern{{re: usDriverLicenseRE, score: 0.6}},
+		[]string{"driver", "license", "licence", "dl", "driver's license", "drivers license", "dmv"},
 	)
 }

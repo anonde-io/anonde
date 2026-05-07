@@ -8,10 +8,11 @@ var macRE = regexp.MustCompile(
 
 // NewMACAddressRecognizer detects MAC_ADDRESS entities.
 func NewMACAddressRecognizer() *PatternRecognizer {
-	return NewPatternRecognizer(
+	return NewPatternRecognizerWithContext(
 		"MACAddressRecognizer",
 		[]string{"MAC_ADDRESS"},
 		[]string{"*"},
 		[]namedPattern{{re: macRE, score: 0.9}},
+		[]string{"mac", "mac address", "hardware address", "ethernet", "interface"},
 	)
 }

@@ -15,7 +15,10 @@ var creditCardRE = regexp.MustCompile(
 		`|3(?:0[0-5]|[68][0-9])[0-9]{11}` + // Diners
 		`|6(?:011|5[0-9]{2})[0-9]{12}` + // Discover
 		`|(?:2131|1800|35\d{3})\d{11}` + // JCB
-		`|(?:\d[ \-]?){13,16})\b`, // generic with separators
+		`|(?:\d{4}[ \-]){3}\d{4}` + // 4-4-4-4 with separators
+		`|(?:\d{4}[ \-]){2}\d{6}` + // 4-4-6 (Amex)
+		`|\d{13,19}` + // bare 13–19 digits — Luhn validates
+		`)\b`,
 )
 
 // CreditCardRecognizer detects CREDIT_CARD entities and validates via Luhn.
@@ -26,6 +29,13 @@ func NewCreditCardRecognizer() *CreditCardRecognizer { return &CreditCardRecogni
 func (c *CreditCardRecognizer) Name() string                 { return "CreditCardRecognizer" }
 func (c *CreditCardRecognizer) SupportedEntities() []string  { return []string{"CREDIT_CARD"} }
 func (c *CreditCardRecognizer) SupportedLanguages() []string { return []string{"*"} }
+
+// ContextKeywords implements analyzer.ContextProvider.
+func (c *CreditCardRecognizer) ContextKeywords() map[string][]string {
+	return map[string][]string{
+		"CREDIT_CARD": {"credit", "card", "cc", "visa", "mastercard", "amex", "american express", "discover", "diners", "jcb", "payment"},
+	}
+}
 
 func (c *CreditCardRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
 	var results []analyzer.RecognizerResult
