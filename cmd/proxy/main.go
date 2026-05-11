@@ -21,13 +21,16 @@ import (
 func main() {
 	listen := flag.String("listen", ":8080", "address to listen on")
 	upstream := flag.String("upstream", "", "upstream URL to proxy to (required)")
-	ner := flag.String("ner", "prose", "NER backend: prose | ollama")
+	ner := flag.String("ner", "patterns", "NER backend: patterns | hugot | ollama")
 	ollamaURL := flag.String("ollama-url", "", "Ollama endpoint (for -ner=ollama, default http://localhost:11434)")
 	ollamaModel := flag.String("ollama-model", "", "Ollama model (for -ner=ollama, default phi3:mini)")
 	scrubReq := flag.Bool("scrub-request", true, "scrub PII from request body")
 	scrubResp := flag.Bool("scrub-response", false, "scrub PII from response body")
 	threshold := flag.Float64("score-threshold", 0.3, "minimum confidence score (0–1)")
 	disableNER := flag.Bool("disable-ner", false, "pattern-only mode — skip NER, maximum throughput")
+	operatorMode := flag.String("operator", "replace", "anonymization operator: replace | synthesize")
+	synConsistent := flag.Bool("synthesize-consistent", false, "synthesize: same input always maps to same fake value")
+	synDocScoped := flag.Bool("synthesize-doc-scoped", false, "synthesize: consistent within each request; reset between requests (requires -synthesize-consistent)")
 	flag.Parse()
 
 	if *upstream == "" {
@@ -42,6 +45,8 @@ func main() {
 	switch *ner {
 	case "ollama":
 		analyzerEngine = anonde.DefaultAnalyzerEngineWithOllama(*ollamaURL, *ollamaModel)
+	case "hugot":
+		analyzerEngine = anonde.DefaultAnalyzerEngineWithHugot("", "", true)
 	default:
 		analyzerEngine = anonde.DefaultAnalyzerEngine()
 	}
@@ -53,9 +58,28 @@ func main() {
 		RemoveConflicts: true,
 		DisableNER:      *disableNER,
 	}
-	anonCfg := anonymizer.AnonymizerConfig{
-		"*": &operators.Replace{},
+
+	// Build the operator used for every entity ("*" catch-all).
+	// For synthesize in doc-scoped mode we hold a pointer so we can Reset()
+	// between requests; for all other modes the operator is stateless.
+	var syn *operators.Synthesize
+	buildAnonCfg := func() anonymizer.AnonymizerConfig {
+		switch *operatorMode {
+		case "synthesize":
+			return anonymizer.AnonymizerConfig{"*": syn}
+		default:
+			return anonymizer.AnonymizerConfig{"*": &operators.Replace{}}
+		}
 	}
+
+	if *operatorMode == "synthesize" {
+		syn = &operators.Synthesize{
+			Consistent:     *synConsistent,
+			DocumentScoped: *synDocScoped,
+		}
+	}
+
+	anonCfg := buildAnonCfg()
 
 	scrub := func(text string) (string, error) {
 		results, err := analyzerEngine.Analyze(context.Background(), text, analysisCfg)
@@ -95,6 +119,12 @@ func main() {
 	base := rp.Director
 	rp.Director = func(req *http.Request) {
 		base(req)
+		// Reset doc-scoped synthesizer at the start of each request so that
+		// the same entity text gets a fresh alias per request rather than
+		// leaking aliases across unrelated requests.
+		if syn != nil && syn.DocumentScoped {
+			syn.Reset()
+		}
 		if !*scrubReq || req.Body == nil {
 			return
 		}
@@ -122,8 +152,8 @@ func main() {
 		}
 	}
 
-	log.Printf("anonde proxy  %s → %s  (ner=%s  scrub-req=%v  scrub-resp=%v)",
-		*listen, *upstream, *ner, *scrubReq, *scrubResp)
+	log.Printf("anonde proxy  %s → %s  (ner=%s  operator=%s  scrub-req=%v  scrub-resp=%v)",
+		*listen, *upstream, *ner, *operatorMode, *scrubReq, *scrubResp)
 	log.Fatal(http.ListenAndServe(*listen, rp))
 }
 

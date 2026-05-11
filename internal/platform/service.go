@@ -11,6 +11,7 @@ import (
 
 	"github.com/moogacs/anonde/analyzer"
 	"github.com/moogacs/anonde/anonymizer"
+	"github.com/moogacs/anonde/anonymizer/operators"
 )
 
 // PolicyAuthorizer gates deanonymization access.
@@ -69,6 +70,88 @@ func NewService(
 		defaultLang:    "en",
 		docSeqByTenant: map[string]int{},
 	}
+}
+
+func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*SynthesizeResponse, error) {
+	if req.Content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+	format := normalizeContentFormat(req.ContentFormat)
+	if format == "" {
+		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
+	}
+	if format == contentFormatAuto {
+		format = resolveAutoContentFormat(req.Content)
+	}
+
+	analyzableContent, err := extractAnalyzableText(req.Content, format)
+	if err != nil {
+		return nil, err
+	}
+
+	analysisCfg := analyzer.AnalysisConfig{
+		Language:        firstNonEmpty(req.Language, s.defaultLang),
+		ScoreThreshold:  req.ScoreThreshold,
+		RemoveConflicts: true,
+		Entities:        req.Entities,
+		DisableNER:      req.DisableNER,
+	}
+	if req.ScoreThreshold == 0 {
+		analysisCfg.ScoreThreshold = s.defaultScore
+	}
+
+	syn := &operators.Synthesize{
+		Consistent:     req.Consistent,
+		DocumentScoped: req.DocScoped,
+	}
+	anonCfg := anonymizer.AnonymizerConfig{"*": syn}
+	allFindings := make([]analyzer.RecognizerResult, 0, 8)
+
+	synText := func(input string) (string, error) {
+		input = sanitizeUTF8(stripANSI(input))
+		if strings.TrimSpace(input) == "" {
+			return input, nil
+		}
+		findings, err := s.analyzer.Analyze(ctx, input, analysisCfg)
+		if err != nil {
+			return "", fmt.Errorf("analyze: %w", err)
+		}
+		allFindings = append(allFindings, findings...)
+		if len(findings) == 0 {
+			return input, nil
+		}
+		out, err := s.anonymize.Anonymize(input, findings, anonCfg)
+		if err != nil {
+			return "", fmt.Errorf("synthesize: %w", err)
+		}
+		return out.Text, nil
+	}
+	jsonLeafFn := func(value string) (string, error) { return synText(value) }
+	jsonDocFn := func(value string) (string, error) {
+		return transformJSONStringLeaves(value, jsonLeafFn)
+	}
+
+	var synthesized string
+	switch format {
+	case contentFormatText, contentFormatPDF:
+		synthesized, err = synText(analyzableContent)
+	case contentFormatJSON:
+		synthesized, err = transformJSONStringLeaves(analyzableContent, jsonLeafFn)
+	case contentFormatNDJSON:
+		synthesized, err = transformLines(analyzableContent, true, jsonDocFn, synText)
+	case contentFormatLogs:
+		synthesized, err = transformLines(analyzableContent, false, jsonDocFn, synText)
+	default:
+		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &SynthesizeResponse{
+		Content:  synthesized,
+		Findings: allFindings,
+	}, nil
 }
 
 func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestResponse, error) {

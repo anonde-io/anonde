@@ -68,3 +68,22 @@ type RevealResponse struct {
 	DeanonymizedContent string            `json:"deanonymized_content"`
 	Resolved            map[string]string `json:"resolved"`
 }
+
+type SynthesizeRequest struct {
+	Content       string   `json:"content"`
+	ContentFormat string   `json:"content_format,omitempty"`
+	Language      string   `json:"language,omitempty"`
+	Entities      []string `json:"entities,omitempty"`
+	ScoreThreshold float64 `json:"score_threshold,omitempty"`
+	DisableNER    bool     `json:"disable_ner,omitempty"`
+	// Consistent=true means the same input text always produces the same fake.
+	Consistent bool `json:"consistent,omitempty"`
+	// DocScoped=true (requires Consistent) means the same text maps to the same
+	// fake within this single request only.
+	DocScoped bool `json:"doc_scoped,omitempty"`
+}
+
+type SynthesizeResponse struct {
+	Content  string                      `json:"content"`
+	Findings []analyzer.RecognizerResult `json:"findings"`
+}
