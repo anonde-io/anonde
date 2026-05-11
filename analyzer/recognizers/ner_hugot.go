@@ -21,9 +21,14 @@ type HugotNERConfig struct {
 	ModelsDir string
 
 	// ModelName is the HuggingFace model ID to use.
-	// Defaults to "Isotonic/distilbert_finetuned_ai4privacy_v2" — a
-	// distilbert NER fine-tuned on the ai4privacy PII corpus. Reaches
-	// or beats Presidio default on every core entity (see
+	// Defaults to "Xenova/distilbert-base-multilingual-cased-ner-hrl" — a
+	// multilingual DistilBERT NER (CoNLL-2003 labels) trained on
+	// 10 languages including German, English, Spanish, French, Italian,
+	// Dutch, Portuguese, Arabic, Latvian, and Chinese. Pre-converted to
+	// ONNX for in-process inference via hugot.
+	//
+	// For an English-only PII-specialized model with higher core-entity F1,
+	// use "Isotonic/distilbert_finetuned_ai4privacy_v2" (see
 	// bench/parity/REPORT_FULL.md).
 	ModelName string
 
@@ -125,7 +130,14 @@ func NewHugotNERRecognizer(cfg HugotNERConfig) *HugotNERRecognizer {
 		cfg.ModelsDir = filepath.Join(home, ".cache", "anonde", "models")
 	}
 	if cfg.ModelName == "" {
-		cfg.ModelName = "Isotonic/distilbert_finetuned_ai4privacy_v2"
+		cfg.ModelName = "Xenova/distilbert-base-multilingual-cased-ner-hrl"
+		// Xenova repos ship multiple ONNX variants; hugot requires an
+		// explicit pick. The int8-quantized build (~135 MB) is the
+		// production sweet spot: ~3x smaller than full precision and
+		// ~2x faster on CPU at a 1–2 pp F1 cost.
+		if cfg.OnnxFilePath == "" {
+			cfg.OnnxFilePath = "onnx/model_quantized.onnx"
+		}
 	}
 	return &HugotNERRecognizer{cfg: cfg}
 }
@@ -134,7 +146,13 @@ func (r *HugotNERRecognizer) Name() string { return "HugotNERRecognizer" }
 func (r *HugotNERRecognizer) SupportedEntities() []string {
 	return []string{"PERSON", "LOCATION", "ORGANIZATION", "NRP"}
 }
-func (r *HugotNERRecognizer) SupportedLanguages() []string { return []string{"en"} }
+// SupportedLanguages enumerates the languages the default multilingual model
+// is trained on. Callers using a different ModelName should override the
+// AnalyzerEngine's language filtering accordingly. Keep this list in sync
+// with the model card.
+func (r *HugotNERRecognizer) SupportedLanguages() []string {
+	return []string{"en", "de", "es", "fr", "it", "nl", "pt", "ar", "lv", "zh"}
+}
 
 // init lazily starts the hugot session and loads the ONNX pipeline.
 func (r *HugotNERRecognizer) init(ctx context.Context) error {
