@@ -12,10 +12,11 @@ import (
 	"github.com/moogacs/anonde/analyzer"
 )
 
-const ollamaNERSystemPrompt = `You are a named entity recognition system. Extract all named entities from the text.
+const ollamaNERSystemPrompt = `You are a multilingual named entity recognition system. Extract all named entities from the text in any language (English, German, Spanish, French, Italian, etc.).
 Return ONLY a JSON object with no preamble or explanation:
 {"entities":[{"text":"exact text as it appears","type":"PERSON|LOCATION|ORGANIZATION|NRP"}]}
-Types: PERSON (people), LOCATION (places), ORGANIZATION (companies/institutions), NRP (nationalities/religions/political groups).
+Types: PERSON (people, e.g. "John Smith", "Frau Müller"), LOCATION (places, e.g. "Berlin", "Sankt Gallen"), ORGANIZATION (companies/institutions/hospitals, e.g. "Charité", "Acme GmbH"), NRP (nationalities/religions/political groups).
+Preserve the exact surface form (including German umlauts and case).
 If no entities are found, return {"entities":[]}.`
 
 const maxOllamaChunkBytes = 8000
@@ -49,7 +50,12 @@ func (r *OllamaNERRecognizer) Name() string { return "NERRecognizer" }
 func (r *OllamaNERRecognizer) SupportedEntities() []string {
 	return []string{"PERSON", "LOCATION", "ORGANIZATION", "NRP"}
 }
-func (r *OllamaNERRecognizer) SupportedLanguages() []string { return []string{"en"} }
+// SupportedLanguages declares the languages the multilingual prompt covers.
+// The underlying Ollama model must itself be multilingual for non-English to
+// work well; the prompt and label scheme are language-neutral.
+func (r *OllamaNERRecognizer) SupportedLanguages() []string {
+	return []string{"en", "de", "es", "fr", "it", "nl", "pt"}
+}
 
 func (r *OllamaNERRecognizer) Analyze(ctx context.Context, text string, entities []string, _ string) ([]analyzer.RecognizerResult, error) {
 	wantAll := len(entities) == 0

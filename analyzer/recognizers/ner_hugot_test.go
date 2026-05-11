@@ -45,8 +45,17 @@ func TestHugotNERRecognizer_SupportedLanguages(t *testing.T) {
 	t.Parallel()
 	rec := recognizers.NewHugotNERRecognizer(recognizers.HugotNERConfig{})
 	langs := rec.SupportedLanguages()
-	if len(langs) != 1 || langs[0] != "en" {
-		t.Fatalf("expected [en], got %v", langs)
+	got := make(map[string]bool, len(langs))
+	for _, l := range langs {
+		got[l] = true
+	}
+	// Must include the languages the default multilingual model is trained
+	// on. Adding more is fine; removing en/de breaks the German-by-default
+	// product promise.
+	for _, must := range []string{"en", "de", "es", "fr", "it"} {
+		if !got[must] {
+			t.Errorf("SupportedLanguages missing required language %q (got %v)", must, langs)
+		}
 	}
 }
 
@@ -67,8 +76,8 @@ func TestHugotNERRecognizer_DefaultModelName(t *testing.T) {
 		t.Fatal("expected error when model is absent and AutoDownload is false")
 	}
 	// Default model name should appear in the error message.
-	if !strings.Contains(err.Error(), "dslim/bert-base-NER") &&
-		!strings.Contains(err.Error(), "dslim_bert-base-NER") {
+	if !strings.Contains(err.Error(), "Xenova/distilbert-base-multilingual-cased-ner-hrl") &&
+		!strings.Contains(err.Error(), "Xenova_distilbert-base-multilingual-cased-ner-hrl") {
 		t.Errorf("expected default model name in error, got: %v", err)
 	}
 }
@@ -200,7 +209,7 @@ func TestHugotNERRecognizer_Integration(t *testing.T) {
 	modelsDir := t.TempDir()
 	rec := recognizers.NewHugotNERRecognizer(recognizers.HugotNERConfig{
 		ModelsDir:    modelsDir,
-		ModelName:    "dslim/bert-base-NER",
+		ModelName:    "Xenova/distilbert-base-multilingual-cased-ner-hrl",
 		AutoDownload: true,
 	})
 	t.Cleanup(func() { _ = rec.Destroy() })
@@ -258,5 +267,40 @@ func TestHugotNERRecognizer_Integration(t *testing.T) {
 			t.Errorf("invalid span [%d, %d] for text len %d", r.Start, r.End, len(text))
 		}
 		_ = errors.New // satisfy import
+	}
+}
+
+// TestHugotNERRecognizer_IntegrationGerman verifies the default multilingual
+// model picks up German PERSON / LOCATION / ORGANIZATION entities — the
+// "German by default" product promise.
+func TestHugotNERRecognizer_IntegrationGerman(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test: requires model download (~400 MB)")
+	}
+
+	modelsDir := t.TempDir()
+	rec := recognizers.NewHugotNERRecognizer(recognizers.HugotNERConfig{
+		ModelsDir:    modelsDir,
+		AutoDownload: true, // ModelName left empty -> use default
+	})
+	t.Cleanup(func() { _ = rec.Destroy() })
+
+	text := "Frau Müller wurde am 12.05.2023 in der Charité in Berlin behandelt."
+	results, err := rec.Analyze(context.Background(), text, nil, "de")
+	if err != nil {
+		t.Fatalf("Analyze error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one entity in German text, got none")
+	}
+
+	gotTypes := make(map[string]bool)
+	for _, r := range results {
+		gotTypes[r.EntityType] = true
+	}
+	for _, want := range []string{"PERSON", "ORGANIZATION", "LOCATION"} {
+		if !gotTypes[want] {
+			t.Errorf("expected %s in German NER output, got types %v (results=%+v)", want, gotTypes, results)
+		}
 	}
 }

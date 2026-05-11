@@ -73,6 +73,10 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 
 		// Korea
 		recognizers.NewKRRRNRecognizer(),
+
+		// Germany
+		recognizers.NewDEDateTimeRecognizer(),
+		recognizers.NewDEDateContextRecognizer(),
 	}
 }
 
