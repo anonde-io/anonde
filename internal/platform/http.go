@@ -38,6 +38,7 @@ func (s *HTTPServer) Routes() http.Handler {
 	mux.HandleFunc("/v1/ingest", s.ingest)
 	mux.HandleFunc("/v1/detokenize", s.detokenize)
 	mux.HandleFunc("/v1/reveal", s.reveal)
+	mux.HandleFunc("/v1/synthesize", s.synthesize)
 	return loggingMiddleware(recoverMiddleware(corsMiddleware(mux)))
 }
 
@@ -85,6 +86,27 @@ func recoverMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *HTTPServer) synthesize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body := s.limitBody(w, r)
+	var req SynthesizeRequest
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		writeErr(w, requestBodyErrStatus(err), err)
+		return
+	}
+
+	resp, err := s.svc.Synthesize(r.Context(), req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {
