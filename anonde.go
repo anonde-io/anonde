@@ -5,6 +5,7 @@ package anonde
 import (
 	"github.com/moogacs/anonde/analyzer"
 	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/moogacs/anonde/analyzer/reconciler"
 	"github.com/moogacs/anonde/anonymizer"
 )
 
@@ -126,6 +127,22 @@ func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bo
 	}))
 	registry.Add(patternRecognizers()...)
 	return analyzer.NewAnalyzerEngine(registry)
+}
+
+// WithOllamaReconciler attaches a local-Ollama LLM reconciler to the given
+// engine. The reconciler gates an LLM call on borderline-confidence
+// candidates (score in [LowGate, HighGate)) and drops those the model
+// classifies as false positives.
+//
+// Returns the same engine for chaining. Pass a zero OllamaConfig for
+// production defaults (llama3.2:3b, endpoint localhost:11434, 4 workers,
+// 5 s per-span timeout).
+//
+// Fail-open: on any LLM error the reconciler keeps the candidate, so
+// attaching it CANNOT raise the leak rate vs not attaching it.
+func WithOllamaReconciler(e *analyzer.AnalyzerEngine, cfg reconciler.OllamaConfig) *analyzer.AnalyzerEngine {
+	e.Reconciler = reconciler.NewOllama(cfg)
+	return e
 }
 
 // DefaultAnonymizerEngine returns a new AnonymizerEngine.
