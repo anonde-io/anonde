@@ -77,6 +77,10 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		// Germany
 		recognizers.NewDEDateTimeRecognizer(),
 		recognizers.NewDEDateContextRecognizer(),
+		recognizers.NewDEPhoneRecognizer(),
+		recognizers.NewDEPostalCodeRecognizer(),
+		recognizers.NewDEStreetRecognizer(),
+		recognizers.NewDESteuerIDRecognizer(),
 	}
 }
 

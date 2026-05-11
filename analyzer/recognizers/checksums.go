@@ -355,6 +355,50 @@ func validateKRRRN(s string) bool {
 	return check == int(s[12]-'0')
 }
 
+// DE Steuerliche Identifikationsnummer (Steuer-ID): 11 digits.
+// Check digit (last digit) computed via ISO 7064 MOD 11,10.
+//
+// Plus the uniqueness rule on the first 10 digits (per BMF spec
+// 2016-04-12): exactly one digit appears 2–3 times, all other digits
+// appear 0 or 1 times. This rejects sequences like "00000000000" and
+// random 11-digit case numbers that happen to satisfy the checksum.
+func validateDESteuerID(s string) bool {
+	if len(s) != 11 || !digitsOnly(s) {
+		return false
+	}
+
+	// Uniqueness rule on first 10 digits.
+	var counts [10]int
+	for i := 0; i < 10; i++ {
+		counts[s[i]-'0']++
+	}
+	repeated := 0       // count of digits that appear ≥2 times
+	tooMany := false    // any digit appearing ≥4 times → invalid
+	for _, c := range counts {
+		if c >= 4 {
+			tooMany = true
+		}
+		if c >= 2 {
+			repeated++
+		}
+	}
+	if tooMany || repeated != 1 {
+		return false
+	}
+
+	// ISO 7064 MOD 11,10 check digit.
+	product := 10
+	for i := 0; i < 10; i++ {
+		sum := (int(s[i]-'0') + product) % 10
+		if sum == 0 {
+			sum = 10
+		}
+		product = (2 * sum) % 11
+	}
+	check := (11 - product) % 10
+	return check == int(s[10]-'0')
+}
+
 // UK NHS number: 10 digits, weights [10,9,8,7,6,5,4,3,2] over the first 9,
 // check = 11 - (sum%11). 11 → invalid; 10 → invalid; otherwise must equal digit 10.
 func validateUKNHS(s string) bool {
