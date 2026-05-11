@@ -43,6 +43,13 @@ type AnalysisConfig struct {
 // AnalyzerEngine detects PII entities in text.
 type AnalyzerEngine struct {
 	Registry *RecognizerRegistry
+
+	// Reconciler, if non-nil, post-processes the candidate spans after
+	// context-keyword score enhancement and before threshold filtering.
+	// Typical use: gate an LLM call on borderline-confidence candidates
+	// to kill false positives. See the Reconciler interface for the
+	// fail-open contract.
+	Reconciler Reconciler
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
@@ -195,6 +202,16 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		}
 		keywords := CollectContextKeywords(candidates)
 		all = EnhanceWithContext(text, all, keywords, ctxCfg)
+	}
+
+	// 5a. Reconciler (optional). Gated LLM disambiguation on borderline
+	// candidates. Fail-open contract: on error we keep the original
+	// candidates, so the reconciler can never raise leak rate.
+	if e.Reconciler != nil && len(all) > 0 {
+		reconciled, err := e.Reconciler.Reconcile(ctx, text, all)
+		if err == nil {
+			all = reconciled
+		}
 	}
 
 	// 6. DenyList (forced redaction) and AllowList (drop false positives).
