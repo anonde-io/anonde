@@ -21,13 +21,24 @@ func (r RecognizerResult) Overlaps(other RecognizerResult) bool {
 	return r.Start < other.End && r.End > other.Start
 }
 
-// SortResults sorts results by start position, then by score descending.
+// SortResults sorts results by start position, then by score descending,
+// then by length descending.
+//
+// The length tiebreaker is what lets RemoveConflicts merge a full date
+// like "12.08.2025" with two same-score partials emitted on overlapping
+// offsets ("12.08." + "2025") — the longer span sorts first and the
+// shorter overlapping ones get dropped. Without the tiebreaker, sort
+// order on tied scores is non-deterministic and the shorter span can
+// win, leaving two adjacent fragments in the output.
 func SortResults(results []RecognizerResult) {
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Start != results[j].Start {
 			return results[i].Start < results[j].Start
 		}
-		return results[i].Score > results[j].Score
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		return (results[i].End - results[i].Start) > (results[j].End - results[j].Start)
 	})
 }
 
