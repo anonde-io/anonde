@@ -183,21 +183,37 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 // Per-request analyzer overrides: DisableNER + Entities
 // ---------------------------------------------------------------------------
 
-func TestIngest_DisableNER_KeepsPersonInClear(t *testing.T) {
+// TestIngest_DisableNER_SkipsModelBackedRecognizers verifies that DisableNER
+// gates off only the model-backed NER recognizers (suffix "NERRecognizer" —
+// HugotNERRecognizer, OllamaNERRecognizer). Pattern-based PERSON detectors
+// (ENAnomalyRecognizer, DEAnomalyRecognizer) keep firing — that's intentional
+// and consistent across languages, and it's what makes patterns-only deploys
+// usable for person redaction. Other pattern entities like EMAIL_ADDRESS
+// remain unaffected.
+func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
 	svc := newTestService()
+	// "Patient John Doe …" triggers ENAnomalyRecognizer's structural path
+	// ("Patient" + 1–4 capitalised tokens), which emits PERSON at score 0.85
+	// — well above the default 0.30 threshold. The bare-name path emits at
+	// 0.25 and only clears the threshold via a context-keyword boost; using
+	// the structural anchor here keeps the test stable regardless of the
+	// surrounding text.
 	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
 		DocID:         "ner-off",
 		ContentFormat: "text",
-		Content:       "John Doe emailed alice@example.com",
+		Content:       "Patient John Doe emailed alice@example.com",
 		DisableNER:    true,
 	})
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
-	// PERSON should remain (NER off); EMAIL_ADDRESS should still be redacted.
-	if !strings.Contains(ing.AnonymizedContent, "John Doe") {
-		t.Fatalf("expected name preserved with DisableNER, got %q", ing.AnonymizedContent)
+	// Pattern-based ENAnomalyRecognizer still emits PERSON for the structural match.
+	if strings.Contains(ing.AnonymizedContent, "John Doe") {
+		t.Fatalf("expected pattern-based PERSON tokenization for %q, got %q", "John Doe", ing.AnonymizedContent)
+	}
+	if !strings.Contains(ing.AnonymizedContent, "<PERSON_") {
+		t.Fatalf("expected PERSON token, got %q", ing.AnonymizedContent)
 	}
 	if strings.Contains(ing.AnonymizedContent, "alice@example.com") {
 		t.Fatalf("expected email still redacted, got %q", ing.AnonymizedContent)

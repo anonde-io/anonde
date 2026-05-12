@@ -18,8 +18,16 @@ type AnalysisConfig struct {
 	ScoreThreshold float64
 	// RemoveConflicts removes overlapping spans, keeping the best one.
 	RemoveConflicts bool
-	// DisableNER skips NER-based recognizers (PERSON, LOCATION, ORGANIZATION, NRP).
-	// Use when you only need pattern-based entities and want maximum throughput.
+	// DisableNER skips model-backed NER recognizers (recognizers whose name
+	// ends in "NERRecognizer", i.e. HugotNERRecognizer / OllamaNERRecognizer).
+	// Use when you want maximum throughput and don't need a neural model
+	// loaded or called.
+	//
+	// Pattern-based PERSON / LOCATION / ORGANIZATION recognizers
+	// (ENAnomalyRecognizer, DEAnomalyRecognizer, DEPlaceRecognizer, …) are
+	// NOT gated by this flag — they're cheap regex / vocabulary work and
+	// silently disabling them under DisableNER would drop substantial
+	// recall on the patterns-only deployment path.
 	DisableNER bool
 
 	// AllowList drops findings whose matched substring (case-insensitive,
@@ -60,13 +68,16 @@ type AnalyzerEngine struct {
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
-// starts with an uppercase letter and is not the very first character — a
-// necessary (not sufficient) condition for NER entities to be present.
+// starts with an uppercase letter — a necessary (not sufficient) condition for
+// NER entities to be present. We deliberately accept a leading-position capital:
+// short inputs like a single CSV cell ("John Smith"), a log line ("Smith called
+// support"), or any sentence where the only entity is the first token would
+// otherwise be silently skipped by NER and produce zero PERSON findings.
 func hasCapitalisedWords(text string) bool {
 	inWord := false
-	for i, r := range text {
+	for _, r := range text {
 		if unicode.IsLetter(r) {
-			if !inWord && i > 0 && unicode.IsUpper(r) {
+			if !inWord && unicode.IsUpper(r) {
 				return true
 			}
 			inWord = true
