@@ -2,7 +2,6 @@ package benchmark_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/moogacs/anonde"
@@ -63,7 +62,6 @@ var (
 
 func init() {
 	anonymizerEngine = anonde.DefaultAnonymizerEngine()
-	fmt.Println("NER backend: prose")
 	analyzerEngine = anonde.DefaultAnalyzerEngine()
 }
 
