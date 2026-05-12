@@ -23,16 +23,22 @@ var (
 	)
 
 	// Prefix form: Universitätsklinik(um) / Medizinische Hochschule / ...
+	//
+	// Separators are horizontal whitespace only ([ \t]+). \s+ would let the
+	// pattern eat across newlines into the next line, e.g. "Klinikum
+	// rechts der Isar\nNotaufnahme" incorrectly captured "...der Isar
+	// Notaufnahme" as one organisation. Fix matches typical document
+	// layout where a clinic name doesn't break across a newline.
 	deOrgPrefixRE = regexp.MustCompile(
 		`\b(?:Universit[äa]tsklinik(?:um)?|Universit[äa]tsspital|Klinikum|Krankenhaus|` +
-			`Medizinische\s+Hochschule|Fachklinik|Reha-?Klinik|` +
-			`Praxis\s+(?:Dr\.|Prof\.|für\s+\w+))\s+[A-ZÄÖÜ][a-zäöüß-]+(?:\s+[A-ZÄÖÜ][a-zäöüß-]+){0,2}`,
+			`Medizinische[ \t]+Hochschule|Fachklinik|Reha-?Klinik|` +
+			`Praxis[ \t]+(?:Dr\.|Prof\.|für[ \t]+\w+))[ \t]+[A-ZÄÖÜ][a-zäöüß-]+(?:[ \t]+[A-ZÄÖÜ][a-zäöüß-]+){0,2}`,
 	)
 
 	// Standalone famous German hospital names. Closed list — high precision.
 	deOrgWellKnownRE = regexp.MustCompile(
 		`\b(?:Charit[ée]|Vivantes|Asklepios|Helios|Sana|MediClin|` +
-			`Schön\s+Klinik|Rhön-?Klinikum|Diakonissenkrankenhaus)\b`,
+			`Schön[ \t]+Klinik|Rhön-?Klinikum|Diakonissenkrankenhaus)\b`,
 	)
 )
 

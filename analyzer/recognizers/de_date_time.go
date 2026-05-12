@@ -24,23 +24,28 @@ var (
 
 	// DD.MM YYYY — a data quirk in GraSCCo where the second dot is missing.
 	// Lower score: more ambiguous, looks like "ratio.month year".
+	// Horizontal whitespace only between month and year — "23.04\n2029" is
+	// almost certainly not a date.
 	deDateNumericLooseRE = regexp.MustCompile(
-		`\b(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\s\d{4}\b`,
+		`\b(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])[ \t]\d{4}\b`,
 	)
 
 	// DD. Monat YYYY (textual German month, full or abbreviated).
 	// "März" written as "Mär", "Mar", or "Maerz" all permitted.
 	deDateTextualRE = regexp.MustCompile(
-		`\b(?:0?[1-9]|[12]\d|3[01])\.\s?` +
+		`\b(?:0?[1-9]|[12]\d|3[01])\.[ \t]?` +
 			`(?:Januar|Februar|M(?:ä|ae)rz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|` +
 			`Jan|Feb|M(?:ä|ae)?r|Apr|Jun|Jul|Aug|Sep|Sept|Okt|Nov|Dez)\.?` +
-			`\s+\d{2,4}\b`,
+			`[ \t]+\d{2,4}\b`,
 	)
 
-	// Monat YYYY (month name + 4-digit year, no day).
+	// Monat YYYY (month name + 4-digit year, no day). Horizontal
+	// whitespace only — "Oktober\n2012" came up as a cross-newline FP
+	// where a month label at end of line wrapped into the next paragraph
+	// header that happened to start with a 4-digit number.
 	deMonthYearRE = regexp.MustCompile(
 		`\b(?:Januar|Februar|M(?:ä|ae)rz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)` +
-			`\s+\d{4}\b`,
+			`[ \t]+\d{4}\b`,
 	)
 )
 

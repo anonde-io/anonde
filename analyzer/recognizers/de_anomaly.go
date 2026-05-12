@@ -38,17 +38,26 @@ import (
 // STRUCTURAL: title + 1–4 capitalised name tokens. Title list includes
 // German salutations, medical doctor titles, "Patient:" / "Pat.:" prefixes.
 // Capturing group 1 is the name; we emit only that span, not the title.
+//
+// Separators between title and name (and between name tokens) are
+// horizontal whitespace only ([ \t]+). Allowing \s+ here would let the
+// pattern eat across a newline into the next paragraph — e.g.
+// "Dr. med. Hans Müller\nKlinik" was incorrectly capturing "Hans
+// Müller Klinik" as a 3-token name.
 var deAnomalyTitledRE = regexp.MustCompile(
 	`\b(?:Herr|Frau|Hr\.|Fr\.|Hrn\.|Frn\.|` +
-		`Dr\.(?:\s*med\.)?|Prof\.(?:\s*Dr\.?)?|PD\s+Dr\.?|` +
-		`Pat\.|Patient(?:in)?:?|der\s+Patient|die\s+Patientin)` +
-		`\s+([A-ZÄÖÜ][a-zäöüß-]{1,30}(?:\s+[A-ZÄÖÜ][a-zäöüß-]{1,30}){0,3})\b`,
+		`Dr\.(?:[ \t]*med\.)?|Prof\.(?:[ \t]*Dr\.?)?|PD[ \t]+Dr\.?|` +
+		`Pat\.|Patient(?:in)?:?|der[ \t]+Patient|die[ \t]+Patientin)` +
+		`[ \t]+([A-ZÄÖÜ][a-zäöüß-]{1,30}(?:[ \t]+[A-ZÄÖÜ][a-zäöüß-]{1,30}){0,3})\b`,
 )
 
-// STATISTICAL: ≥2 contiguous capitalised tokens (German letters + hyphens).
-// Each token must be ≥2 chars to skip initials.
+// STATISTICAL: ≥2 contiguous capitalised tokens (German letters + hyphens),
+// horizontal-whitespace separated. Each token must be ≥2 chars to skip
+// initials. \s+ between tokens would let the pattern eat across newlines
+// into the next paragraph header ("Notiz\n\nPatient", "Rehabilitation\n\n
+// Entlassungsbericht\n\nPatient") — see precision-probe FPs.
 var deAnomalyMultiTokenRE = regexp.MustCompile(
-	`\b[A-ZÄÖÜ][a-zäöüß-]{1,30}(?:\s+[A-ZÄÖÜ][a-zäöüß-]{1,30}){1,4}\b`,
+	`\b[A-ZÄÖÜ][a-zäöüß-]{1,30}(?:[ \t]+[A-ZÄÖÜ][a-zäöüß-]{1,30}){1,4}\b`,
 )
 
 // -----------------------------------------------------------------------------
