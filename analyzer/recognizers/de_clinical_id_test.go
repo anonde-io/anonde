@@ -23,6 +23,12 @@ func TestDEClinicalIDRecognizer(t *testing.T) {
 		{"Fallzahl", "Fallzahl: 103354008", []string{"103354008"}},
 		{"Patient-ID hyphenated", "Fallnummer: A-202344102", []string{"A-202344102"}},
 
+		// Alpha-prefix IDs after the new ID / Pat.-ID / ID-Nr. anchors.
+		{"ID colon alpha prefix", "ID: KL699820", []string{"KL699820"}},
+		{"ID-Nr alpha prefix", "ID-Nr.: HN999999", []string{"HN999999"}},
+		{"Pat.-ID hyphenated", "Pat.-ID: PAT-202344102", []string{"PAT-202344102"}},
+		{"Patient-ID alpha", "Patient-ID MR123456 vorgestellt", []string{"MR123456"}},
+
 		// Station / ward identifiers.
 		{"Station letter+digits", "auf Station A23 befand", []string{"A23"}},
 		{"Station hyphenated", "Station O-11 vorstellen", []string{"O-11"}},

@@ -263,6 +263,79 @@ func buildVocabSet(groups [][]string) map[string]struct{} {
 	return out
 }
 
+// deAnomalyClosedClassPrefixes — German closed-class words that legitimately
+// appear capitalised at the start of multi-word sequences (sentence start,
+// determiners, prepositions, conjunctions, demonstratives). When the FIRST
+// token of a multi-word capitalised sequence is one of these, the sequence
+// is German narrative, not PII — even if subsequent tokens are unfamiliar
+// nouns. Without this gate the Wikipedia precision probe sees 89 FPs/doc
+// because German capitalises all nouns and all sentence-start words.
+var deAnomalyClosedClassPrefixes = map[string]struct{}{
+	// Articles
+	"der": {}, "die": {}, "das": {}, "den": {}, "dem": {}, "des": {},
+	"ein": {}, "eine": {}, "einer": {}, "einem": {}, "einen": {}, "eines": {},
+	"kein": {}, "keine": {}, "keiner": {}, "keinem": {}, "keinen": {}, "keines": {},
+	// Demonstratives
+	"diese": {}, "dieser": {}, "dieses": {}, "diesem": {}, "diesen": {},
+	"jene": {}, "jener": {}, "jenes": {}, "jenem": {}, "jenen": {},
+	"jede": {}, "jeder": {}, "jedes": {}, "jedem": {}, "jeden": {},
+	"manche": {}, "mancher": {}, "manches": {},
+	"alle": {}, "alles": {}, "allen": {}, "allem":  {}, "aller": {},
+	"einige": {}, "einiger": {}, "einigen": {},
+	// Possessives
+	"mein": {}, "meine": {}, "meiner": {}, "meinem": {}, "meinen": {}, "meines": {},
+	"dein": {}, "deine": {}, "deiner": {}, "deinem": {}, "deinen": {}, "deines": {},
+	"sein": {}, "seine": {}, "seiner": {}, "seinem": {}, "seinen": {}, "seines": {},
+	"ihr": {}, "ihre": {}, "ihrer": {}, "ihrem": {}, "ihren": {}, "ihres": {},
+	"unser": {}, "unsere": {}, "unserer": {}, "unserem": {}, "unseren": {},
+	"euer": {}, "eure": {}, "eurer": {}, "eurem": {}, "euren": {},
+	// Prepositions (capitalised at sentence start)
+	"in": {}, "im": {}, "an": {}, "am": {}, "auf": {}, "aus": {}, "bei": {}, "beim": {},
+	"mit": {}, "nach": {}, "von": {}, "vom": {}, "vor": {}, "zu": {}, "zum": {}, "zur": {},
+	"über": {}, "unter": {}, "neben": {}, "zwischen": {}, "hinter": {},
+	"durch": {}, "für": {}, "ohne": {}, "gegen": {}, "um": {},
+	"trotz": {}, "wegen": {}, "während": {}, "innerhalb": {}, "außerhalb": {},
+	// Conjunctions
+	"und": {}, "oder": {}, "aber": {}, "sondern": {}, "denn": {},
+	"weil": {}, "dass": {}, "ob": {}, "wenn": {}, "als": {}, "obwohl": {},
+	// Pronouns / interrogatives
+	"ich": {}, "du": {}, "er": {}, "es": {}, "wir": {}, "sie": {},
+	"mich": {}, "dich": {}, "ihn": {}, "uns": {}, "euch": {}, "ihnen": {},
+	"mir": {}, "dir": {}, "ihm": {},
+	"man": {}, "wer": {}, "was": {}, "wie": {}, "wo": {}, "wann": {}, "warum": {},
+	"welche": {}, "welcher": {}, "welches": {},
+	// Very-high-frequency adverbs that often start sentences
+	"auch": {}, "noch": {}, "schon": {}, "nur": {}, "doch": {}, "ja": {}, "nein": {},
+	"hier": {}, "dort": {}, "dann": {}, "nun": {}, "jetzt": {}, "heute": {},
+	"gestern": {}, "morgen": {}, "immer": {}, "nie": {}, "manchmal": {},
+	"so": {}, "sehr": {}, "viel": {}, "wenig": {}, "mehr": {}, "weniger": {},
+	"oft": {}, "meist": {}, "fast": {}, "etwa": {}, "ungefähr": {},
+	// Frequent capitalised abstract/legal words that lead "Wikipedia-style" prose
+	"recht": {}, "begriff": {}, "definition": {}, "bezeichnung": {}, "ausdruck": {},
+	"wortherkunft": {}, "lehre": {}, "geschichte": {}, "übersicht": {},
+	"einleitung": {}, "kategorie": {}, "kapitel": {}, "abschnitt": {}, "absatz": {},
+	"siehe": {},
+}
+
+// firstToken returns the lowercased first whitespace-separated token of seq,
+// stripped of non-letter prefix characters.
+func firstToken(seq string) string {
+	for i, r := range seq {
+		if unicodeIsLetter(r) {
+			rest := seq[i:]
+			end := len(rest)
+			for j, rr := range rest {
+				if !unicodeIsLetter(rr) {
+					end = j
+					break
+				}
+			}
+			return strings.ToLower(rest[:end])
+		}
+	}
+	return ""
+}
+
 // -----------------------------------------------------------------------------
 // Recognizer
 // -----------------------------------------------------------------------------
@@ -335,9 +408,15 @@ func (r *DEAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 	}
 
 	// 2. Multi-token capitalised sequences whose tokens are not all in the
-	// medical/common vocabulary.
+	// medical/common vocabulary AND don't start with a closed-class word.
+	// The closed-class gate is the dominant precision lever — without it,
+	// German narrative ("Diese Störungen", "Die Lehre", "Im Gegensatz") is
+	// flagged as PERSON because German capitalises every noun.
 	for _, m := range deAnomalyMultiTokenRE.FindAllStringIndex(text, -1) {
 		seq := text[m[0]:m[1]]
+		if _, isClosedClass := deAnomalyClosedClassPrefixes[firstToken(seq)]; isClosedClass {
+			continue
+		}
 		if r.allInDenyList(seq) {
 			continue
 		}
