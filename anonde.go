@@ -87,6 +87,7 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewDEPlaceRecognizer(),
 		recognizers.NewDEClinicalIDRecognizer(),
 		recognizers.NewDEOrganizationRecognizer(),
+		recognizers.NewDEProfessionRecognizer(),
 		recognizers.NewDEAnomalyRecognizer(),
 	}
 }
