@@ -26,8 +26,14 @@ import (
 var (
 	// 5-digit German PLZ followed by a city: "12345 Berlin" or
 	// "12345 Sankt Augustin" — accept 1-3 city tokens.
+	//
+	// Separators are horizontal whitespace only ([ \t]+). \s+ would let
+	// the pattern eat across a newline into the next paragraph header —
+	// e.g. "12299 Berlin \n\nHerrn" was incorrectly capturing "Berlin
+	// Herrn" as a 2-token city. Real German addresses keep PLZ + city on
+	// one line by convention.
 	dePLZWithCityRE = regexp.MustCompile(
-		`\b\d{5}\s+[A-ZÄÖÜ][a-zäöüß-]+(?:\s+[A-ZÄÖÜ][a-zäöüß-]+){0,2}\b`,
+		`\b\d{5}[ \t]+[A-ZÄÖÜ][a-zäöüß-]+(?:[ \t]+[A-ZÄÖÜ][a-zäöüß-]+){0,2}\b`,
 	)
 
 	// Country-prefixed PLZ: A-1010, CH-8001, D-12345, FL-9490.
