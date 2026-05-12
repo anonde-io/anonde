@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,16 @@ import (
 func main() {
 	addr := platformAddr()
 	analyzerEngine := analyzerFromEnv()
+
+	// One-shot bootstrap used by Dockerfile.platform-ner: initialise the
+	// active analyzer, run one trivial inference call to force the NER
+	// backend to download / cache its model into HUGOT_MODELS_DIR, then
+	// exit cleanly. The runtime image then ships with the model on disk
+	// and never needs network access at startup.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("DOWNLOAD_MODELS_ONLY")), "1") {
+		downloadModelsAndExit(analyzerEngine)
+	}
+
 	vaultTTL := durationFromEnv("MEMORY_VAULT_TTL", 5*time.Minute)
 	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
 	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", platform.DefaultMaxRequestBytes)
@@ -41,6 +52,29 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// downloadModelsAndExit triggers a single inference call so the configured
+// backend's underlying NER model is fetched into its cache directory, then
+// exits. Used at Docker build time (see Dockerfile.platform-ner) to bake
+// the model into the runtime image — the runtime then has no cold-start
+// download and needs no outbound network access.
+//
+// Timeout is generous (10 minutes) because the first call also has to
+// download the model files from HuggingFace Hub on slow links.
+func downloadModelsAndExit(engine *analyzer.AnalyzerEngine) {
+	log.Println("DOWNLOAD_MODELS_ONLY=1: warming up backend so model artifacts are cached, then exiting")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	_, err := engine.Analyze(ctx, "John Smith works at Mercy Hospital.", analyzer.AnalysisConfig{
+		Language:       "en",
+		ScoreThreshold: 0.3,
+	})
+	if err != nil {
+		log.Fatalf("model warmup failed: %v", err)
+	}
+	log.Println("models cached successfully")
+	os.Exit(0)
 }
 
 func platformAddr() string {
