@@ -27,6 +27,17 @@ func main() {
 		downloadModelsAndExit(analyzerEngine)
 	}
 
+	// WARMUP_ON_START=1 runs one trivial Analyze synchronously before the
+	// HTTP server starts listening. For NER backends this forces the
+	// sync.Once-gated ONNX session creation to happen at boot — failure
+	// (typically OOM under-provisioning) is then visible in machine boot
+	// logs instead of as a stuck first user request, and the first real
+	// request sees ~150 ms latency instead of 5–30 s. No-op overhead on
+	// patterns-only backends.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("WARMUP_ON_START")), "1") {
+		warmupAnalyzer(analyzerEngine)
+	}
+
 	vaultTTL := durationFromEnv("MEMORY_VAULT_TTL", 5*time.Minute)
 	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
 	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", platform.DefaultMaxRequestBytes)
@@ -52,6 +63,31 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// warmupAnalyzer forces the analyzer engine's lazy initialisation paths
+// (notably the Hugot ONNX session under sync.Once) to run before the HTTP
+// server starts listening. On failure the process exits with the analyzer
+// error, surfacing under-provisioning (OOM) at boot rather than as a hung
+// first user request.
+//
+// The 5 minute timeout accommodates the worst-case cold disk read +
+// pure-Go ONNX session init on the smallest Fly machine. Tighten via
+// PLATFORM_WARMUP_TIMEOUT if you have a tighter SLA for boot latency.
+func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
+	timeout := durationFromEnv("PLATFORM_WARMUP_TIMEOUT", 5*time.Minute)
+	log.Printf("WARMUP_ON_START=1: priming analyzer (timeout=%s)", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	start := time.Now()
+	_, err := engine.Analyze(ctx, "John Smith works at Mercy Hospital.", analyzer.AnalysisConfig{
+		Language:       "en",
+		ScoreThreshold: 0.3,
+	})
+	if err != nil {
+		log.Fatalf("analyzer warmup failed after %s: %v", time.Since(start), err)
+	}
+	log.Printf("analyzer warmup complete in %s", time.Since(start))
 }
 
 // downloadModelsAndExit triggers a single inference call so the configured
