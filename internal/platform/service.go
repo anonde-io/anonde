@@ -521,15 +521,6 @@ func buildTokenReplacer(orderedTokens []string, resolved map[string]string) (fun
 	}, nil
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func buildToken(tenantID, entityType string, idx int) string {
 	normalizedTenant := strings.ToUpper(strings.ReplaceAll(tenantID, "-", "_"))
 	return fmt.Sprintf("<%s_%s_%06d>", entityType, normalizedTenant, idx+1)
