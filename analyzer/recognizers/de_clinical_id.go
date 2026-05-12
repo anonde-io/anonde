@@ -39,6 +39,7 @@ var (
 	// three letters ("PAT-202344102").
 	deClinicalIDKeywordRE = regexp.MustCompile(
 		`\b(?:` +
+			// German keywords
 			`Fall(?:[-\s]?(?:Nr|nummer|zahl))|` +
 			`FN|` +
 			`E[-\s]?Nr|` +
@@ -54,7 +55,14 @@ var (
 			`Bericht[-\s]?Nr|` +
 			`Auftrag(?:s[-\s]?Nr)?|` +
 			`ID(?:[-\s]?(?:Nr|nummer))?|` +
-			`Fall` +
+			`Fall|` +
+			// English keywords — same shape, different vocabulary. "MRN" is
+			// already covered above (universal abbreviation); these add the
+			// long forms common in US/UK clinical documents.
+			`Medical[ \t]+Record(?:[ \t]*(?:Number|No\.?|#))?|` +
+			`Med[ \t]+Rec(?:ord)?(?:[ \t]*(?:Number|No\.?|#))?|` +
+			`Account(?:[ \t]*(?:Number|No\.?|#))?|` +
+			`Encounter(?:[ \t]*(?:Number|No\.?|#|ID))?` +
 			`)` +
 			// Any sequence of separator chars (whitespace, ., :, ;, tab)
 			// — order-agnostic so we match "Nr.: ", "Nr: ", " :", "\t", "-Nr.\t", etc.
@@ -64,9 +72,11 @@ var (
 
 	// Station / ward / OP / outpatient-clinic identifiers. The trigger
 	// word strongly implies the next token is a room/unit code. Captures
-	// short alphanumerics, optionally hyphenated (e.g. "O-11", "KJPP-2").
+	// short alphanumerics, optionally hyphenated (e.g. "O-11", "KJPP-2",
+	// "5A", "302").
 	deClinicalIDStationRE = regexp.MustCompile(
 		`\b(?:` +
+			// German triggers
 			`Station|` +
 			`Ambulanz|` +
 			`Onkologie-?Ambulanz|` +
@@ -78,7 +88,9 @@ var (
 			`Bett|` +
 			`Zimmer|` +
 			`Etage|` +
-			`Gebäude` +
+			`Gebäude|` +
+			// English triggers — same intent.
+			`Ward|Room|Unit|Bed|Floor|Suite|ICU|NICU|PICU|Emergency` +
 			`)\s+` +
 			`([A-Z]{1,4}-?\d{1,4}|\d{1,4}[A-Z]?(?:-\d{1,4})?|[IVX]{1,4})\b`,
 	)
@@ -102,7 +114,11 @@ func (r *DEClinicalIDRecognizer) Name() string { return "DEClinicalIDRecognizer"
 func (r *DEClinicalIDRecognizer) SupportedEntities() []string { return []string{"ID"} }
 
 // SupportedLanguages returns the languages this recognizer applies to.
-func (r *DEClinicalIDRecognizer) SupportedLanguages() []string { return []string{"de"} }
+// Both — despite the DE prefix in the name, the keyword set is bilingual:
+// universal abbreviations (MRN, FN, Patient-ID, ID, histology codes) work
+// in any language, and German/English long forms cover both clinical-text
+// styles. Renaming would require touching every call site; kept as-is.
+func (r *DEClinicalIDRecognizer) SupportedLanguages() []string { return []string{"de", "en"} }
 
 // Analyze scans text for the three ID shapes and emits the VALUE portion
 // of each (not the trigger keyword).
