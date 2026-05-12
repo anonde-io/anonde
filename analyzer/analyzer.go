@@ -50,6 +50,13 @@ type AnalyzerEngine struct {
 	// to kill false positives. See the Reconciler interface for the
 	// fail-open contract.
 	Reconciler Reconciler
+
+	// Auditor, if non-nil, runs one final LLM pass on the document
+	// AFTER all other stages (recognizers, reconciler, threshold,
+	// conflicts). It returns ADDITIONAL findings the rest of the stack
+	// missed. Fails open: on any error returns nothing, so attaching
+	// an auditor cannot RAISE leak rate vs. not attaching one.
+	Auditor Auditor
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
@@ -70,14 +77,18 @@ func hasCapitalisedWords(text string) bool {
 	return false
 }
 
+// isNERBasedRecognizer returns true for recognizers that depend on a
+// neural model (ONNX / LLM). The patterns-only mode of the engine skips
+// these to avoid loading models or making external calls.
+//
+// Identified by name suffix, not by the entity types emitted — regex
+// and lookup-based recognizers also emit PERSON / LOCATION /
+// ORGANIZATION (DEAnomalyRecognizer, DEPlaceRecognizer, the German org
+// pattern recognizer, …) and skipping them in patterns-only mode would
+// silently drop substantial recall. Naming convention: model-backed
+// recognizers MUST have a name ending in "NERRecognizer".
 func isNERBasedRecognizer(rec EntityRecognizer) bool {
-	for _, entity := range rec.SupportedEntities() {
-		switch entity {
-		case "PERSON", "LOCATION", "ORGANIZATION", "NRP":
-			return true
-		}
-	}
-	return false
+	return strings.HasSuffix(rec.Name(), "NERRecognizer")
 }
 
 // usesCapitalisedTextHeuristic returns true for recognizers that rely heavily on
@@ -239,6 +250,22 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	} else {
 		SortResults(all)
 	}
+
+	// 9. Final-audit-pass auditor (optional, recall-focused). Appends
+	// any PII the rest of the pipeline missed. Fail-open in the recall
+	// direction: errors return nothing, never modify existing findings.
+	if e.Auditor != nil {
+		extra, err := e.Auditor.Audit(ctx, text, all)
+		if err == nil && len(extra) > 0 {
+			all = append(all, extra...)
+			if cfg.RemoveConflicts {
+				all = RemoveConflicts(all)
+			} else {
+				SortResults(all)
+			}
+		}
+	}
+
 	return all, nil
 }
 

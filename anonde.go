@@ -4,6 +4,7 @@ package anonde
 
 import (
 	"github.com/moogacs/anonde/analyzer"
+	"github.com/moogacs/anonde/analyzer/auditor"
 	"github.com/moogacs/anonde/analyzer/recognizers"
 	"github.com/moogacs/anonde/analyzer/reconciler"
 	"github.com/moogacs/anonde/anonymizer"
@@ -82,6 +83,11 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewDEPostalCodeRecognizer(),
 		recognizers.NewDEStreetRecognizer(),
 		recognizers.NewDESteuerIDRecognizer(),
+		recognizers.NewDEAgeRecognizer(),
+		recognizers.NewDEPlaceRecognizer(),
+		recognizers.NewDEClinicalIDRecognizer(),
+		recognizers.NewDEOrganizationRecognizer(),
+		recognizers.NewDEAnomalyRecognizer(),
 	}
 }
 
@@ -142,6 +148,22 @@ func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bo
 // attaching it CANNOT raise the leak rate vs not attaching it.
 func WithOllamaReconciler(e *analyzer.AnalyzerEngine, cfg reconciler.OllamaConfig) *analyzer.AnalyzerEngine {
 	e.Reconciler = reconciler.NewOllama(cfg)
+	return e
+}
+
+// WithOllamaAuditor attaches a local-Ollama LLM final-audit-pass to the
+// given engine. After all other recognizers run, the auditor reviews the
+// document for PII the rest of the pipeline missed and appends its
+// findings.
+//
+// Fails open: on any LLM error the auditor returns nothing, so attaching
+// it CANNOT raise leak rate vs. not attaching it.
+//
+// Use a 7B+ instruction-following model for usable quality on German
+// clinical text; smaller models produce unreliable JSON. Pass a zero
+// OllamaAuditorConfig for defaults (llama3.1:8b, 60s timeout).
+func WithOllamaAuditor(e *analyzer.AnalyzerEngine, cfg auditor.OllamaConfig) *analyzer.AnalyzerEngine {
+	e.Auditor = auditor.NewOllama(cfg)
 	return e
 }
 

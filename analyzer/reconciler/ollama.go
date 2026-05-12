@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -71,6 +72,58 @@ type Ollama struct {
 	// group deduplicates in-flight identical requests so two parallel
 	// workers don't both hit the LLM with the same prompt.
 	group singleflight.Group
+
+	// Per-process statistics. Exposed via Stats() so callers (bench
+	// runners, production telemetry) can see what the reconciler did.
+	stats reconcilerStats
+}
+
+// Stats are cumulative reconciler counters since process start.
+type Stats struct {
+	// Total candidates seen across all Reconcile calls.
+	Total int64
+	// Dropped without an LLM call because score < LowGate.
+	DroppedLow int64
+	// Kept without an LLM call because score >= HighGate.
+	KeptHigh int64
+	// Sent to the LLM (score in [LowGate, HighGate)).
+	LLMBand int64
+	// Subset of LLMBand: LLM voted KEEP and the candidate was kept.
+	LLMKeep int64
+	// Subset of LLMBand: LLM voted DROP and the candidate was removed.
+	LLMDrop int64
+	// Subset of LLMBand: LLM call errored or timed out — fail-open kept
+	// the candidate, equivalent to LLMKeep for the output but logged
+	// separately so operators can see how often the model is reachable.
+	LLMError int64
+	// Cache hits (no LLM call made because the same (span,type,window)
+	// already had a decision).
+	CacheHit int64
+}
+
+type reconcilerStats struct {
+	total      int64
+	droppedLow int64
+	keptHigh   int64
+	llmBand    int64
+	llmKeep    int64
+	llmDrop    int64
+	llmError   int64
+	cacheHit   int64
+}
+
+// Stats returns a snapshot of cumulative counters.
+func (r *Ollama) Stats() Stats {
+	return Stats{
+		Total:      atomicLoad(&r.stats.total),
+		DroppedLow: atomicLoad(&r.stats.droppedLow),
+		KeptHigh:   atomicLoad(&r.stats.keptHigh),
+		LLMBand:    atomicLoad(&r.stats.llmBand),
+		LLMKeep:    atomicLoad(&r.stats.llmKeep),
+		LLMDrop:    atomicLoad(&r.stats.llmDrop),
+		LLMError:   atomicLoad(&r.stats.llmError),
+		CacheHit:   atomicLoad(&r.stats.cacheHit),
+	}
 }
 
 // NewOllama constructs an Ollama reconciler with the given config.
@@ -120,12 +173,15 @@ func (r *Ollama) Reconcile(ctx context.Context, text string, candidates []analyz
 	var ambiguous []ambig
 
 	for i, c := range candidates {
+		atomicAdd(&r.stats.total, 1)
 		switch {
 		case c.Score >= r.cfg.HighGate:
+			atomicAdd(&r.stats.keptHigh, 1)
 			out = append(out, c)
 		case c.Score < r.cfg.LowGate:
-			// drop silently
+			atomicAdd(&r.stats.droppedLow, 1)
 		default:
+			atomicAdd(&r.stats.llmBand, 1)
 			ambiguous = append(ambiguous, ambig{i, c})
 		}
 	}
@@ -169,6 +225,12 @@ func (r *Ollama) askKeep(ctx context.Context, text string, c analyzer.Recognizer
 	r.mu.Lock()
 	if v, ok := r.cache[key]; ok {
 		r.mu.Unlock()
+		atomicAdd(&r.stats.cacheHit, 1)
+		if v {
+			atomicAdd(&r.stats.llmKeep, 1)
+		} else {
+			atomicAdd(&r.stats.llmDrop, 1)
+		}
 		return v
 	}
 	r.mu.Unlock()
@@ -191,10 +253,20 @@ func (r *Ollama) askKeep(ctx context.Context, text string, c analyzer.Recognizer
 	})
 	if err != nil {
 		// Fail-open: keep candidate on any error.
+		atomicAdd(&r.stats.llmError, 1)
 		return true
 	}
-	return v.(bool)
+	keep := v.(bool)
+	if keep {
+		atomicAdd(&r.stats.llmKeep, 1)
+	} else {
+		atomicAdd(&r.stats.llmDrop, 1)
+	}
+	return keep
 }
+
+func atomicAdd(p *int64, n int64) { atomic.AddInt64(p, n) }
+func atomicLoad(p *int64) int64   { return atomic.LoadInt64(p) }
 
 const reconcilerSystemPrompt = `You verify whether a substring of clinical text is genuine personally identifiable information (PII).
 Reply with exactly one word: KEEP or DROP.
