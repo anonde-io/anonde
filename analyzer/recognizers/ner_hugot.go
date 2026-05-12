@@ -1,3 +1,12 @@
+//go:build hugot
+
+// Package-level build tag: this file (and the hugot transitive deps —
+// onnxruntime-go, tokenizers, …) compile only when building with
+// `go build -tags hugot ...`. Default builds exclude hugot entirely to
+// keep compile time, binary size, and dependency surface small. The
+// platform binary's "hugot" backend falls back to a fatal-error stub
+// (see ../../hugot_off.go) when this file isn't compiled.
+
 package recognizers
 
 import (
