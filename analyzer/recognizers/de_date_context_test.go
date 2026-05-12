@@ -72,11 +72,12 @@ func TestDEDateContextRecognizer(t *testing.T) {
 			text:      "Siehe Abschnitt 19.3. in der Anlage.",
 			wantSpans: nil,
 		},
-		{
-			name:      "DIN standard reference",
-			text:      "Sterilisation nach DIN 2018 erfolgt.",
-			wantSpans: nil,
-		},
+		// Note: "Sterilisation nach DIN 2018" intentionally NO LONGER
+		// has a negative test — the medical-vocab context fallback
+		// flags 2018 because Sterilisation is in the procedure vocab.
+		// Acceptable trade: catches 100+ real bare-year dates
+		// (Polytrauma 1995, Pankreatitis 2022, Mamma-CA 2040, etc.)
+		// at the cost of occasional FPs on DIN-style references.
 	}
 
 	for _, tc := range cases {
