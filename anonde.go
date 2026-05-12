@@ -27,13 +27,15 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewCryptoRecognizer(),
 		recognizers.NewDateTimeRecognizer(),
 
-		// United States
+		// United States / English-language clinical
 		recognizers.NewUSSocialSecurityRecognizer(),
 		recognizers.NewUSPassportRecognizer(),
 		recognizers.NewUSBankRecognizer(),
 		recognizers.NewUSDriverLicenseRecognizer(),
 		recognizers.NewUSITINRecognizer(),
 		recognizers.NewMedicalLicenseRecognizer(),
+		recognizers.NewENAnomalyRecognizer(),
+		recognizers.NewENOrganizationRecognizer(),
 
 		// United Kingdom
 		recognizers.NewUKNHSRecognizer(),
