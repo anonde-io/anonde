@@ -37,6 +37,15 @@ func NewAnonymizerEngine() *AnonymizerEngine { return &AnonymizerEngine{} }
 
 // Anonymize replaces detected PII in text using the configured operators.
 // Results are de-overlapped before processing: higher score wins, then larger span.
+//
+// Adjacent same-type spans separated only by ASCII whitespace are merged
+// into one before tokenization. The motivating case: NER models that emit
+// FIRSTNAME and LASTNAME as separate PERSON spans for "Priya Nair", which
+// without the merge would render as "<PERSON_001> <PERSON_002>". After
+// merging the output is a single "<PERSON_001>" token covering the whole
+// name. Merging is deliberately at this layer (not in the recognizer)
+// because bench corpora often annotate name components as separate gold
+// spans — merging at the recognizer level would tank exact-match metrics.
 func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerResult, cfg AnonymizerConfig) (*AnonymizerResult, error) {
 	if cfg == nil {
 		cfg = AnonymizerConfig{}
@@ -53,6 +62,7 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 		return sorted[i].Score > sorted[j].Score
 	})
 	sorted = analyzer.RemoveConflicts(sorted)
+	sorted = mergeAdjacentSameType(sorted, text)
 
 	// Process right-to-left so offsets stay valid.
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
@@ -107,4 +117,48 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 	}
 
 	return &AnonymizerResult{Text: string(out), Items: items}, nil
+}
+
+// mergeAdjacentSameType folds same-type spans separated only by ASCII
+// whitespace into a single span. Walks left-to-right after a sort by
+// start; chains of three or more adjacent components collapse correctly.
+// The merged span keeps the higher score and the first span's
+// RecognizerName (so token operators that key on that field remain
+// stable).
+func mergeAdjacentSameType(in []analyzer.RecognizerResult, text string) []analyzer.RecognizerResult {
+	if len(in) < 2 {
+		return in
+	}
+	sort.Slice(in, func(i, j int) bool { return in[i].Start < in[j].Start })
+	out := in[:0]
+	out = append(out, in[0])
+	for _, r := range in[1:] {
+		last := &out[len(out)-1]
+		if r.EntityType == last.EntityType && r.Start > last.End && r.Start <= len(text) && onlyAsciiWhitespace(text, last.End, r.Start) {
+			last.End = r.End
+			if r.Score > last.Score {
+				last.Score = r.Score
+			}
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// onlyAsciiWhitespace reports whether text[a:b] is non-empty and contains
+// only ASCII whitespace bytes (space, tab, newline, CR).
+func onlyAsciiWhitespace(text string, a, b int) bool {
+	if a >= b || a < 0 || b > len(text) {
+		return false
+	}
+	for i := a; i < b; i++ {
+		switch text[i] {
+		case ' ', '\t', '\n', '\r':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }

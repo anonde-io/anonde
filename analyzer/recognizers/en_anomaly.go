@@ -43,13 +43,19 @@ import (
 //   - "He met John yesterday"     → "John"        ("He" gated as closed-class)
 //   - "The cat ran"               → (nothing)     (all caps are closed-class)
 
-// enAnomalyTitledRE matches an English honorific / clinical label, then
-// captures 1-4 capitalised name tokens in group 1.
+// enAnomalyTitledRE matches an English honorific, clinical label, or
+// self-introduction / sign-off anchor, then captures 1-4 capitalised name
+// tokens in group 1.
 //
 // Name token shape: [A-Z][a-zA-Z'-]{1,30}.
 //   - Apostrophe allowed: "O'Connor", "D'Angelo".
 //   - Internal hyphen allowed: "Thompson-Brown", "Smith-Jones".
 //   - No spaces in a single token; multi-word names span via [ \t]+.
+//
+// Alternation order matters: Go's RE2 picks the FIRST matching alternative,
+// not the longest. Multi-word anchors must come before their single-word
+// prefix ("Yours sincerely," before "Yours,"; "Best regards," before
+// "Best,"). Tested by recognizers_test.go::TestENAnomalyAnchorOrder.
 var enAnomalyTitledRE = regexp.MustCompile(
 	`\b(?:` +
 		// Honorifics — period optional ("Mr Smith" vs "Mr. Smith")
@@ -57,7 +63,19 @@ var enAnomalyTitledRE = regexp.MustCompile(
 		// Medical honorifics
 		`Dr\.?|Prof\.?|Doctor|Professor|` +
 		// Clinical labels
-		`Pt\.?|Patient:?|the[ \t]+patient` +
+		`Pt\.?|Patient:?|the[ \t]+patient|` +
+		// Self-introduction anchors. "I am happy" / "This is Tuesday"
+		// produce single-token false positives if the name regex matches
+		// the trailing capitalised word; accepted because (a) those
+		// constructions are rare in business prose, and (b) the bench
+		// shows net PERSON precision improves from catching the much
+		// more common "I am [FirstName LastName]" pattern.
+		`I[ \t]+am|I'm|My[ \t]+name[ \t]+is|This[ \t]+is|` +
+		// Email sign-offs. Longer alternatives MUST come first per the
+		// Go RE2 first-match rule.
+		`Yours[ \t]+sincerely,?|Yours[ \t]+truly,?|Yours,?|` +
+		`Best[ \t]+regards,?|Kind[ \t]+regards,?|Best,?|` +
+		`Sincerely,?|Regards,?|Cheers,?` +
 		`)` +
 		`[ \t]+` +
 		`([A-Z][a-zA-Z'-]{1,30}(?:[ \t]+[A-Z][a-zA-Z'-]{1,30}){0,3})\b`,
@@ -130,12 +148,20 @@ var enClosedClassPrefixes = map[string]struct{}{
 // context window of a bare-name finding, boost its score (default +0.35).
 // Curated for clinical / records context: surrounding language about
 // patients, providers, encounters, and admin metadata.
+//
+// Non-clinical PERSON cues (self-introductions, email signatures, customer
+// support text) are NOT keywords — they are handled by structural anchors
+// in enAnomalyTitledRE ("I am", "Sincerely,", "Regards,", …) so that the
+// anchor + 1–4 caps token shape is required, instead of any nearby
+// business word boosting any capitalised pair (which produced many FPs:
+// "Email", "Northwind Health", "INV-" being treated as PERSON when a
+// keyword like "email" or "phone" appeared in the same sentence).
 var enPersonContextKeywords = []string{
-	// Roles
+	// Clinical roles
 	"patient", "patients", "doctor", "doctors", "physician", "physicians",
 	"nurse", "nurses", "surgeon", "surgeons", "clinician", "provider",
 	"caregiver", "therapist", "psychiatrist", "consultant",
-	// Encounter verbs
+	// Clinical encounter verbs
 	"admitted", "discharged", "diagnosed", "treated", "examined", "assessed",
 	"prescribed", "referred", "seen", "reviewed", "consulted", "evaluated",
 	"presented", "complained",

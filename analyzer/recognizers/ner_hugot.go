@@ -33,60 +33,8 @@ const (
 	defaultNERChunkOverlap = 200
 )
 
-// HugotNERConfig configures the hugot-backed NER recognizer.
-type HugotNERConfig struct {
-	// ModelsDir is the local directory where models are stored.
-	// Defaults to ~/.cache/anonde/models.
-	ModelsDir string
-
-	// ModelName is the HuggingFace model ID to use.
-	// Defaults to "onnx-community/multilang-pii-ner-ONNX" — XLM-RoBERTa-base
-	// fine-tuned for PII detection across English, German, Italian, and
-	// French. Substantially better recall on German clinical text than a
-	// generic CoNLL-2003 NER because it was trained on PII-specific labels
-	// (GIVENNAME / SURNAME / CITY / STREET / BUILDINGNUM / ZIPCODE / AGE / …).
-	//
-	// Alternative defaults worth knowing:
-	//   * "Xenova/distilbert-base-multilingual-cased-ner-hrl" — smaller
-	//     (~135 MB), CoNLL-2003 news-text labels (PER/LOC/ORG), wider
-	//     language coverage but weaker on clinical text.
-	//   * "Isotonic/distilbert_finetuned_ai4privacy_v2" — English-only,
-	//     ai4privacy-tuned, highest core-entity F1 on the English bench
-	//     (see bench/parity/REPORT_FULL.md).
-	ModelName string
-
-	// AutoDownload, when true, downloads the model on first use if not present locally.
-	AutoDownload bool
-
-	// OnnxFilePath optionally selects a specific ONNX file inside the model
-	// repo (e.g. "onnx/model_quantized.onnx" or "onnx/model_int8.onnx" for
-	// faster inference at minor accuracy cost). Empty = repo default.
-	// Only effective on the first download; cached models reuse whatever
-	// was downloaded previously.
-	OnnxFilePath string
-
-	// ChunkChars is the maximum byte size of each sliding-window chunk
-	// fed to the model. Docs longer than ChunkChars are split on
-	// whitespace boundaries; entities found in any chunk are emitted
-	// with their global offsets in the original text.
-	//
-	// Zero uses defaultNERChunkChars. This must be smaller than the
-	// model's token context window in chars — a 512-token model with
-	// roughly 4 chars/token (typical for German) caps useful values
-	// near 1800. Smaller values trade throughput for safety on
-	// dense-tokenizing scripts (Chinese, Japanese).
-	ChunkChars int
-
-	// ChunkOverlap is the byte overlap between adjacent chunks, so an
-	// entity sitting on a boundary is seen whole by at least one
-	// chunk. Zero uses defaultNERChunkOverlap. Must be < ChunkChars.
-	ChunkOverlap int
-
-	// ScoreFloor filters NER predictions below this confidence before
-	// they reach the analyzer. Zero uses defaultNERScoreFloor (0.60).
-	// Use a negative value to disable filtering.
-	ScoreFloor float64
-}
+// HugotNERConfig lives in ner_hugot_config.go (no build tag) so the
+// top-level package's hugot_off.go stub can name it in a signature.
 
 // hugotLabelToEntity maps both CoNLL-2003 labels and ai4privacy-fine-tuned
 // model labels to the entity types used by anonde.
@@ -342,12 +290,7 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 	// match). With overlapping chunks the same entity is often picked up
 	// twice at slightly different boundaries — keep the higher-scoring
 	// span and drop the smaller overlap.
-	type cand struct {
-		start, end int
-		score      float64
-		typ        string
-	}
-	cands := make([]cand, 0, len(chunks)*8)
+	cands := make([]hugotCand, 0, len(chunks)*8)
 
 	// output.Entities[i] corresponds to inputs[i] / chunks[i].
 	for i, chunk := range chunks {
@@ -380,7 +323,7 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 			startByte := chunk.ByteStart + startChunk
 			endByte := chunk.ByteStart + endChunk
 
-			cands = append(cands, cand{startByte, endByte, score, entityType})
+			cands = append(cands, hugotCand{startByte, endByte, score, entityType})
 		}
 	}
 
@@ -389,7 +332,7 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 	// detections almost always refer to the same entity; the higher score
 	// is the better-anchored span. Inter-type overlaps are passed through
 	// — the analyzer's conflict resolver decides between them.
-	byType := map[string][]cand{}
+	byType := map[string][]hugotCand{}
 	for _, c := range cands {
 		byType[c.typ] = append(byType[c.typ], c)
 	}
@@ -414,6 +357,17 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 				kept = append(kept, c)
 			}
 		}
+		// Adjacent same-type spans are intentionally NOT merged here.
+		// Many PII corpora (ai4privacy/pii-masking-200k included) annotate
+		// each name component as a separate span — "John Smith" is two
+		// gold PERSON entries, "Dr. Feeney" is two PERSON entries, etc.
+		// Merging at the recognizer level breaks span-exact comparison
+		// against those corpora (~25% of docs in ai4privacy contain at
+		// least one adjacent pair, dropping PERSON F1 from 0.83 to 0.63).
+		// The anonymizer applies an adjacency merge at tokenization time
+		// instead — see anonymizer.Anonymize — so user-facing output
+		// produces one <PERSON> token per name even though the analyzer
+		// emits two.
 		for _, c := range kept {
 			results = append(results, analyzer.RecognizerResult{
 				Start:          c.start,
@@ -426,6 +380,14 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 		_ = typ
 	}
 	return results, nil
+}
+
+// hugotCand is an internal candidate span produced by the model before
+// type-grouped overlap dedup.
+type hugotCand struct {
+	start, end int
+	score      float64
+	typ        string
 }
 
 // nerChunk is a slice of input text fed to the model. ByteStart is its
