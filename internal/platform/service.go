@@ -89,8 +89,15 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 		return nil, err
 	}
 
+	resolvedLang := req.Language
+	if resolvedLang == "" {
+		resolvedLang = detectLanguage(analyzableContent)
+	}
+	if resolvedLang == "" {
+		resolvedLang = s.defaultLang
+	}
 	analysisCfg := analyzer.AnalysisConfig{
-		Language:        firstNonEmpty(req.Language, s.defaultLang),
+		Language:        resolvedLang,
 		ScoreThreshold:  req.ScoreThreshold,
 		RemoveConflicts: true,
 		Entities:        req.Entities,
@@ -180,8 +187,19 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	// cleartext within one doc gets one token) and as the reveal source.
 	docTokenByKey := map[string]string{} // key = entityType+"\x00"+cleartext
 
+	// Language resolution: explicit request value wins. Otherwise auto-
+	// detect from the document's analyzable text. Fall back to the
+	// configured default only when detection returns "" (very short or
+	// stopword-free input).
+	resolvedLang := req.Language
+	if resolvedLang == "" {
+		resolvedLang = detectLanguage(analyzableContent)
+	}
+	if resolvedLang == "" {
+		resolvedLang = s.defaultLang
+	}
 	analysisCfg := analyzer.AnalysisConfig{
-		Language:        firstNonEmpty(req.Language, s.defaultLang),
+		Language:        resolvedLang,
 		ScoreThreshold:  req.ScoreThreshold,
 		RemoveConflicts: true,
 		Entities:        req.Entities,
