@@ -9,6 +9,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/platform ./cmd/platfo
 
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/platform /platform
+# Patterns-only by default — distroless has no writable cache and we don't
+# want a ~250 MB model download at boot. Override with
+#   docker run -e ANALYZER_BACKEND=hugot -v <models>:/cache <image>
+# to enable in-process ONNX NER.
+ENV ANALYZER_BACKEND=patterns
 EXPOSE 8080
 ENTRYPOINT ["/platform"]
 
