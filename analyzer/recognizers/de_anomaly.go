@@ -55,10 +55,20 @@ var deAnomalyMultiTokenRE = regexp.MustCompile(
 // Embedded vocabulary
 // -----------------------------------------------------------------------------
 
-// deClinicalVocab is a kernel of German tokens that should NEVER be flagged
-// as PII. Lowercased. Grouped here for readability; collapsed to a single
-// set at package init.
-var deClinicalVocab = [][]string{
+// deClinicalCoreVocab holds the *medical* core: anatomy, conditions,
+// procedures, drugs, medical roles, calendar. These tokens are also good
+// signals of medical/clinical CONTEXT — e.g. a year appearing right
+// after one of these is almost always a date in clinical text.
+// Exported via deClinicalContextSet for use by DEDateContextRecognizer.
+//
+// deClinicalCommonVocab holds general German words (articles, pronouns,
+// common nouns, adjectives, letter-structure terms) — useful only for
+// anomaly *exclusion*, not for clinical-context signals.
+//
+// deClinicalVocab is the UNION used by the anomaly recognizer to decide
+// what to skip. Splitting the two avoids spurious date-context triggers
+// from words like "Siehe", "Abschnitt", "Anlage" that aren't medical.
+var deClinicalCoreVocab = [][]string{
 	// Anatomy (top frequency)
 	{
 		"abdomen", "achillessehne", "arm", "arterien", "auge", "augen", "bauch",
@@ -134,6 +144,11 @@ var deClinicalVocab = [][]string{
 		"august", "september", "oktober", "november", "dezember",
 		"montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag",
 	},
+}
+
+// deClinicalCommonVocab — general German words. Used ONLY for anomaly
+// skipping, never as clinical-context signals.
+var deClinicalCommonVocab = [][]string{
 	// Common German nouns that appear capitalised in clinical text
 	{
 		"abteilung", "absatz", "abschnitt", "alter", "anamnese", "anhang",
@@ -218,15 +233,35 @@ var deClinicalVocab = [][]string{
 	},
 }
 
+// deClinicalContextSet is the clinical/medical subset — the vocabulary
+// of tokens that signal medical context to other recognizers (notably
+// the bare-year fallback in DEDateContextRecognizer).
+var deClinicalContextSet = buildVocabSet(deClinicalCoreVocab)
+
+// deAnomalyDenySet is the union of the clinical core and general-German
+// vocabulary — used by the anomaly recognizer to decide which capitalised
+// tokens to SKIP (anything in here is presumed not-PII).
 var deAnomalyDenySet = func() map[string]struct{} {
 	out := make(map[string]struct{}, 2000)
-	for _, group := range deClinicalVocab {
-		for _, w := range group {
-			out[strings.ToLower(w)] = struct{}{}
+	for _, src := range [][][]string{deClinicalCoreVocab, deClinicalCommonVocab} {
+		for _, group := range src {
+			for _, w := range group {
+				out[strings.ToLower(w)] = struct{}{}
+			}
 		}
 	}
 	return out
 }()
+
+func buildVocabSet(groups [][]string) map[string]struct{} {
+	out := make(map[string]struct{}, len(groups)*100)
+	for _, g := range groups {
+		for _, w := range g {
+			out[strings.ToLower(w)] = struct{}{}
+		}
+	}
+	return out
+}
 
 // -----------------------------------------------------------------------------
 // Recognizer

@@ -83,12 +83,37 @@ func (r *DEDateContextRecognizer) Analyze(_ context.Context, text string, _ []st
 
 	tryEmit := func(start, end int, score float64) {
 		window := lower[max(start-deDateContextWindow, 0):start]
+		// Pass 1: explicit date-related triggers (highest confidence).
 		for _, trig := range deDateContextTriggers {
 			if strings.Contains(window, trig) {
 				out = append(out, analyzer.RecognizerResult{
 					Start:          start,
 					End:            end,
 					Score:          score,
+					EntityType:     "DATE_TIME",
+					RecognizerName: r.Name(),
+				})
+				return
+			}
+		}
+		// Pass 2: medical-vocabulary context (lower confidence).
+		// Catches patterns like "Polytrauma 1995", "Mamma-CA 2037",
+		// "Pankreatitis 2022" — a year appearing right after a disease
+		// or procedure name is almost always a date in clinical text.
+		// We tokenise the lookback window on non-letter chars and
+		// check whether any token is in the embedded medical vocab.
+		fields := strings.FieldsFunc(window, func(r rune) bool {
+			return !unicodeIsLetter(r)
+		})
+		for _, f := range fields {
+			if len(f) < 3 { // skip single letters / short abbreviations
+				continue
+			}
+			if _, ok := deClinicalContextSet[strings.ToLower(f)]; ok {
+				out = append(out, analyzer.RecognizerResult{
+					Start:          start,
+					End:            end,
+					Score:          score - 0.05, // slightly lower than keyword-anchored
 					EntityType:     "DATE_TIME",
 					RecognizerName: r.Name(),
 				})
