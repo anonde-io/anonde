@@ -32,8 +32,11 @@ import (
 
 var (
 	// Keyword-anchored IDs. Capturing group 1 is the value.
-	// Value shape: optional leading letter (+ optional hyphen) then 2+
-	// alphanumeric chars (digits / letters / hyphens / slashes).
+	// Value shape: 0-4 leading uppercase letters (+ optional hyphen) then
+	// a digit, then 1-14 more alphanumeric / hyphen / slash chars. The
+	// 0-4 leading-letter range covers bare numerics ("23346011"), single
+	// letter ("A-202344102"), two letters ("KL699820", "HN999999"), and
+	// three letters ("PAT-202344102").
 	deClinicalIDKeywordRE = regexp.MustCompile(
 		`\b(?:` +
 			`Fall(?:[-\s]?(?:Nr|nummer|zahl))|` +
@@ -45,14 +48,18 @@ var (
 			`Krankenversicherten(?:[-\s]?nummer|[-\s]?nr)|` +
 			`Akten(?:zeichen|nummer)|` +
 			`Patient(?:en)?[-\s]?(?:Nr|nummer|ID)|` +
+			`Pat\.[-\s]?ID|` +
 			`Aufnahme(?:[-\s]?Nr|[-\s]?nummer)|` +
 			`Versicherungs(?:[-\s]?Nr|[-\s]?nummer)|` +
+			`Bericht[-\s]?Nr|` +
+			`Auftrag(?:s[-\s]?Nr)?|` +
+			`ID(?:[-\s]?(?:Nr|nummer))?|` +
 			`Fall` +
 			`)` +
 			// Any sequence of separator chars (whitespace, ., :, ;, tab)
 			// — order-agnostic so we match "Nr.: ", "Nr: ", " :", "\t", "-Nr.\t", etc.
 			`[\s.:;,\t]*` +
-			`([A-Z]?-?\d[\dA-Z/-]{1,14})\b`,
+			`([A-Z]{0,4}-?\d[\dA-Z/-]{1,14})\b`,
 	)
 
 	// Station / ward / OP / outpatient-clinic identifiers. The trigger
