@@ -1,0 +1,67 @@
+# Keeps the Docker build context small. Everything listed here is NOT
+# copied into the builder, which:
+#   1. shrinks upload time to remote builders (depot.dev / Fly).
+#   2. lets the `COPY . .` layer's cache survive changes to bench data,
+#      docs, and tests that don't affect the binary.
+#
+# The build needs: go.mod, go.sum, and every .go source file imported
+# (transitively) from ./cmd/platform. Everything else is excluded.
+
+# Git history + metadata
+.git
+.gitignore
+.gitattributes
+
+# IDE / editor scratch
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Documentation — not part of the build
+docs/
+*.md
+README*
+LICENSE
+*.svg
+
+# Bench and validation harnesses (vs/, bench/) — large corpora, not at runtime
+vs/
+bench/
+benchmark/
+
+# Test fixtures + test files — Go ignores tests at build, but COPY still
+# pulls them and invalidates the cache layer whenever a test changes.
+**/testdata/
+**/*_test.go
+
+# Self-references and deploy config
+Dockerfile.*
+docker-compose.yml
+.dockerignore
+fly.toml
+
+# Planning artifacts (typically untracked / local-only)
+TODO.md
+ROADMAP.md
+*_PLAN.md
+PRIVACY_VAULT_PHASED_PLAN.md
+DETECTION_BACKEND_PLAN.md
+SKYFLOW_PARITY_PLAN.md
+
+# Local scratch dirs (gitignored)
+proxy/
+compare/
+
+# Examples (not part of the platform binary)
+examples/
+
+# Python venvs and caches from bench tooling
+.venv*/
+**/__pycache__/
+*.pyc
+
+# Build outputs
+/out/
+/dist/

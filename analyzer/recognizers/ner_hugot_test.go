@@ -1,3 +1,5 @@
+//go:build hugot
+
 package recognizers_test
 
 import (

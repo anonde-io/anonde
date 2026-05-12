@@ -55,25 +55,25 @@ func platformAddr() string {
 
 // analyzerFromEnv selects the NER backend.
 //
-// Default: hugot (in-process ONNX transformer; downloads the model on first
-// run into ~/.cache/anonde/models). This is the recommended path —
-// benchmarks show parity with Presidio default on the core entities. See
-// bench/parity/REPORT_FULL.md.
+// Default: patterns (no NER, no model download, no external service).
+// This is the fast / safe default and what Dockerfile.platform ships. The
+// German recognizer kernel covers most clinical PII without NER.
 //
 // Opt-ins:
 //
-//   - ANALYZER_BACKEND=patterns — pattern recognizers only, no NER. Use when
-//     you can't tolerate a model download and the entities you care about
-//     are all pattern-detectable (email, phone, IP, SSN, CC, etc.).
+//   - ANALYZER_BACKEND=hugot — in-process ONNX transformer. Requires the
+//     binary to be built with `-tags hugot`; default builds exclude the
+//     hugot dependency graph entirely. Setting this on a no-hugot binary
+//     fails fast with a clear remediation message.
 //   - ANALYZER_BACKEND=ollama — local Ollama daemon for users with an
 //     existing Ollama setup.
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
 // Presidio, see bench/parity/.
 func analyzerFromEnv() *analyzer.AnalyzerEngine {
-	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "hugot")))
+	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "patterns")))
 	switch backend {
-	case "patterns", "patterns-only":
+	case "patterns", "patterns-only", "":
 		log.Printf("analyzer backend: patterns-only (no NER)")
 		return anonde.DefaultAnalyzerEngine()
 	case "ollama":
@@ -82,7 +82,7 @@ func analyzerFromEnv() *analyzer.AnalyzerEngine {
 			os.Getenv("OLLAMA_ENDPOINT"),
 			os.Getenv("OLLAMA_MODEL"),
 		)
-	case "hugot", "":
+	case "hugot":
 		modelName := getenvDefault("HUGOT_MODEL", "Isotonic/distilbert_finetuned_ai4privacy_v2")
 		log.Printf("analyzer backend: hugot (model=%s)", modelName)
 		return anonde.DefaultAnalyzerEngineWithHugot(
@@ -91,7 +91,7 @@ func analyzerFromEnv() *analyzer.AnalyzerEngine {
 			true, // auto-download on first run
 		)
 	default:
-		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: hugot, patterns, ollama)", backend)
+		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, ollama)", backend)
 		return nil
 	}
 }

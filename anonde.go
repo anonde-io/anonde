@@ -115,26 +115,14 @@ func DefaultAnalyzerEngineWithOllama(endpoint, model string) *analyzer.AnalyzerE
 	return analyzer.NewAnalyzerEngine(registry)
 }
 
-// DefaultAnalyzerEngineWithHugot returns an engine that uses a pre-trained ONNX
-// transformer model (via hugot) for NER.  Inference runs entirely in-process
-// with no CGO or external service.
+// DefaultAnalyzerEngineWithHugot returns an engine that uses a pre-trained
+// ONNX transformer model (via hugot) for NER.
 //
-// modelsDir is the local directory where models are cached
-// (defaults to ~/.cache/anonde/models if empty).
-// modelName is the HuggingFace model ID
-// (defaults to "dslim/bert-base-NER" if empty).
-// autoDownload controls whether the model is fetched from HuggingFace Hub on
-// first use when it is not already present locally.
-func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bool) *analyzer.AnalyzerEngine {
-	registry := analyzer.NewRecognizerRegistry()
-	registry.Add(recognizers.NewHugotNERRecognizer(recognizers.HugotNERConfig{
-		ModelsDir:    modelsDir,
-		ModelName:    modelName,
-		AutoDownload: autoDownload,
-	}))
-	registry.Add(patternRecognizers()...)
-	return analyzer.NewAnalyzerEngine(registry)
-}
+// Build-tagged: the real implementation lives in hugot_on.go and only
+// compiles with `-tags hugot`. The default build uses hugot_off.go, which
+// log.Fatalfs on call. This keeps the hugot transitive dependency graph
+// (onnxruntime-go, tokenizers, …) out of patterns-only and Ollama-only
+// builds.
 
 // WithOllamaReconciler attaches a local-Ollama LLM reconciler to the given
 // engine. The reconciler gates an LLM call on borderline-confidence
