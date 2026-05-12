@@ -76,8 +76,8 @@ func TestHugotNERRecognizer_DefaultModelName(t *testing.T) {
 		t.Fatal("expected error when model is absent and AutoDownload is false")
 	}
 	// Default model name should appear in the error message.
-	if !strings.Contains(err.Error(), "Xenova/distilbert-base-multilingual-cased-ner-hrl") &&
-		!strings.Contains(err.Error(), "Xenova_distilbert-base-multilingual-cased-ner-hrl") {
+	if !strings.Contains(err.Error(), "onnx-community/multilang-pii-ner-ONNX") &&
+		!strings.Contains(err.Error(), "onnx-community_multilang-pii-ner-ONNX") {
 		t.Errorf("expected default model name in error, got: %v", err)
 	}
 }

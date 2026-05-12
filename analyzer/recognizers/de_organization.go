@@ -1,0 +1,56 @@
+package recognizers
+
+import "regexp"
+
+// German healthcare-organisation patterns. Hospitals, clinics, and
+// medical practices have predictable name shapes in German:
+//
+//	*-Klinikum, *-Krankenhaus, *-Klinik
+//	Universitätsklinik(um) *, Universitätsspital *
+//	Praxis Dr. *, Praxis Prof. *, Praxis für *
+//	*-Zentrum (clinical centres)
+//	Medizinische Hochschule *
+//
+// The patterns below are precision-tuned: each requires either a
+// structural suffix/prefix that strongly indicates an organisation, OR
+// a "Dr."/"Prof." token + plausible institution name nearby.
+
+var (
+	// Suffix form: <Capitalised…>-Klinikum / -Krankenhaus / -Klinik / -Zentrum / -Spital
+	// Optionally followed by 1-2 capitalised words ("Klinikum rechts der Isar").
+	deOrgSuffixRE = regexp.MustCompile(
+		`\b[A-ZÄÖÜ][a-zäöüß-]{2,30}(?:[- ](?:Klinikum|Krankenhaus|Klinik|Zentrum|Spital|Hospital|Praxis|Ambulanz|Reha-?Zentrum))\b`,
+	)
+
+	// Prefix form: Universitätsklinik(um) / Medizinische Hochschule / ...
+	deOrgPrefixRE = regexp.MustCompile(
+		`\b(?:Universit[äa]tsklinik(?:um)?|Universit[äa]tsspital|Klinikum|Krankenhaus|` +
+			`Medizinische\s+Hochschule|Fachklinik|Reha-?Klinik|` +
+			`Praxis\s+(?:Dr\.|Prof\.|für\s+\w+))\s+[A-ZÄÖÜ][a-zäöüß-]+(?:\s+[A-ZÄÖÜ][a-zäöüß-]+){0,2}`,
+	)
+
+	// Standalone famous German hospital names. Closed list — high precision.
+	deOrgWellKnownRE = regexp.MustCompile(
+		`\b(?:Charit[ée]|Vivantes|Asklepios|Helios|Sana|MediClin|` +
+			`Schön\s+Klinik|Rhön-?Klinikum|Diakonissenkrankenhaus)\b`,
+	)
+)
+
+// NewDEOrganizationRecognizer detects German healthcare organisations.
+// Emits the entity type "ORGANIZATION".
+func NewDEOrganizationRecognizer() *PatternRecognizer {
+	return NewPatternRecognizerWithContext(
+		"DEOrganizationRecognizer",
+		[]string{"ORGANIZATION"},
+		[]string{"de"},
+		[]namedPattern{
+			{re: deOrgWellKnownRE, score: 0.90},
+			{re: deOrgPrefixRE, score: 0.85},
+			{re: deOrgSuffixRE, score: 0.80},
+		},
+		[]string{
+			"klinik", "klinikum", "krankenhaus", "praxis", "abteilung",
+			"station", "behandelnde", "einweisende",
+		},
+	)
+}

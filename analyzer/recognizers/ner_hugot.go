@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -14,6 +15,15 @@ import (
 	"github.com/moogacs/anonde/analyzer"
 )
 
+// Default chunk sizing for sliding-window NER. The XLM-RoBERTa default
+// model has a 512-token context; ~1500 chars of German clinical text
+// tokenizes to roughly 400 tokens, leaving headroom for special tokens.
+// 200 chars of overlap catches entities sitting on chunk boundaries.
+const (
+	defaultNERChunkChars   = 1500
+	defaultNERChunkOverlap = 200
+)
+
 // HugotNERConfig configures the hugot-backed NER recognizer.
 type HugotNERConfig struct {
 	// ModelsDir is the local directory where models are stored.
@@ -21,15 +31,19 @@ type HugotNERConfig struct {
 	ModelsDir string
 
 	// ModelName is the HuggingFace model ID to use.
-	// Defaults to "Xenova/distilbert-base-multilingual-cased-ner-hrl" — a
-	// multilingual DistilBERT NER (CoNLL-2003 labels) trained on
-	// 10 languages including German, English, Spanish, French, Italian,
-	// Dutch, Portuguese, Arabic, Latvian, and Chinese. Pre-converted to
-	// ONNX for in-process inference via hugot.
+	// Defaults to "onnx-community/multilang-pii-ner-ONNX" — XLM-RoBERTa-base
+	// fine-tuned for PII detection across English, German, Italian, and
+	// French. Substantially better recall on German clinical text than a
+	// generic CoNLL-2003 NER because it was trained on PII-specific labels
+	// (GIVENNAME / SURNAME / CITY / STREET / BUILDINGNUM / ZIPCODE / AGE / …).
 	//
-	// For an English-only PII-specialized model with higher core-entity F1,
-	// use "Isotonic/distilbert_finetuned_ai4privacy_v2" (see
-	// bench/parity/REPORT_FULL.md).
+	// Alternative defaults worth knowing:
+	//   * "Xenova/distilbert-base-multilingual-cased-ner-hrl" — smaller
+	//     (~135 MB), CoNLL-2003 news-text labels (PER/LOC/ORG), wider
+	//     language coverage but weaker on clinical text.
+	//   * "Isotonic/distilbert_finetuned_ai4privacy_v2" — English-only,
+	//     ai4privacy-tuned, highest core-entity F1 on the English bench
+	//     (see bench/parity/REPORT_FULL.md).
 	ModelName string
 
 	// AutoDownload, when true, downloads the model on first use if not present locally.
@@ -41,6 +55,28 @@ type HugotNERConfig struct {
 	// Only effective on the first download; cached models reuse whatever
 	// was downloaded previously.
 	OnnxFilePath string
+
+	// ChunkChars is the maximum byte size of each sliding-window chunk
+	// fed to the model. Docs longer than ChunkChars are split on
+	// whitespace boundaries; entities found in any chunk are emitted
+	// with their global offsets in the original text.
+	//
+	// Zero uses defaultNERChunkChars. This must be smaller than the
+	// model's token context window in chars — a 512-token model with
+	// roughly 4 chars/token (typical for German) caps useful values
+	// near 1800. Smaller values trade throughput for safety on
+	// dense-tokenizing scripts (Chinese, Japanese).
+	ChunkChars int
+
+	// ChunkOverlap is the byte overlap between adjacent chunks, so an
+	// entity sitting on a boundary is seen whole by at least one
+	// chunk. Zero uses defaultNERChunkOverlap. Must be < ChunkChars.
+	ChunkOverlap int
+
+	// ScoreFloor filters NER predictions below this confidence before
+	// they reach the analyzer. Zero uses defaultNERScoreFloor (0.60).
+	// Use a negative value to disable filtering.
+	ScoreFloor float64
 }
 
 // hugotLabelToEntity maps both CoNLL-2003 labels and ai4privacy-fine-tuned
@@ -70,21 +106,39 @@ var hugotLabelToEntity = map[string]string{
 	"USERNAME":   "PERSON",
 	"PREFIX":     "PERSON",
 
-	// ai4privacy: locations
+	// multilang-pii-ner labels (XLM-RoBERTa, EN/DE/IT/FR)
+	"GIVENNAME": "PERSON",
+	"SURNAME":   "PERSON",
+
+	// ai4privacy / multilang-pii-ner: locations
+	// STREET/BUILDINGNUM/ZIPCODE go to the address-bucket entity types so
+	// they score under canonical ADDRESS in the bench, not LOCATION.
 	"CITY":             "LOCATION",
 	"STATE":            "LOCATION",
 	"COUNTY":           "LOCATION",
-	"STREET":           "LOCATION",
-	"BUILDINGNUMBER":   "LOCATION",
-	"ZIPCODE":          "LOCATION",
-	"SECONDARYADDRESS": "LOCATION",
+	"STREET":           "STREET_ADDRESS",
+	"BUILDINGNUMBER":   "STREET_ADDRESS",
+	"BUILDINGNUM":      "STREET_ADDRESS",
+	"ZIPCODE":          "POSTAL_CODE",
+	"SECONDARYADDRESS": "STREET_ADDRESS",
 
 	// ai4privacy: orgs
 	"COMPANYNAME": "ORGANIZATION",
 	"JOBTITLE":    "ORGANIZATION",
 	"JOBAREA":     "ORGANIZATION",
 	"JOBTYPE":     "ORGANIZATION",
+
+	// AGE / BUILDINGNUM are deliberately NOT mapped: the multilang-pii-ner
+	// model emits them too liberally on clinical text. We rely on the
+	// dedicated DEAgeRecognizer (context-gated) and the existing
+	// DEPostalCodeRecognizer / DEStreetRecognizer for these.
 }
+
+// defaultNERScoreFloor drops NER predictions below this score before the
+// analyzer's threshold filter sees them. The XLM-R PII model is noisy on
+// clinical German text — many sub-0.6 outputs are spurious. Tunable via
+// HugotNERConfig.ScoreFloor (zero uses this default).
+const defaultNERScoreFloor = 0.60
 
 // MapHugotLabel converts a raw hugot label (e.g. "PER", "B-LOC", "FIRSTNAME")
 // to an anonde entity type string.  Returns ("", false) when the label is
@@ -130,11 +184,15 @@ func NewHugotNERRecognizer(cfg HugotNERConfig) *HugotNERRecognizer {
 		cfg.ModelsDir = filepath.Join(home, ".cache", "anonde", "models")
 	}
 	if cfg.ModelName == "" {
-		cfg.ModelName = "Xenova/distilbert-base-multilingual-cased-ner-hrl"
-		// Xenova repos ship multiple ONNX variants; hugot requires an
-		// explicit pick. The int8-quantized build (~135 MB) is the
-		// production sweet spot: ~3x smaller than full precision and
-		// ~2x faster on CPU at a 1–2 pp F1 cost.
+		// onnx-community/multilang-pii-ner-ONNX is XLM-RoBERTa-base
+		// fine-tuned for PII detection across EN/DE/IT/FR. Trained on
+		// PII-labelled data (GIVENNAME, SURNAME, CITY, STREET,
+		// BUILDINGNUM, ZIPCODE, AGE, …) rather than CoNLL-2003 news —
+		// substantially better recall on German clinical text than the
+		// previous Xenova/distilbert-multilingual default.
+		cfg.ModelName = "onnx-community/multilang-pii-ner-ONNX"
+		// Repos ship multiple ONNX variants; pick the int8-quantized
+		// build for the production size/speed sweet spot (~280 MB).
 		if cfg.OnnxFilePath == "" {
 			cfg.OnnxFilePath = "onnx/model_quantized.onnx"
 		}
@@ -233,46 +291,204 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 		want[e] = struct{}{}
 	}
 
-	// Workaround for upstream hugot bug where certain text lengths trigger
-	// a slice-bounds panic in gatherPreEntities. A trailing space changes
-	// the tokenizer's alignment without altering the entity offsets we care
-	// about (entities never include trailing whitespace).
-	output, err := r.pipeline.RunPipeline(ctx, []string{text + " "})
-	if err != nil {
-		return nil, fmt.Errorf("hugot: run pipeline: %w", err)
+	chunkChars := r.cfg.ChunkChars
+	if chunkChars == 0 {
+		chunkChars = defaultNERChunkChars
+	}
+	chunkOverlap := r.cfg.ChunkOverlap
+	if chunkOverlap == 0 {
+		chunkOverlap = defaultNERChunkOverlap
+	}
+	chunks := chunkForNER(text, chunkChars, chunkOverlap)
+
+	// Build the batch of inputs. Trailing-space workaround for upstream
+	// hugot bug (gatherPreEntities slice-bounds panic on certain text
+	// lengths) — the space doesn't shift entity offsets relative to the
+	// chunk start.
+	inputs := make([]string, len(chunks))
+	for i, c := range chunks {
+		inputs[i] = c.Text + " "
 	}
 
+	// Single batched RunPipeline call. ONNX runtime amortises kernel
+	// launches and tokenizer setup across all chunks in the batch, which
+	// is dramatically cheaper than N separate calls on CPU.
+	output, runErr := r.pipeline.RunPipeline(ctx, inputs)
+	if runErr != nil {
+		return nil, fmt.Errorf("hugot: run pipeline (%d chunks): %w", len(chunks), runErr)
+	}
 	if len(output.Entities) == 0 {
 		return nil, nil
 	}
 
-	// Hugot's tokenizer returns codepoint (rune) offsets. The rest of anonde
-	// is byte-indexed (Go strings, regex recognizers). Convert here so every
-	// recognizer in the engine speaks the same offset units.
-	r2b := buildRuneToByteIndex(text)
-	for _, ent := range output.Entities[0] {
-		entityType, ok := MapHugotLabel(ent.Entity)
-		if !ok {
-			continue
-		}
+	scoreFloor := r.cfg.ScoreFloor
+	switch {
+	case scoreFloor < 0: // negative = disabled
+		scoreFloor = -1
+	case scoreFloor == 0:
+		scoreFloor = defaultNERScoreFloor
+	}
 
-		if !wantAll {
-			if _, ok := want[entityType]; !ok {
+	// We collect candidates first, then dedupe by overlap (not just exact
+	// match). With overlapping chunks the same entity is often picked up
+	// twice at slightly different boundaries — keep the higher-scoring
+	// span and drop the smaller overlap.
+	type cand struct {
+		start, end int
+		score      float64
+		typ        string
+	}
+	cands := make([]cand, 0, len(chunks)*8)
+
+	// output.Entities[i] corresponds to inputs[i] / chunks[i].
+	for i, chunk := range chunks {
+		if i >= len(output.Entities) {
+			break
+		}
+		// Hugot's tokenizer returns codepoint (rune) offsets RELATIVE
+		// to the chunk text. Convert to chunk-byte offsets, then add
+		// the chunk's byte start in the original to get the global
+		// byte offset the rest of anonde expects.
+		chunkR2B := buildRuneToByteIndex(chunk.Text)
+		for _, ent := range output.Entities[i] {
+			entityType, ok := MapHugotLabel(ent.Entity)
+			if !ok {
 				continue
 			}
-		}
+			if !wantAll {
+				if _, ok := want[entityType]; !ok {
+					continue
+				}
+			}
 
-		startByte := runeOffsetToByte(r2b, int(ent.Start))
-		endByte := runeOffsetToByte(r2b, int(ent.End))
-		results = append(results, analyzer.RecognizerResult{
-			Start:          startByte,
-			End:            endByte,
-			Score:          float64(ent.Score),
-			EntityType:     entityType,
-			RecognizerName: r.Name(),
+			score := float64(ent.Score)
+			if score < scoreFloor {
+				continue
+			}
+
+			startChunk := runeOffsetToByte(chunkR2B, int(ent.Start))
+			endChunk := runeOffsetToByte(chunkR2B, int(ent.End))
+			startByte := chunk.ByteStart + startChunk
+			endByte := chunk.ByteStart + endChunk
+
+			cands = append(cands, cand{startByte, endByte, score, entityType})
+		}
+	}
+
+	// Overlap dedup: for each (type), keep the highest-score span among
+	// any group that mutually overlaps. Two same-type overlapping
+	// detections almost always refer to the same entity; the higher score
+	// is the better-anchored span. Inter-type overlaps are passed through
+	// — the analyzer's conflict resolver decides between them.
+	byType := map[string][]cand{}
+	for _, c := range cands {
+		byType[c.typ] = append(byType[c.typ], c)
+	}
+	for typ, group := range byType {
+		// Sort by score desc, then by start asc for stability.
+		sort.Slice(group, func(i, j int) bool {
+			if group[i].score != group[j].score {
+				return group[i].score > group[j].score
+			}
+			return group[i].start < group[j].start
 		})
+		kept := group[:0]
+		for _, c := range group {
+			overlapsKept := false
+			for _, k := range kept {
+				if c.start < k.end && c.end > k.start {
+					overlapsKept = true
+					break
+				}
+			}
+			if !overlapsKept {
+				kept = append(kept, c)
+			}
+		}
+		for _, c := range kept {
+			results = append(results, analyzer.RecognizerResult{
+				Start:          c.start,
+				End:            c.end,
+				Score:          c.score,
+				EntityType:     typ,
+				RecognizerName: r.Name(),
+			})
+		}
+		_ = typ
 	}
 	return results, nil
+}
+
+// nerChunk is a slice of input text fed to the model. ByteStart is its
+// offset in the original document so model-relative entity positions can
+// be lifted back to global offsets.
+type nerChunk struct {
+	ByteStart int
+	Text      string
+}
+
+// chunkForNER splits text into chunks of at most chunkChars bytes, breaking
+// on the latest newline-or-space before the limit. Adjacent chunks overlap
+// by overlapChars to catch entities sitting near chunk boundaries.
+//
+// All cuts are made at ASCII whitespace bytes (' ' or '\n'), which are
+// always at rune boundaries — so the returned chunks are valid UTF-8 even
+// when the input contains multi-byte runes like ä/ö/ü/ß.
+//
+// If text is short enough to fit in one chunk, returns a single chunk
+// containing the whole text (and the recognizer behaves identically to a
+// non-chunking implementation).
+func chunkForNER(text string, chunkChars, overlapChars int) []nerChunk {
+	n := len(text)
+	if n <= chunkChars || chunkChars <= 0 {
+		return []nerChunk{{ByteStart: 0, Text: text}}
+	}
+	if overlapChars < 0 || overlapChars >= chunkChars {
+		overlapChars = 0
+	}
+
+	var out []nerChunk
+	start := 0
+	for start < n {
+		end := start + chunkChars
+		if end >= n {
+			out = append(out, nerChunk{ByteStart: start, Text: text[start:]})
+			break
+		}
+		// Prefer the last newline, fall back to the last space within
+		// the window. Both are single-byte ASCII so end+1 is always a
+		// rune boundary.
+		if idx := strings.LastIndex(text[start:end], "\n"); idx > 0 {
+			end = start + idx + 1
+		} else if idx := strings.LastIndex(text[start:end], " "); idx > 0 {
+			end = start + idx + 1
+		} else {
+			// No whitespace anywhere in this window — exotic in
+			// natural text. Back up to a rune boundary so the slice
+			// stays valid UTF-8.
+			for end > start && (text[end]&0xC0) == 0x80 {
+				end--
+			}
+		}
+		out = append(out, nerChunk{ByteStart: start, Text: text[start:end]})
+
+		// Step forward by (chunkChars - overlap), then snap to the
+		// next whitespace for rune-safety and so we don't begin a
+		// chunk mid-word.
+		// No useful overlap if the stride would land past chunk end.
+		nextStart := min(start+chunkChars-overlapChars, end)
+		for nextStart < n && text[nextStart] != ' ' && text[nextStart] != '\n' {
+			nextStart++
+		}
+		for nextStart < n && (text[nextStart] == ' ' || text[nextStart] == '\n') {
+			nextStart++
+		}
+		if nextStart <= start {
+			nextStart = end // ensure forward progress
+		}
+		start = nextStart
+	}
+	return out
 }
 
 // buildRuneToByteIndex returns a slice where index[i] is the byte offset of

@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/knights-analytics/hugot v0.7.2
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
+	golang.org/x/sync v0.20.0
 )
 
 require (
@@ -27,7 +28,6 @@ require (
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/image v0.39.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
