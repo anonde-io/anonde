@@ -10,7 +10,14 @@ import (
 	"github.com/moogacs/anonde/analyzer"
 )
 
-var ibanRE = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b`)
+// ibanRE matches the IBAN structural shape: 2-letter country code, 2 check
+// digits, then 11-30 alphanumeric BBAN characters. Total length 15-34 — the
+// real-world IBAN range (Norway NO15 is the shortest, Malta MT31 the
+// longest after Saint Lucia's 32). The previous {4,30} bound allowed an
+// 8-char match like "YA334455" to pass the regex, fail MOD-97, and still
+// emit at score 0.5 → context-boosted to 0.85 when "IBAN" appeared
+// elsewhere in the document. Use the spec-correct length to avoid that.
+var ibanRE = regexp.MustCompile(`\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b`)
 
 // IBANRecognizer detects IBAN_CODE entities with MOD-97 validation.
 type IBANRecognizer struct{}
