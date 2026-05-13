@@ -71,3 +71,11 @@ primary_region = "iad"
     path = "/healthz"
     protocol = "http"
     tls_skip_verify = false
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 4
+  memory = '2gb'
+  memory_mb = 2048
+  processes = ['app']
+  size = 'shared-cpu-4x'
