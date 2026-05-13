@@ -37,9 +37,9 @@ func main() {
 	root := os.Getenv("ANONDE_ROOT")
 	if root == "" {
 		exe, _ := os.Executable()
-		root = filepath.Join(filepath.Dir(exe), "..", "..")
+		root = filepath.Join(filepath.Dir(exe), "..", "..", "..")
 	}
-	benchDir := filepath.Join(root, "benchmark")
+	benchDir := filepath.Join(root, "bench", "microbench")
 
 	sep := strings.Repeat("=", 78)
 	fmt.Println(sep)
@@ -48,7 +48,7 @@ func main() {
 
 	// ── Go ────────────────────────────────────────────────────────────────────
 	fmt.Println("\nRunning Go benchmarks...")
-	goCmd := exec.Command("go", "test", "./benchmark/",
+	goCmd := exec.Command("go", "test", "./bench/microbench/",
 		"-bench=.", "-benchtime="+*benchTime, "-benchmem", "-count=1")
 	goCmd.Dir = root
 	goOut, err := goCmd.CombinedOutput()

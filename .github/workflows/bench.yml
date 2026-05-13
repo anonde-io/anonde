@@ -1,0 +1,236 @@
+name: bench
+
+# anonde bench matrix on push / PR. Runs a focused subset of
+# `bench/Makefile` so CI completes in ~10-15 min on a free-tier
+# ubuntu-latest runner:
+#
+#   * Corpora: openmed (GraSCCo PHI, auto-fetched from Zenodo) +
+#     synth_clinical (in-process generator). Both ship gold annotations,
+#     so F1 + leak rate are meaningful. ai4privacy_en (5000 docs) and
+#     anonde-hugot (~30 min/corpus) and openai-pf (~80 s/doc) are
+#     deliberately excluded — they belong in a nightly or release bench,
+#     not on every PR.
+#   * Engines: anonde-patterns, anonde-gliner (production stack), and
+#     gliner-py (parity check: same model, Python sidecar). If
+#     anonde-gliner ever silently diverges from gliner-py, this is the
+#     guard rail that catches it.
+#
+# Outputs: bench/REPORT_MATRIX.md + bench/results_matrix.csv uploaded as
+# artifacts, plus the headline rendered into the job summary. No
+# regression gating in v1 — adding F1-floor checks needs a baseline
+# committed somewhere first.
+#
+# Triggers: path-filtered to keep doc-only PRs free.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'analyzer/**'
+      - 'anonde.go'
+      - 'anonymizer/**'
+      - 'bench/**'
+      - 'cmd/platform/**'
+      - 'hugot_*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/bench.yml'
+  pull_request:
+    paths:
+      - 'analyzer/**'
+      - 'anonde.go'
+      - 'anonymizer/**'
+      - 'bench/**'
+      - 'cmd/platform/**'
+      - 'hugot_*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/bench.yml'
+  # Manual dispatch for ad-hoc runs against a branch.
+  workflow_dispatch:
+
+# Cancel older runs on the same ref — a busy PR shouldn't queue six
+# 15-minute bench jobs.
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ORT_VERSION: "1.26.0"
+      # Where we'll drop libonnxruntime.so so yalue/onnxruntime_go can
+      # dlopen it. Mirrors the local-dev `.tokenlib/` convention.
+      ORT_LIB_DIR: ${{ github.workspace }}/.tokenlib
+      ORT_LIB: ${{ github.workspace }}/.tokenlib/libonnxruntime.so
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # libonnxruntime.so is needed at runtime by the GLiNER recognizer
+      # (yalue/onnxruntime_go is a thin dlopen wrapper). Cache it across
+      # runs — Microsoft's release URL is stable and the tarball is
+      # ~6 MB so the cache hit saves a few seconds, not a lot, but the
+      # cache also doubles as a "we've validated this version" anchor.
+      - name: Cache libonnxruntime
+        id: ort-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ORT_LIB_DIR }}
+          key: libonnxruntime-${{ env.ORT_VERSION }}-linux-x64
+
+      - name: Download libonnxruntime
+        if: steps.ort-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$ORT_LIB_DIR"
+          curl -fsSL \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
+            -o /tmp/ort.tgz
+          tar -xzf /tmp/ort.tgz -C /tmp
+          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" \
+             "$ORT_LIB_DIR/libonnxruntime.so"
+          ls -la "$ORT_LIB_DIR"
+
+      # Python deps for the bench sidecars + corpus loaders. torch is
+      # heavy (~1 GB) — the pip cache from setup-python amortises it
+      # across runs. Pinning is intentional: bench numbers shift with
+      # gliner/transformers versions.
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            gliner==0.2.26 \
+            transformers \
+            pyyaml
+
+      # GLiNER pulls model weights from HF Hub on first use. Cache the
+      # HF hub dir keyed on the model id so repeat runs skip the
+      # ~200 MB download.
+      - name: Cache HuggingFace model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-gliner-pii-base-v1.0
+
+      # The Go-native GLiNER recognizer uses hugot's downloader, which
+      # writes to ~/.cache/anonde/models/. Same model, different on-disk
+      # layout — cache both.
+      - name: Cache anonde model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/anonde/models
+          key: anonde-models-gliner-pii-base-v1.0
+
+      - name: Verify default build (no hugot, no CGO)
+        run: |
+          CGO_ENABLED=0 go build ./...
+
+      - name: Verify hugot build (CGO=1, with NER backends)
+        run: |
+          CGO_ENABLED=1 go build -tags hugot ./...
+
+      - name: Run unit tests
+        run: |
+          go test ./analyzer/... ./anonymizer/... ./internal/...
+
+      # The bench cells use the `gliner` backend which needs ORT_LIB set
+      # so onnxruntime_go can find libonnxruntime.so at runtime. Without
+      # this the recognizer's init silently errors (logged via the
+      # swallowed-error path in analyzer/analyzer.go) and the cell falls
+      # back to patterns-only, which is the exact failure mode we want
+      # CI to catch BEFORE it ships.
+      - name: Run bench matrix (openmed + synth_clinical × 3 engines)
+        env:
+          ORT_LIB: ${{ env.ORT_LIB }}
+        run: |
+          set -euo pipefail
+          make -C bench corpus-openmed PYTHON=python3
+          make -C bench corpus-synth_clinical PYTHON=python3
+
+      - name: Render REPORT_MATRIX
+        run: |
+          python bench/scoring/render_matrix.py \
+            --corpora-root bench/corpora \
+            --corpus openmed --corpus synth_clinical \
+            --engine anonde-patterns --engine anonde-gliner --engine gliner-py \
+            --label-map bench/scoring/label_map.yaml \
+            --out bench/REPORT_MATRIX.md \
+            --csv bench/results_matrix.csv
+
+      # Sanity check: every gliner cell must have produced non-round
+      # sigmoid scores. If all scores are multiples of 0.05, GLiNER
+      # silently fell back to patterns (the historical failure mode
+      # before the ORT_LIB fix landed). Fail the job — we'd rather
+      # surface a regression here than ship a deploy that's secretly
+      # patterns-only.
+      - name: Guard rail — GLiNER actually fired
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          failures = []
+          for corpus in ("openmed", "synth_clinical"):
+              path = f"bench/corpora/{corpus}/data/anonde_anonde-gliner.jsonl"
+              ner_like = 0
+              with open(path) as fh:
+                  for line in fh:
+                      d = json.loads(line)
+                      for f in d.get("findings", []):
+                          s = f.get("score", 0)
+                          # Pattern scores are deterministic constants
+                          # (0.6/0.65/0.7/0.75/0.8/0.85/0.9/1.0); GLiNER
+                          # emits sigmoid floats. Any non-multiple-of-0.05
+                          # score is NER-attributable.
+                          if abs(s * 20 - round(s * 20)) > 1e-6:
+                              ner_like += 1
+              if ner_like == 0:
+                  failures.append(f"{corpus}: 0 NER-attributable findings — GLiNER silently fell back to patterns")
+              else:
+                  print(f"  {corpus}: {ner_like} NER-attributable findings — OK")
+          if failures:
+              print("\nGuard rail FAILED:")
+              for f in failures:
+                  print("  " + f)
+              sys.exit(1)
+          PYEOF
+
+      - name: Upload bench artifacts
+        if: always()  # upload even on guard-rail failure for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report-${{ github.run_id }}
+          path: |
+            bench/REPORT_MATRIX.md
+            bench/results_matrix.csv
+            bench/corpora/openmed/data/anonde_*.jsonl
+            bench/corpora/synth_clinical/data/anonde_*.jsonl
+          retention-days: 14
+
+      - name: Headline → job summary
+        if: always()
+        run: |
+          {
+            echo "## anonde bench matrix"
+            echo ""
+            echo "_Subset: openmed + synth_clinical × {anonde-patterns, anonde-gliner, gliner-py}._"
+            echo ""
+            if [ -f bench/REPORT_MATRIX.md ]; then
+              cat bench/REPORT_MATRIX.md
+            else
+              echo "_(REPORT_MATRIX.md not produced — see logs)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

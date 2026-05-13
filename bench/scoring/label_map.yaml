@@ -1,0 +1,196 @@
+# Label normalisation for the GraSCCo recall bench.
+# Maps each engine's raw entity types to a shared canonical vocabulary.
+# Set a value to `~` (null) to drop those spans from scoring (e.g.
+# honorifics that aren't standalone PHI).
+
+canonical:
+  - PERSON
+  - LOCATION
+  - ORGANIZATION
+  - DATE
+  - AGE
+  - PHONE
+  - EMAIL
+  - URL
+  - ID
+  - IBAN
+  - ADDRESS
+  - PROFESSION
+
+# GraSCCo PHI labels (GeMTeX DeID layer 'kind' values).
+gold:
+  NAME_PATIENT: PERSON
+  NAME_DOCTOR: PERSON
+  NAME_RELATIVE: PERSON
+  NAME_TITLE: ~              # honorifics — not PHI on their own
+  NAME_USERNAME: ID
+  NAME_EXT: PERSON
+  NAME: PERSON
+
+  LOCATION_HOSPITAL: ORGANIZATION
+  LOCATION_ORGANIZATION: ORGANIZATION
+  LOCATION_CITY: LOCATION
+  LOCATION_STATE: LOCATION
+  LOCATION_COUNTRY: LOCATION
+  LOCATION_STREET: ADDRESS
+  LOCATION_ZIP: ADDRESS
+  LOCATION_OTHER: LOCATION
+  LOCATION: LOCATION
+
+  DATE: DATE
+  DATE_BIRTH: DATE
+
+  AGE: AGE
+
+  CONTACT_PHONE: PHONE
+  CONTACT_FAX: PHONE
+  CONTACT_EMAIL: EMAIL
+  CONTACT_URL: URL
+  CONTACT_IP: ID
+
+  ID: ID
+  ID_SSN: ID
+  ID_MRN: ID
+  ID_INSURANCE: ID
+  ID_DEVICE: ID
+  ID_VEHICLE: ID
+  ID_BIOID: ID
+  ID_IDNUM: ID
+
+  PROFESSION: PROFESSION
+
+# anonde internal entity types (see analyzer/recognizers/*.go).
+anonde:
+  PERSON: PERSON
+  LOCATION: LOCATION
+  STREET_ADDRESS: ADDRESS
+  POSTAL_CODE: ADDRESS
+  ORGANIZATION: ORGANIZATION
+  AGE: AGE
+  ID: ID
+  NRP: ~
+  DATE_TIME: DATE
+  PHONE_NUMBER: PHONE
+  EMAIL_ADDRESS: EMAIL
+  URL: URL
+  IP_ADDRESS: ID
+  MAC_ADDRESS: ID
+  IBAN_CODE: IBAN
+  PROFESSION: PROFESSION
+  CREDIT_CARD: ID
+  CRYPTO: ID
+  US_SSN: ID
+  US_PASSPORT: ID
+  US_DRIVER_LICENSE: ID
+  US_BANK_NUMBER: ID
+  US_ITIN: ID
+  UK_NHS: ID
+  UK_NINO: ID
+  IT_FISCAL_CODE: ID
+  IT_DRIVER_LICENSE: ID
+  IT_VAT_CODE: ID
+  IT_PASSPORT: ID
+  IT_IDENTITY_CARD: ID
+  ES_NIF: ID
+  ES_NIE: ID
+  AU_ABN: ID
+  AU_ACN: ID
+  AU_TFN: ID
+  AU_MEDICARE: ID
+  IN_PAN: ID
+  IN_AADHAAR: ID
+  IN_VEHICLE_REGISTRATION: ID
+  IN_VOTER: ID
+  IN_PASSPORT: ID
+  PL_PESEL: ID
+  SG_NRIC_FIN: ID
+  SG_UEN: ID
+  FI_PERSONAL_IDENTITY_CODE: ID
+  KR_RRN: ID
+  MEDICAL_LICENSE: ID
+  DE_STEUER_ID: ID
+  DENY_LIST: ~
+
+# Microsoft Presidio entity labels (see runner_presidio.py output).
+presidio:
+  PERSON: PERSON
+  LOCATION: LOCATION
+  ORGANIZATION: ORGANIZATION
+  NRP: ~
+  DATE_TIME: DATE
+  PHONE_NUMBER: PHONE
+  EMAIL_ADDRESS: EMAIL
+  URL: URL
+  IP_ADDRESS: ID
+  IBAN_CODE: IBAN
+  CREDIT_CARD: ID
+  CRYPTO: ID
+  US_SSN: ID
+  US_PASSPORT: ID
+  US_DRIVER_LICENSE: ID
+  US_BANK_NUMBER: ID
+  US_ITIN: ID
+  UK_NHS: ID
+  IT_FISCAL_CODE: ID
+  IT_DRIVER_LICENSE: ID
+  IT_VAT_CODE: ID
+  IT_PASSPORT: ID
+  IT_IDENTITY_CARD: ID
+  ES_NIF: ID
+  AU_ABN: ID
+  AU_ACN: ID
+  AU_TFN: ID
+  AU_MEDICARE: ID
+  IN_PAN: ID
+  IN_AADHAAR: ID
+  IN_VEHICLE_REGISTRATION: ID
+  IN_VOTER: ID
+  IN_PASSPORT: ID
+  MEDICAL_LICENSE: ID
+
+# Python sidecar GLiNER PII output (see bench/runners/gliner.py).
+# Already canonicalised at runner level; pass-through with anonde-style
+# entity types. Listed explicitly so compare.py finds the section.
+gliner-py:
+  PERSON: PERSON
+  LOCATION: LOCATION
+  ORGANIZATION: ORGANIZATION
+  ADDRESS: ADDRESS
+  STREET_ADDRESS: ADDRESS
+  POSTAL_CODE: ADDRESS
+  DATE_TIME: DATE
+  PHONE_NUMBER: PHONE
+  EMAIL_ADDRESS: EMAIL
+  URL: URL
+  CREDIT_CARD: ID
+  IBAN_CODE: IBAN
+  US_SSN: ID
+  ID: ID
+  AGE: AGE
+  PROFESSION: PROFESSION
+
+# OpenAI Privacy Filter sidecar output (see bench/runners/openai_pf.py).
+openai-pf:
+  PERSON: PERSON
+  ADDRESS: ADDRESS
+  EMAIL_ADDRESS: EMAIL
+  PHONE_NUMBER: PHONE
+  URL: URL
+  DATE_TIME: DATE
+  ID: ID
+
+# jdkato/prose v2 NER labels (see bench-go-lib/prose/runner.go for the
+# raw->canonical mapping prose's runner already applies before emitting).
+# Listed explicitly so compare.py uses this section instead of falling back
+# to OTHER.
+prose:
+  PERSON: PERSON
+  LOCATION: LOCATION
+  ORGANIZATION: ORGANIZATION
+  NRP: ~                       # NRP is anonde-internal, not load-bearing here
+
+# go-ego/gse + dictionary baseline (see bench-go-lib/gse/runner.go).
+# Only PERSON is emitted; we map to canonical PERSON.
+gse:
+  PERSON: PERSON
+
