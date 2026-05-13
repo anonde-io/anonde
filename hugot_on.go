@@ -17,15 +17,50 @@ import (
 //
 // modelsDir   — local cache directory (defaults to ~/.cache/anonde/models).
 // modelName   — HuggingFace model ID (recognizer-package default applies
-//               when empty).
+//
+//	when empty).
+//
 // autoDownload — fetch the model from HuggingFace Hub on first use.
 func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bool) *analyzer.AnalyzerEngine {
-	registry := analyzer.NewRecognizerRegistry()
-	registry.Add(recognizers.NewHugotNERRecognizer(recognizers.HugotNERConfig{
+	return DefaultAnalyzerEngineWithHugotConfig(recognizers.HugotNERConfig{
 		ModelsDir:    modelsDir,
 		ModelName:    modelName,
 		AutoDownload: autoDownload,
-	}))
+	})
+}
+
+// DefaultAnalyzerEngineWithHugotConfig is the full-control variant of
+// DefaultAnalyzerEngineWithHugot. Use this when the model needs a non-default
+// OnnxFilePath (e.g. "onnx/model_quantized.onnx") or tuned chunking — the
+// short-form constructor exposes only ModelsDir/ModelName/AutoDownload and
+// silently misses these knobs.
+//
+// Typical bench use: probing alternative NER backends (GLiNER, ai4privacy
+// variants) where the upstream repo ships multiple ONNX files and the
+// default isn't the one you want.
+func DefaultAnalyzerEngineWithHugotConfig(cfg recognizers.HugotNERConfig) *analyzer.AnalyzerEngine {
+	registry := analyzer.NewRecognizerRegistry()
+	registry.Add(recognizers.NewHugotNERRecognizer(cfg))
+	registry.Add(patternRecognizers()...)
+	return analyzer.NewAnalyzerEngine(registry)
+}
+
+// DefaultAnalyzerEngineWithGLiNERConfig wires a Go-native GLiNER
+// recognizer into the standard pattern-recognizer registry. GLiNER is
+// an open-set NER architecture: the label list is supplied at
+// inference time, not baked into the model weights. This constructor
+// drives the same model that bench/runner_gliner_pii.py uses through
+// the Python sidecar — same prompt format, same canonical-entity
+// mapping — but entirely in-process.
+//
+// Real implementation only; hugot_off.go's stub log.Fatalfs.
+//
+// Typical config: zero-value GLiNERConfig selects
+// knowledgator/gliner-pii-base-v1.0 with the default PII label set.
+// Override Labels / LabelToEntity for a custom open-set vocabulary.
+func DefaultAnalyzerEngineWithGLiNERConfig(cfg recognizers.GLiNERConfig) *analyzer.AnalyzerEngine {
+	registry := analyzer.NewRecognizerRegistry()
+	registry.Add(recognizers.NewGLiNERRecognizer(cfg))
 	registry.Add(patternRecognizers()...)
 	return analyzer.NewAnalyzerEngine(registry)
 }

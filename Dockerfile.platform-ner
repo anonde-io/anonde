@@ -1,0 +1,121 @@
+# Dockerfile.platform-ner — anonde platform with the GLiNER NER backend
+# baked in. Larger image (~470 MB) but self-contained: no model download
+# at startup, no outbound network needed, deterministic cold start.
+#
+# For lighter deployments serving only structured German clinical text
+# (Patient: …, MRN, etc.), use Dockerfile.platform instead — that builds
+# the patterns-only binary at ~12 MB.
+#
+# Build:
+#   docker build -f Dockerfile.platform-ner -t anonde-platform-ner .
+# Deploy to fly:
+#   fly deploy -a anonde-platform --dockerfile Dockerfile.platform-ner
+#
+# Why this image is heavier than Dockerfile.platform:
+#   - CGO_ENABLED=1 is required because the GLiNER recognizer uses
+#     yalue/onnxruntime_go, which is a CGO binding to libonnxruntime. The
+#     gomlx/onnx-gomlx pure-Go ONNX path was tried but cannot lower
+#     GLiNER's `NonZero` op (data-dependent shape).
+#   - Runtime base switched from distroless/static to distroless/cc so
+#     the dynamic linker (ld-linux) is present for libonnxruntime.
+#   - libonnxruntime.so.1 (~14 MB) is fetched from the Microsoft release
+#     tarball at build time and COPYed into the runtime image.
+#   - The English-trained PII model (`knowledgator/gliner-pii-base-v1.0`,
+#     ~196 MB int8) is downloaded during the build stage and baked into
+#     /models in the runtime image. The multilingual variant was tried
+#     first but its sigmoid scores ran 4-5x lower than the English base
+#     on identical text (e.g. PERSON@0.17 vs 0.80 on "Elena Rossi"),
+#     making per-deployment threshold tuning brittle. The English base
+#     handles German clinical text well too (bench: 14.62% leak on
+#     GraSCCo, within 0.3pp of the multilingual variant), so we trade
+#     6-language coverage for stable thresholds + 4-5x score confidence.
+
+# Pinned: when bumping, update both the URL and the symlink path below if
+# MSFT changes the tarball layout. Last verified 2026-05-13.
+ARG ONNXRUNTIME_VERSION=1.26.0
+
+# No `--platform=$BUILDPLATFORM` — we pin the build to linux/amd64 (the
+# target Fly machine class). On an arm64 build host (Apple Silicon),
+# Docker Desktop emulates amd64 via Rosetta/QEMU. Slower locally but
+# matches deploy target exactly, avoids cross-compile-with-CGO pain, and
+# the DOWNLOAD_MODELS_ONLY bake step runs the produced binary in the same
+# stage which only works if the binary is the host arch.
+FROM --platform=linux/amd64 golang:1.26-bookworm AS build
+WORKDIR /src
+
+# CA certs for HF Hub HTTPS + curl/tar to fetch the libonnxruntime release.
+# build-essential brings in gcc + libc6-dev for CGO. Bookworm (glibc)
+# instead of alpine (musl) because libonnxruntime is built against glibc;
+# musl would require a separately-compiled libonnxruntime which MSFT
+# doesn't ship.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl tar build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# --- fetch libonnxruntime ------------------------------------------------
+# Microsoft publishes signed Linux-x64 release tarballs on GitHub. The
+# `libonnxruntime.so.<ver>` inside is what yalue/onnxruntime_go dlopens at
+# runtime.
+ARG ONNXRUNTIME_VERSION
+RUN curl -fsSL \
+        "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+        -o /tmp/ort.tgz && \
+    tar -xzf /tmp/ort.tgz -C /tmp && \
+    mkdir -p /out/lib && \
+    cp /tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} \
+       /out/lib/libonnxruntime.so.1 && \
+    rm -rf /tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION} /tmp/ort.tgz
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 \
+    go build -tags hugot -o /out/platform ./cmd/platform
+
+# --- bake the GLiNER model into the image ---------------------------------
+# Run the binary in DOWNLOAD_MODELS_ONLY=1 mode: it constructs the
+# GLiNERRecognizer, calls Analyze once with a trivial input, which
+# triggers the ONNX model + tokenizer download into GLINER_MODELS_DIR,
+# then exits. The model files (~370 MB total: 349 MB ONNX + 16 MB
+# tokenizer + 5 MB SPM + small configs) are then copied into the runtime
+# stage below.
+ENV GLINER_MODELS_DIR=/models \
+    GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
+    GLINER_ONNX_FILE=onnx/model_quint8.onnx \
+    ANALYZER_BACKEND=gliner \
+    ORT_SO_PATH=/out/lib/libonnxruntime.so.1 \
+    DOWNLOAD_MODELS_ONLY=1
+RUN /out/platform
+
+# --- runtime --------------------------------------------------------------
+# distroless/cc includes glibc + libgcc + libstdc++ — the minimum that
+# libonnxruntime.so needs to dlopen and link cleanly. No shell, no package
+# manager, no busybox — same hardened posture as distroless/static.
+#
+# Platform pinned to linux/amd64 to match the build stage. Without this,
+# `docker pull` on an arm64 host (Apple Silicon) fetches the arm64
+# variant of the distroless image, leaving an amd64 binary in an arm64
+# runtime → fails at startup with rosetta/ld-linux errors.
+FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12
+COPY --from=build /out/platform /platform
+COPY --from=build /out/lib/libonnxruntime.so.1 /usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+COPY --from=build /models /models
+
+# Runtime defaults: gliner backend, model+tokenizer on disk, no download.
+# ORT_SO_PATH is the absolute lookup yalue/onnxruntime_go does at session
+# init; pinned to the COPY target above so it works regardless of
+# LD_LIBRARY_PATH (distroless doesn't set any defaults).
+ENV ANALYZER_BACKEND=gliner \
+    GLINER_MODELS_DIR=/models \
+    GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
+    GLINER_ONNX_FILE=onnx/model_quint8.onnx \
+    GLINER_THRESHOLD=0.40 \
+    ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+
+EXPOSE 8080
+ENTRYPOINT ["/platform"]

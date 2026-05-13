@@ -1,0 +1,29 @@
+# Set `app` to your Fly app name (or run `fly launch` once to create/link).
+# Build uses Dockerfile.platform (same image as local docker-compose).
+app = "anonde-platform"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.platform"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 100
+    soft_limit = 25
+
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/healthz"
+    protocol = "http"
+    tls_skip_verify = false

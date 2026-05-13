@@ -11,6 +11,7 @@ import (
 
 	"github.com/moogacs/anonde"
 	"github.com/moogacs/anonde/analyzer"
+	"github.com/moogacs/anonde/analyzer/recognizers"
 	"github.com/moogacs/anonde/internal/platform"
 )
 
@@ -131,10 +132,13 @@ func platformAddr() string {
 //
 // Opt-ins:
 //
-//   - ANALYZER_BACKEND=hugot — in-process ONNX transformer. Requires the
-//     binary to be built with `-tags hugot`; default builds exclude the
-//     hugot dependency graph entirely. Setting this on a no-hugot binary
-//     fails fast with a clear remediation message.
+//   - ANALYZER_BACKEND=hugot — in-process ONNX transformer via hugot (XLM-R
+//     PII multilingual by default). Requires the binary to be built with
+//     `-tags hugot`; default builds fall back to a fatal-error stub.
+//   - ANALYZER_BACKEND=gliner — in-process GLiNER PII via yalue/onnxruntime_go.
+//     Open-set NER, substantially better German clinical recall than hugot
+//     (see vs/openmed/REPORT_FINAL.md). Requires `-tags hugot` AND CGO_ENABLED=1
+//     AND libonnxruntime.so reachable at runtime.
 //   - ANALYZER_BACKEND=ollama — local Ollama daemon for users with an
 //     existing Ollama setup.
 //
@@ -160,8 +164,32 @@ func analyzerFromEnv() *analyzer.AnalyzerEngine {
 			modelName,
 			true, // auto-download on first run
 		)
+	case "gliner":
+		modelName := getenvDefault("GLINER_MODEL", "onnx-community/gliner_multi_pii-v1")
+		onnxPath := getenvDefault("GLINER_ONNX_FILE", "onnx/model_quantized.onnx")
+		// Threshold is the most impactful knob — multilingual variants
+		// typically need ~0.25, the English base ~0.40. Override without
+		// rebuilding via GLINER_THRESHOLD. Zero = recognizer default (0.40).
+		threshold := 0.0
+		if raw := strings.TrimSpace(os.Getenv("GLINER_THRESHOLD")); raw != "" {
+			if v, err := strconv.ParseFloat(raw, 64); err == nil {
+				threshold = v
+			} else {
+				log.Printf("GLINER_THRESHOLD=%q ignored: %v", raw, err)
+			}
+		}
+		log.Printf("analyzer backend: gliner (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
+		return anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
+			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
+			ModelName:         modelName,
+			OnnxFilePath:      onnxPath,
+			AutoDownload:      true,
+			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
+			Threshold:         threshold,
+			// Labels left empty → DefaultPIILabels.
+		})
 	default:
-		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, ollama)", backend)
+		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, ollama)", backend)
 		return nil
 	}
 }
