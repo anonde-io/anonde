@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"unicode"
@@ -206,6 +207,13 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	)
 	for p := range ch {
 		if p.err != nil {
+			// Per-recognizer failure: log so operators can see when an
+			// expensive backend (GLiNER, hugot, Ollama) is silently
+			// non-contributing. Without this, the engine would return
+			// pattern findings as "success" while NER errors stayed
+			// invisible — the exact failure mode that hid GLiNER's bad
+			// init on the bench for hours.
+			log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
 			errs = append(errs, p.err)
 			continue
 		}

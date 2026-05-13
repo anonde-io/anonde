@@ -14,7 +14,7 @@ import (
 )
 
 // gliner_probeText is the German clinical sentence used by
-// bench/probe_hugot/probe.go — small enough to fit a 512-token context,
+// bench/probes/hugot/probe.go — small enough to fit a 512-token context,
 // dense enough that any working clinical-PII model produces multiple
 // hits. Reusing it keeps cross-backend comparison apples-to-apples.
 const gliner_probeText = "Der Patient Herr Müller, geboren am 14.03.1962, wohnhaft Hauptstr. 8, 10115 Berlin, " +

@@ -11,6 +11,47 @@ type RecognizerResult struct {
 	RecognizerName string
 }
 
+// nerRecognizerNames is the set of recognizer names that produce
+// contextual NER findings (open-set, ML-derived) as opposed to regex /
+// checksum / heuristic pattern findings. Used by RemoveConflicts to
+// prefer NER for unstructured entity types regardless of raw score —
+// pattern scores are deterministic constants (0.85 / 1.0) and would
+// otherwise always beat NER's sigmoid output (typically 0.40 – 0.85),
+// even when the NER span is the more accurate one. Keep in sync with
+// the recognizers package — if a new NER recognizer ships, add its
+// Name() string here.
+var nerRecognizerNames = map[string]bool{
+	"GLiNERRecognizer":     true,
+	"HugotNERRecognizer":   true,
+	"OllamaNERRecognizer":  true,
+}
+
+// nerPreferredEntities is the set of entity types where NER is more
+// reliable than regex/heuristic patterns when both fire on the same
+// span. Structured types not in this set (IBAN, PHONE_NUMBER, DATE_TIME,
+// EMAIL_ADDRESS, URL, credit cards, postal codes, …) still resolve by
+// score, which preserves the regex precision win on shapes patterns
+// match exactly.
+var nerPreferredEntities = map[string]bool{
+	"PERSON":       true,
+	"ORGANIZATION": true,
+	"LOCATION":     true,
+	"AGE":          true,
+	"PROFESSION":   true,
+	"NRP":          true,
+}
+
+// isNERRecognizer reports whether r came from an NER recognizer.
+func isNERRecognizer(r RecognizerResult) bool {
+	return nerRecognizerNames[r.RecognizerName]
+}
+
+// prefersNERFor reports whether the entity type is one where we prefer
+// NER findings over pattern findings when they conflict.
+func prefersNERFor(entityType string) bool {
+	return nerPreferredEntities[entityType]
+}
+
 // ContainedIn returns true if r is fully contained within other.
 func (r RecognizerResult) ContainedIn(other RecognizerResult) bool {
 	return r.Start >= other.Start && r.End <= other.End
@@ -42,7 +83,26 @@ func SortResults(results []RecognizerResult) {
 	})
 }
 
-// RemoveConflicts removes overlapping results, keeping the highest-scoring one.
+// RemoveConflicts removes overlapping results.
+//
+// Resolution rule:
+//  1. For entity types in nerPreferredEntities (PERSON, ORGANIZATION,
+//     LOCATION, AGE, PROFESSION, NRP) — when an NER finding overlaps a
+//     pattern finding, the NER finding wins regardless of score. Pattern
+//     scores for these types come from heuristic recognizers like
+//     DEAnomalyRecognizer (anomaly-based PERSON detection on German
+//     clinical text) that produce deterministic constants (0.85, 1.0);
+//     NER sigmoid outputs (0.40 – 0.85) would always lose under pure
+//     score comparison, wasting the NER's contextual judgement.
+//  2. Otherwise (structured entity types like IBAN, PHONE, DATE, …, or
+//     two findings of the same recognizer class) — keep the
+//     higher-scoring span. This preserves the regex+checksum precision
+//     win on shapes patterns match exactly.
+//
+// Note: the resolver only compares against the LAST kept finding in the
+// scan, not every prior. With the sort by (start, score desc, length
+// desc) this is the documented anonde behavior — flagged here so future
+// maintainers don't expect optimal-cover behavior.
 func RemoveConflicts(results []RecognizerResult) []RecognizerResult {
 	if len(results) == 0 {
 		return results
@@ -53,9 +113,30 @@ func RemoveConflicts(results []RecognizerResult) []RecognizerResult {
 		last := kept[len(kept)-1]
 		if !r.Overlaps(last) {
 			kept = append(kept, r)
-		} else if r.Score > last.Score {
+			continue
+		}
+		if shouldReplace(last, r) {
 			kept[len(kept)-1] = r
 		}
 	}
 	return kept
+}
+
+// shouldReplace decides whether `candidate` should displace `kept` when
+// they overlap. Implements the NER-preference rule from RemoveConflicts.
+func shouldReplace(kept, candidate RecognizerResult) bool {
+	// Both findings target the same entity type AND it's a type where
+	// we prefer NER — NER wins over pattern, otherwise score decides.
+	if kept.EntityType == candidate.EntityType && prefersNERFor(kept.EntityType) {
+		keptNER := isNERRecognizer(kept)
+		candNER := isNERRecognizer(candidate)
+		if candNER && !keptNER {
+			return true
+		}
+		if keptNER && !candNER {
+			return false
+		}
+		// same class on both sides — fall through to score.
+	}
+	return candidate.Score > kept.Score
 }

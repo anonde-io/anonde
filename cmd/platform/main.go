@@ -137,13 +137,13 @@ func platformAddr() string {
 //     `-tags hugot`; default builds fall back to a fatal-error stub.
 //   - ANALYZER_BACKEND=gliner — in-process GLiNER PII via yalue/onnxruntime_go.
 //     Open-set NER, substantially better German clinical recall than hugot
-//     (see vs/openmed/REPORT_FINAL.md). Requires `-tags hugot` AND CGO_ENABLED=1
-//     AND libonnxruntime.so reachable at runtime.
+//     (see bench/corpora/openmed/REPORT_FINAL.md). Requires `-tags hugot` AND
+//     CGO_ENABLED=1 AND libonnxruntime.so reachable at runtime.
 //   - ANALYZER_BACKEND=ollama — local Ollama daemon for users with an
 //     existing Ollama setup.
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
-// Presidio, see bench/parity/.
+// Presidio, see bench/corpora/ai4privacy_en/.
 func analyzerFromEnv() *analyzer.AnalyzerEngine {
 	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "patterns")))
 	switch backend {

@@ -49,7 +49,7 @@ func DefaultAnalyzerEngineWithHugotConfig(cfg recognizers.HugotNERConfig) *analy
 // recognizer into the standard pattern-recognizer registry. GLiNER is
 // an open-set NER architecture: the label list is supplied at
 // inference time, not baked into the model weights. This constructor
-// drives the same model that bench/runner_gliner_pii.py uses through
+// drives the same model that bench/runners/gliner.py uses through
 // the Python sidecar — same prompt format, same canonical-entity
 // mapping — but entirely in-process.
 //
