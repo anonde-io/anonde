@@ -1,18 +1,41 @@
 # anonde
 
-A Go implementation of the PII detection and anonymization pipeline inspired by [Microsoft Presidio](https://github.com/microsoft/presidio).
+**Local-first PII detection and reversible anonymization toolkit.** A Go-native alternative to [Microsoft Presidio](https://github.com/microsoft/presidio), with German clinical text as a first-class target. Patterns + open-set NER + optional LLM reconciler, all in-process. No cloud calls.
 
-Detect and anonymize personally identifiable information (PII) in text with pattern-based recognizers and optional named-entity recognition (NER). Zero CGO, zero Python, no model downloads required by default.
+```
+┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│  text   ├──▶│ 40+ regex /  ├──▶│  GLiNER NER  ├──▶│  anonymizer  │──▶ tokenised text + vault
+│         │   │  checksum    │   │  (PII labels │   │  (6 ops)     │
+│         │   │  recognizers │   │  + DE clin.) │   │              │
+└─────────┘   └──────────────┘   └──────────────┘   └──────────────┘
+                     │                  │                   │
+                     ▼                  ▼                   ▼
+              ENGLISH/EU IDs       PERSON/ORG/LOC      Replace, Redact,
+              IBAN, phone,         AGE, PROFESSION,    Mask, Hash,
+              email, SSN,          (multilingual)      Encrypt, Synthesize
+              passport, …
+```
+
+The detection bias is **recall > precision**: anonde would rather over-tokenise (safe) than miss a PHI span (a leak). The bench tracks this explicitly via the `leak_rate` metric (lower = better).
+
+## Status
+
+- **Production deploy**: `https://anonde-platform.fly.dev` — Fly.io single-machine, NER-backend = GLiNER, libonnxruntime baked into the image, German + English + 5 more languages.
+- **CI**: `.github/workflows/bench.yml` runs the bench matrix on every PR/push to bench-relevant code, with a guard rail that fails if GLiNER silently degrades to patterns-only.
+- **Bench**: `bench/REPORT_MATRIX.md` is the authoritative comparison (5 engines × 3 gold-annotated corpora). The headline finding lives in [`.claude/memory/bench_findings_2026_05_13.md`](.claude/memory/bench_findings_2026_05_13.md).
 
 ## Features
 
-- **15 pattern recognizers** — email, phone, credit card, SSN, passport, IBAN, IP, MAC, URL, crypto wallets, dates, and more
-- **Two NER backends** — Hugot/ONNX (default, in-process transformer) and Ollama (local LLM inference). Plus a patterns-only mode when no NER is wanted.
-- **5 anonymization operators** — replace, redact, mask, hash, encrypt (AES-GCM)
-- **Parallel dispatch** — all recognizers run concurrently via goroutines
-- **Conflict resolution** — overlapping spans are resolved by score then length
-- **`DisableNER` flag** — pattern-only mode for maximum throughput (200–400× faster)
-- **Capitalised-word pre-filter** — applied to Hugot/Ollama NER to skip lowercase-only text without losing recall
+- **52 pattern recognizers** organised by region (international + EN/US + UK + IT + ES + AU + IN + PL + SG + FI + KR + DE). Most validate (Luhn / MOD-97 / Codice Fiscale check digits / etc.) so precision is high.
+- **Three NER backends**:
+  - **GLiNER** (in-process, production default) — open-set NER trained for PII; ~280 MB ONNX, ~200 ms/doc on Fly amd64 hardware. Wins leak rate vs Presidio, OpenAI Privacy Filter, and patterns-only across all benched corpora.
+  - **hugot/XLM-R** (in-process, legacy) — pre-GLiNER backend, kept for regression detection. Slower and less recall than GLiNER on German clinical text.
+  - **Ollama** (local LLM) — opt-in for users who already run an Ollama daemon. Useful as an LLM-reconciler stage layered on top of patterns or GLiNER.
+  - **Patterns-only** mode is also fully supported (no model download, no CGO).
+- **6 anonymization operators** — replace, redact, mask, hash, encrypt (AES-GCM), synthesize (Luhn-valid / MOD-97-valid / structurally-sound fake data).
+- **Conflict resolution that prefers NER for unstructured types** (PERSON, ORGANIZATION, LOCATION, AGE, PROFESSION) and patterns for structured (IBAN, phone, date, …). See `analyzer/result.go::shouldReplace`.
+- **Per-recognizer error visibility** — silent failures in the analyzer pipeline are now logged via `analyzer: recognizer error (swallowed)` so a broken NER backend can't masquerade as patterns-only.
+- **In-memory vault** for the platform service — token ↔ cleartext with configurable TTL, no DB required for ephemeral workloads.
 
 ## Installation
 
@@ -20,393 +43,298 @@ Detect and anonymize personally identifiable information (PII) in text with patt
 go get github.com/moogacs/anonde
 ```
 
-Requires Go 1.22+.
+Requires Go 1.26. Default build is pure-Go (no CGO). The `-tags hugot` build is required for the in-process NER backends (Hugot, GLiNER) and pulls in CGO + libonnxruntime as a runtime dep.
 
-## Quick Start
+## Quick start — patterns-only
+
+Zero deps, zero model downloads:
 
 ```go
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
+	"context"
+	"fmt"
+	"log"
 
-    "github.com/moogacs/anonde"
-    "github.com/moogacs/anonde/analyzer"
-    "github.com/moogacs/anonde/anonymizer"
-    "github.com/moogacs/anonde/anonymizer/operators"
+	"github.com/moogacs/anonde"
+	"github.com/moogacs/anonde/analyzer"
+	"github.com/moogacs/anonde/anonymizer"
+	"github.com/moogacs/anonde/anonymizer/operators"
 )
 
 func main() {
-    text := `Hi, I'm John. My email is john@example.com and my phone is +1-800-555-0199.
-My SSN is 123-45-6789 and credit card 4111111111111111.`
+	text := `Patient Herr Müller, geboren 14.03.1962, Hauptstr. 8, 10115 Berlin, Tel 030-12345678.`
 
-    analyzerEngine := anonde.DefaultAnalyzerEngine()
-    anonymizerEngine := anonde.DefaultAnonymizerEngine()
+	engine := anonde.DefaultAnalyzerEngine()
+	results, err := engine.Analyze(context.Background(), text, analyzer.AnalysisConfig{
+		Language:        "de",
+		ScoreThreshold:  0.3,
+		RemoveConflicts: true,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    results, err := analyzerEngine.Analyze(context.Background(), text, analyzer.AnalysisConfig{
-        Language:        "en",
-        ScoreThreshold:  0.3,
-        RemoveConflicts: true,
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    for _, r := range results {
-        fmt.Printf("[%d:%d] %-20s score=%.2f  %q\n",
-            r.Start, r.End, r.EntityType, r.Score, text[r.Start:r.End])
-    }
-
-    cfg := anonymizer.AnonymizerConfig{
-        "EMAIL_ADDRESS": &operators.Replace{NewValue: "<EMAIL>"},
-        "PHONE_NUMBER":  &operators.Mask{CharsToMask: 4, FromEnd: true},
-        "CREDIT_CARD":   &operators.Redact{},
-        "US_SSN":        &operators.Hash{HashType: operators.HashSHA256},
-        "*":             &operators.Replace{}, // default for all other entities
-    }
-
-    out, err := anonymizerEngine.Anonymize(text, results, cfg)
-    if err != nil {
-        log.Fatal(err)
-    }
-    fmt.Println(out.Text)
+	anon := anonde.DefaultAnonymizerEngine()
+	out, _ := anon.Anonymize(text, results, anonymizer.AnonymizerConfig{
+		"*": &operators.Replace{}, // → <PERSON_1>, <DATE_TIME_1>, …
+	})
+	fmt.Println(out.Text)
 }
 ```
+
+## Quick start — GLiNER (production NER)
+
+Requires `-tags hugot` + a runtime libonnxruntime:
+
+```go
+engine := anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
+	ModelName:    "knowledgator/gliner-pii-base-v1.0",
+	OnnxFilePath: "onnx/model_quint8.onnx",
+	AutoDownload: true,            // pulls ~200 MB on first call
+	Threshold:    0.40,
+})
+```
+
+The first call lazy-downloads the model into `~/.cache/anonde/models/`. At runtime the recognizer dlopens `libonnxruntime.so` (Linux) / `.dylib` (macOS) — see Deployment below.
+
+## Pattern recognizers (52)
+
+Score is the pattern's confidence band; recognizers that validate via checksums score higher than pure-regex ones.
+
+| Region | Recognizers |
+|---|---|
+| Generic / international | `EmailRecognizer` · `PhoneRecognizer` · `CreditCardRecognizer` (Luhn) · `IBANRecognizer` (MOD-97) · `IPAddressRecognizer` · `MACAddressRecognizer` · `URLRecognizer` · `CryptoRecognizer` (Bitcoin/Ethereum) · `DateTimeRecognizer` |
+| English / US | `USSocialSecurityRecognizer` · `USPassportRecognizer` · `USBankRecognizer` · `USDriverLicenseRecognizer` · `USITINRecognizer` · `MedicalLicenseRecognizer` · `ENAnomalyRecognizer` (clinical-context PERSON) · `ENOrganizationRecognizer` |
+| United Kingdom | `UKNHSRecognizer` · `UKNINORecognizer` |
+| Italy | `ITFiscalCodeRecognizer` · `ITDriverLicenseRecognizer` · `ITVATCodeRecognizer` · `ITPassportRecognizer` · `ITIdentityCardRecognizer` |
+| Spain | `ESNIFRecognizer` · `ESNIERecognizer` |
+| Australia | `AUABNRecognizer` · `AUACNRecognizer` · `AUTFNRecognizer` · `AUMedicareRecognizer` |
+| India | `INPANRecognizer` · `INAadhaarRecognizer` · `INVehicleRegistrationRecognizer` · `INVoterRecognizer` · `INPassportRecognizer` |
+| Poland | `PLPESELRecognizer` |
+| Singapore | `SGNRICRecognizer` · `SGUENRecognizer` |
+| Finland | `FIPersonalIdentityCodeRecognizer` |
+| Korea | `KRRRNRecognizer` |
+| Germany (first-class) | `DEDateTimeRecognizer` · `DEDateContextRecognizer` · `DEPhoneRecognizer` · `DEPostalCodeRecognizer` · `DEStreetRecognizer` · `DESteuerIDRecognizer` · `DEAgeRecognizer` · `DEPlaceRecognizer` · `DEClinicalIDRecognizer` · `DEOrganizationRecognizer` · `DEProfessionRecognizer` · `DEAnomalyRecognizer` (closed-vocab clinical anomaly → PERSON candidate) |
+
+Most recognizers are language-gated (`SupportedLanguages()`), so a request with `language: "de"` skips US-specific recognizers and vice versa. Universal pattern recognizers (email, IBAN, etc.) run on every language.
+
+## NER backends — current matrix
+
+From `bench/REPORT_MATRIX.md` (2026-05-13, 3 gold-annotated corpora: `openmed` = GraSCCo PHI synthetic German clinical, `synth_clinical` = anonde-generated DE, `ai4privacy_en` = 5000 EN PII docs). **Lower leak rate = better.**
+
+| Engine | openmed leak | synth_clinical leak | ai4privacy_en leak | Median latency |
+|---|---:|---:|---:|---:|
+| anonde-patterns (no NER) | 22.85% | 11.76% | 55.36% | ≤1 ms |
+| **anonde-gliner** ⭐ production | **17.15%** | **11.15%** | **24.95%** | 59–927 ms |
+| gliner-py (Python sidecar) | 50.00% | 25.36% | 25.82% | 77–593 ms |
+| Microsoft Presidio | — (EN-only) | — | 28.37% | 6 ms |
+| OpenAI Privacy Filter | 98.38% | — | — | 3174 ms |
+
+**Read**:
+- anonde-gliner beats every other engine on leak rate on every corpus.
+- On English, the closest competitor is Presidio at 28.37% (anonde-gliner: 24.95%).
+- On German clinical, OpenAI Privacy Filter is unusable (98% leak — almost blind).
+- `gliner-py` is the same model run via the official Python `gliner` library; it confirms our Go-native wrap produces correct inference (it's a parity check, not a competitor).
+
+The strict-F1 column intentionally not shown in this overview — it penalises wider-than-gold spans, which doesn't matter for redaction. See `bench/REPORT_MATRIX.md` for the full strict / partial / type-agnostic F1 grid.
+
+### Running the bench locally
+
+```bash
+# fast subset — what CI runs (~10–15 min cold cache, ~2 min warm)
+make -C bench corpus-openmed
+make -C bench corpus-synth_clinical
+
+# full matrix across all gold corpora + English
+make -C bench matrix         # → bench/REPORT_MATRIX.md + bench/results_matrix.csv
+
+# DE-only / EN-only subsets
+make -C bench matrix-de
+make -C bench matrix-en
+
+# add the slow engines (off by default — openai-pf is ~80 sec/doc on CPU)
+make bench/corpora/openmed/data/anonde_openai-pf.jsonl
+```
+
+Each corpus has its own `Makefile` and `README.md` under `bench/corpora/<NAME>/` documenting data provenance, gold-annotation source, and any DUA/registration requirements.
+
+## Deployment
+
+Two Fly.io variants of the same `cmd/platform` HTTP API:
+
+| File | What it ships | Image size | When to use |
+|---|---|---:|---|
+| `Dockerfile.platform` | Pure Go binary, no NER, no CGO | ~12 MB | patterns-only deployments; max throughput |
+| `Dockerfile.platform-ner` | Same binary + libonnxruntime + baked GLiNER model | ~470 MB | production: detects PERSON/ORG/etc. via GLiNER |
+
+`fly.toml` deploys the patterns-only image; `fly.ner.toml` deploys the NER image to the same app. Both target `anonde-platform.fly.dev`.
+
+The NER image:
+- Uses `gcr.io/distroless/cc-debian12` (needs glibc for libonnxruntime).
+- Downloads `libonnxruntime.so.1.26.0` from Microsoft's release tarball at build time and copies it to `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`.
+- Bakes the GLiNER ONNX + tokenizer into `/models/` so first-request startup needs no outbound network.
+- Warms the recognizer at process start via `WARMUP_ON_START=1` (set in `fly.ner.toml`) so the first user request doesn't pay the model-init cost.
+
+### Required env vars (NER variant)
+
+```bash
+ANALYZER_BACKEND=gliner
+GLINER_MODELS_DIR=/models
+GLINER_MODEL=knowledgator/gliner-pii-base-v1.0
+GLINER_ONNX_FILE=onnx/model_quint8.onnx
+GLINER_THRESHOLD=0.40
+ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+```
+
+All defaults are wired in `Dockerfile.platform-ner`; you don't need to set them yourself unless you're swapping the model.
+
+## HTTP API
+
+```bash
+# Anonymize + mint reversible tokens
+curl -sS -X POST https://anonde-platform.fly.dev/v1/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"t1","doc_id":"d1","content":"Patient Herr Müller, …","language":"de"}'
+
+# Exchange tokens back for cleartext (vault lookup)
+curl -sS -X POST https://anonde-platform.fly.dev/v1/detokenize \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"t1","doc_id":"d1","tokens":["<PERSON_T1_000001>"], "actor":"clinician-42","purpose":"chart-review"}'
+
+# One-shot reveal (substitutes tokens in a body of text in one call)
+curl -sS -X POST https://anonde-platform.fly.dev/v1/reveal -d '{ … }'
+
+# Health
+curl -sS https://anonde-platform.fly.dev/healthz
+```
+
+Full schemas in `PLATFORM_ENDPOINTS.md`. Memory-vault TTLs and request-size limits are env-configurable:
+
+- `MEMORY_VAULT_TTL` (default `5m`) — token ↔ cleartext retention.
+- `MEMORY_STORE_TTL` (default `5m`) — anonymized-document retention.
+- `MAX_CONTENT_BYTES` (default 10 MiB) — request body cap.
 
 ## Architecture
 
 ```
-anonde
-├── analyzer/
-│   ├── AnalyzerEngine          # orchestrates recognizers in parallel
-│   ├── RecognizerRegistry      # thread-safe recognizer store
-│   ├── AnalysisConfig          # per-call settings
-│   └── recognizers/
-│       ├── Pattern recognizers (40+) — regex + validation + checksums
-│       ├── HugotNERRecognizer  # in-process ONNX transformer (default)
-│       └── OllamaNERRecognizer # local Ollama inference (opt-in)
-└── anonymizer/
-    ├── AnonymizerEngine        # applies operators to detected spans
-    ├── AnonymizerConfig        # entity → operator map (supports "*" wildcard)
-    └── operators/
-        ├── Replace, Redact, Mask, Hash, Encrypt
+anonde/
+├── analyzer/                  # recognizer registry + parallel dispatch
+│   ├── analyzer.go            # AnalyzerEngine.Analyze: filter → dispatch → conflict resolve
+│   ├── result.go              # RecognizerResult + RemoveConflicts (NER-preference rule)
+│   ├── reconciler/            # optional LLM disambiguation stage (Ollama)
+│   ├── auditor/               # post-anonymization LLM audit (Ollama)
+│   └── recognizers/           # 52 pattern + 3 NER recognizers
+│       ├── *Recognizer.go     # per-region pattern recognizers
+│       ├── ner_hugot.go       # `-tags hugot`: in-process ONNX TokenClassification
+│       ├── ner_gliner.go      # `-tags hugot`: GLiNER (open-set NER) via yalue/onnxruntime_go
+│       └── ner_ollama.go      # Ollama HTTP client
+├── anonymizer/                # apply operators to detected spans
+│   ├── anonymizer.go          # mergeAdjacentSameType + dispatch to operators
+│   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize
+├── cmd/platform/              # HTTP service
+├── internal/platform/         # service + in-memory vault/store/policy
+└── bench/                     # single bench harness (was vs/, benchmark/, bench/parity/)
+    ├── Makefile               # top-level `make matrix`, `make matrix-de`, `make matrix-en`, …
+    ├── corpora/<NAME>/        # per-corpus Makefile + loader + data + gold
+    ├── runners/               # one Go runner, three Python sidecars (gliner, openai_pf, presidio)
+    ├── probes/                # diagnostic loaders for hugot, gliner
+    └── scoring/               # compare.py, render_matrix.py, label_map.yaml
 ```
 
-The `AnalyzerEngine.Analyze` call:
-1. Filters recognizers by language and requested entity types
-2. Skips all NER if `DisableNER` is set
-3. Applies a capitalised-word speed heuristic to local `NERRecognizer` only
-4. Runs remaining recognizers concurrently
-5. Filters results below `ScoreThreshold`
-6. Optionally removes overlapping spans (keeping highest-score, then longest)
+### Conflict resolution (the non-obvious part)
 
-## Pattern Recognizers
+`RemoveConflicts` keeps the highest-scoring span when two overlap — **except** for entity types where NER is more reliable than heuristic patterns (PERSON, ORGANIZATION, LOCATION, AGE, PROFESSION, NRP). For those, an NER finding beats a pattern finding regardless of score. Pattern recognizers like `DEAnomalyRecognizer` produce fixed scores (0.85); GLiNER produces sigmoid floats (0.4–0.85); without this rule patterns always won and the NER's contextual judgement was wasted.
 
-| Entity Type | Description | Score |
-|---|---|---|
-| `EMAIL_ADDRESS` | Email addresses | 1.0 |
-| `PHONE_NUMBER` | International phone numbers | 0.75 |
-| `CREDIT_CARD` | Visa, Mastercard, Amex, etc. (Luhn validated) | 0.3–1.0 |
-| `IBAN_CODE` | International bank account numbers (MOD-97 validated) | 0.5–1.0 |
-| `IP_ADDRESS` | IPv4 and IPv6 addresses | 0.95 |
-| `MAC_ADDRESS` | MAC addresses | 0.9 |
-| `URL` | Web URLs | 0.6 |
-| `CRYPTO` | Bitcoin and Ethereum wallet addresses | 0.9 |
-| `DATE_TIME` | Dates and times in many formats | 0.85 |
-| `US_SSN` | US Social Security Numbers | 0.85 |
-| `US_PASSPORT` | US passport numbers | 0.5 |
-| `US_BANK_NUMBER` | US bank account numbers | 0.3 |
-| `US_DRIVER_LICENSE` | US driver license numbers | 0.6 |
-| `US_ITIN` | US Individual Taxpayer Identification Numbers | 0.85 |
-| `MEDICAL_LICENSE` | Medical license numbers | 0.5 |
+For structured types (IBAN, PHONE_NUMBER, DATE_TIME, EMAIL_ADDRESS, …) the score-only rule still applies — regex+checksum precision matters more than NER context there.
 
-## NER Options
+See `analyzer/result.go::shouldReplace` for the implementation.
 
-Named entity recognition detects `PERSON`, `LOCATION`, `ORGANIZATION`, and `NRP` (nationalities/religions/political groups).
+## Anonymization operators
 
-### Hugot / ONNX (default — recommended)
-
-Runs a pre-trained transformer NER model in-process via ONNX Runtime. No Python sidecar, no external service. The model is downloaded automatically on first run into `~/.cache/anonde/models` (~270 MB for the default `Isotonic/distilbert_finetuned_ai4privacy_v2`).
-
-```go
-// auto-downloads the default model on first call
-engine := anonde.DefaultAnalyzerEngineWithHugot("", "", true)
-
-// custom models dir + model id
-engine := anonde.DefaultAnalyzerEngineWithHugot(
-    "/var/lib/anonde/models",
-    "Isotonic/distilbert_finetuned_ai4privacy_v2",
-    true,
-)
-```
-
-Benchmark results vs Microsoft Presidio default (`en_core_web_lg`) on a 500-doc slice of `ai4privacy/pii-masking-200k`:
-
-| Entity | anonde+Hugot F1 | Presidio F1 |
-|---|---:|---:|
-| PERSON | 0.93 | 0.44 |
-| LOCATION | 0.86 | 0.26 |
-| EMAIL_ADDRESS | 1.00 | 1.00 |
-| IP_ADDRESS | 1.00 | 1.00 |
-| US_SSN | 0.71 | 0.71 |
-| CREDIT_CARD | 0.76 | 0.06 |
-| PHONE_NUMBER | 0.72 | 0.47 |
-
-8 wins, 4 ties, 0 losses across 12 entity types. Reproduce: `bench/parity/`. Full report: `bench/parity/REPORT_FULL.md`.
-
-### Patterns-only (no NER, no model)
-
-Use this when you can't tolerate a model download and the entities you care about are all pattern-detectable (email, phone, IP, MAC, IBAN, credit card, US SSN, crypto, regional IDs). Faster than any NER backend; gives up PERSON / LOCATION / ORGANIZATION detection entirely.
-
-```go
-engine := anonde.DefaultAnalyzerEngine() // patterns only — no NER
-```
-
-Or via the platform service: `ANALYZER_BACKEND=patterns`.
-
-### Ollama (local LLM inference)
-
-Calls a local [Ollama](https://ollama.com) daemon. GPU-accelerated on Apple Silicon (MPS) and NVIDIA (CUDA). Slower per call than Hugot; useful when you already have an Ollama setup.
-
-```go
-// defaults: endpoint="http://localhost:11434", model="phi3:mini"
-engine := anonde.DefaultAnalyzerEngineWithOllama("", "")
-
-// custom endpoint and model
-engine := anonde.DefaultAnalyzerEngineWithOllama("http://localhost:11434", "llama3.2:1b")
-```
-
-### Comparison
-
-| Backend | NER quality | Latency (median) | Dependencies | Data leaves machine |
-|---|---|---|---|---|
-| Hugot (default) | High (≥ Presidio default) | ~140 ms | model download on first run (~270 MB) | No |
-| Patterns-only | n/a (no NER) | ~1 ms | none | No |
-| Ollama | Depends on model | ~50–500 ms | Ollama daemon | No |
-
-> The previous `prose`-based NER backend was removed — its quality fell below the parity bar (PERSON F1 0.58 on the benchmark corpus, vs Hugot's 0.93 and the 0.7 absolute floor). If you don't want a model download, prefer patterns-only over a known-low-quality NER fallback.
-
-Microsoft Presidio is **not** a runtime backend. It is retained only as a benchmarking partner under `bench/parity/` — see that directory's `README.md` to reproduce the comparison. The `analyzer/recognizers/ner_presidio_remote.go` recognizer was removed in the Phase B detach; if you need Presidio's runtime API, run it yourself and call it from your application code.
-
-## Deployment & Model Distribution
-
-The "single binary" guarantee is about **no Python sidecar at runtime**, not about embedding all weights into the executable. The Go binary itself is ~30 MB; the default Hugot model is a separate ~270 MB asset, fetched once and cached. This is the same shape as Ollama, llama.cpp, and transformers.
-
-### Three deployment shapes
-
-| Shape | Binary | Model | When to use |
-|---|---|---|---|
-| **Default (auto-download)** | shipped, small | fetched from HuggingFace Hub on first request into `~/.cache/anonde/models` | library users (`go get`), dev, any environment with network at deploy time |
-| **Docker with named volume** | in image | fetched into the `hugot_models` named volume on first request | production self-hosting via `docker-compose.yml` |
-| **Air-gapped / pre-staged** | shipped | operator pre-populates the cache or volume before first request | no-egress production, regulated environments, reproducible builds |
-
-### Pre-staging the model (air-gapped)
-
-```go
-// In an init container or build step:
-import "github.com/knights-analytics/hugot"
-
-opts := hugot.NewDownloadOptions()
-_, _ = hugot.DownloadModel(ctx,
-    "Isotonic/distilbert_finetuned_ai4privacy_v2",
-    "/var/lib/anonde/models",
-    opts,
-)
-```
-
-Then run anonde with `AutoDownload: false` and `ModelsDir: "/var/lib/anonde/models"`. Subsequent requests use the cache without ever calling out to HuggingFace.
-
-### Should we ever `go:embed` the model?
-
-By default, no. 270 MB embedded into a Go binary makes `go build` slow, bloats container images, and couples binary version to model version (independent rotation breaks). Teams that genuinely want one fat artifact can add a build-tag-gated `//go:embed` themselves — it's a ~10-line addition. The benchmark numbers in `bench/parity/REPORT_FULL.md` are reproducible without it.
-
-## Anonymization Operators
-
-Configure per-entity operators via `anonymizer.AnonymizerConfig`. Use `"*"` as the key for a default operator applied to entities with no specific mapping.
+Configure per-entity via `anonymizer.AnonymizerConfig`. Use `"*"` for a catch-all default.
 
 ### Replace
 
-Replaces the entity with a fixed value or the entity type tag.
-
 ```go
 &operators.Replace{NewValue: "<EMAIL>"}   // → <EMAIL>
-&operators.Replace{}                       // → <EMAIL_ADDRESS>
+&operators.Replace{}                       // → <EMAIL_ADDRESS> (entity type as tag)
 ```
 
-### Redact
-
-Removes the entity entirely.
+### Redact / Mask / Hash / Encrypt
 
 ```go
 &operators.Redact{}
-```
-
-### Mask
-
-Replaces characters with a masking character.
-
-```go
-&operators.Mask{MaskingChar: "*", CharsToMask: 4, FromEnd: true}
-// "+1-800-555-0199" → "+1-800-555-****"
-```
-
-### Hash
-
-Replaces with a hex digest.
-
-```go
+&operators.Mask{MaskingChar: "*", CharsToMask: 4, FromEnd: true}   // +1-800-555-**** 
 &operators.Hash{HashType: operators.HashSHA256}
-&operators.Hash{HashType: operators.HashSHA512}
+&operators.Encrypt{Key: "32-byte-aes-key-……………………………"}            // AES-GCM, base64 nonce+ct
+operators.Decrypt(value, key)                                       // reversible
 ```
 
-### Encrypt / Decrypt
+### Synthesize — structurally-valid fake data
 
-AES-GCM encryption. Stores the result as a base64-encoded `nonce+ciphertext` string that can be decrypted later.
+Replaces PII with realistic fakes that pass the same checksums as the original (Luhn for cards, MOD-97 for IBAN, valid SSN area codes, same IP class, etc.). The result looks real but contains no actual personal information — useful for staging environments, test fixtures, demo videos.
 
 ```go
-op := &operators.Encrypt{Key: "your-32-byte-aes-key-here!!!!!!"} // 16, 24, or 32 bytes
-
-// Decrypt
-original, err := operators.Decrypt(encryptedValue, key)
+&operators.Synthesize{}                              // random per call
+&operators.Synthesize{Consistent: true}              // globally deterministic: same input → same fake
+&operators.Synthesize{Consistent: true, DocumentScoped: true}  // per-document aliasing; call .Reset()
 ```
 
-## Configuration
+See the prior README's table for per-entity-type generation rules — that section is unchanged.
 
-```go
-cfg := analyzer.AnalysisConfig{
-    Language:        "en",                              // recognizer language filter
-    Entities:        []string{"EMAIL_ADDRESS", "PERSON"}, // empty = all
-    ScoreThreshold:  0.5,                               // filter low-confidence results
-    RemoveConflicts: true,                              // resolve overlapping spans
-    DisableNER:      false,                             // true = pattern-only, maximum throughput
-}
+## CI
+
+`.github/workflows/bench.yml` runs on every push to `main` and every PR whose changes touch `analyzer/**`, `bench/**`, `cmd/platform/**`, or the build chain. The workflow:
+
+1. Builds the default (no-CGO) target.
+2. Builds the `-tags hugot` target with CGO.
+3. Runs the Go unit-test suite.
+4. Runs `make corpus-openmed && make corpus-synth_clinical` — patterns + GLiNER + GLiNER-py sidecar across two German corpora.
+5. Renders `bench/REPORT_MATRIX.md` and uploads it (+ `results_matrix.csv` + per-cell findings JSONLs) as workflow artifacts.
+6. **Guard rail**: fails the job if either GLiNER cell produced 0 NER-attributable findings (caught a real silent-fallback bug the first time it landed).
+
+Headline is rendered into the GitHub Actions job summary, so PR reviewers see numbers without downloading artifacts.
+
+Local dev installs the bench Python deps via:
+
+```bash
+pip install -r bench/requirements.txt
 ```
 
-## Building Custom Engines
+The Presidio cell needs `presidio-analyzer + spacy + en_core_web_lg` separately (~700 MB; not in `requirements.txt` to keep CI fast):
+
+```bash
+pip install presidio-analyzer spacy
+python -m spacy download en_core_web_lg
+```
+
+## Building custom engines
 
 ```go
-import (
-    "github.com/moogacs/anonde/analyzer"
-    "github.com/moogacs/anonde/analyzer/recognizers"
-)
-
 registry := analyzer.NewRecognizerRegistry()
 registry.Add(recognizers.NewEmailRecognizer())
 registry.Add(recognizers.NewCreditCardRecognizer())
-// add your own recognizers implementing analyzer.EntityRecognizer
+// add your own — interface in analyzer/recognizer.go
 
 engine := analyzer.NewAnalyzerEngine(registry)
 ```
 
-### Implementing a Custom Recognizer
+### Custom recognizer
 
 ```go
 type MyRecognizer struct{}
 
 func (r *MyRecognizer) Name() string                 { return "MyRecognizer" }
 func (r *MyRecognizer) SupportedEntities() []string  { return []string{"MY_ENTITY"} }
-func (r *MyRecognizer) SupportedLanguages() []string { return []string{"en"} }
+func (r *MyRecognizer) SupportedLanguages() []string { return []string{"en", "*"} }
 
 func (r *MyRecognizer) Analyze(ctx context.Context, text string, entities []string, lang string) ([]analyzer.RecognizerResult, error) {
-    // return []analyzer.RecognizerResult{{Start: 0, End: 5, Score: 0.9, EntityType: "MY_ENTITY"}}
-    return nil, nil
+	return []analyzer.RecognizerResult{
+		{Start: 0, End: 5, Score: 0.9, EntityType: "MY_ENTITY", RecognizerName: r.Name()},
+	}, nil
 }
 ```
 
-## Benchmarks
-
-Two benchmark surfaces:
-
-```bash
-# Throughput micro-benchmarks (in-process, no model)
-go test ./benchmark/ -bench=. -benchmem
-go test ./benchmark/ -bench=BenchmarkBulkPatternOnly -benchmem
-
-# End-to-end PII parity comparison vs Microsoft Presidio
-# (5000-doc subset of ai4privacy/pii-masking-200k)
-# See bench/parity/README.md for the full reproduction recipe.
-```
-
-Representative micro-bench results on Apple M-series (patterns-only mode):
-
-| Benchmark | Throughput |
-|---|---|
-| Pattern-only 1 MB | ~150 MB/s |
-| Pattern-only batch 1000 docs parallel | ~400 MB/s |
-
-Patterns-only mode (`DisableNER: true`) skips NER entirely and is dramatically faster than any NER-enabled pipeline for structured PII (emails, SSNs, credit cards, IBAN, IP, MAC, etc.). End-to-end parity numbers vs Presidio are in `bench/parity/REPORT_FULL.md`.
-
-## Running the Example
-
-```bash
-go run ./examples/main.go
-```
-
-## Local Platform Scaffold
-
-This repo now includes a local-first service scaffold for anonymize/de-anonymize flows:
-
-- `cmd/platform` — HTTP API:
-  - `POST /v1/ingest`
-  - `POST /v1/detokenize`
-  - `POST /v1/reveal`
-  - `GET /healthz`
-- `internal/platform` — service contracts for policy, vault, and store
-- `docker-compose.yml` — local deployment with `platform` (default analyzer backend: `hugot`, model auto-downloaded into a named volume) and optional `ollama`, `policy`, and `vault-db`
-
-Endpoint request/response examples are documented in:
-`PLATFORM_ENDPOINTS.md`
-
-A standalone guide for ingest/reveal flows is available at:
-`INGEST_REVEAL_README.md`
-
-In-memory retention controls (to avoid unbounded growth):
-
-- `MEMORY_VAULT_TTL` (default: `5m`) — token-to-cleartext mappings retention
-- `MEMORY_STORE_TTL` (default: `5m`) — anonymized document retention
-- Set either of the above to `0` to disable expiry for that store
-
-Request-size limit:
-
-- `MAX_CONTENT_BYTES` (default `10485760` = 10 MiB) — caps every ingest / reveal / detokenize request body. Oversized requests return HTTP `413`. Set to `0` to disable.
-
-### Server-log ingestion
-
-For line-oriented server logs use `content_format: "logs"` (alias `log`):
-
-- Each line is processed independently; line structure is preserved.
-- ANSI escape sequences (e.g. `\x1b[31m`) are stripped before analysis.
-- Invalid UTF-8 bytes are replaced with `U+FFFD` so non-UTF-8 input never trips the recognizers.
-- Each line is auto-classified per line as JSON (recursed through string leaves) or plain text.
-
-For strictly newline-delimited JSON streams use `content_format: "ndjson"` — every non-empty line must parse as JSON or the request is rejected.
-
-To narrow the recognizer pipeline for log volume, IngestRequest accepts:
-
-- `entities`: allow-list of entity types (e.g. `["EMAIL_ADDRESS","IP_ADDRESS"]`)
-- `disable_ner`: skip PERSON/LOCATION/ORGANIZATION/NRP for maximum throughput
-- `score_threshold`: drop findings below the given confidence
-- `language`: recognizer language filter
-> Tokens are always minted per-document. Tenant-scoped token reuse (the same email getting the same token across many docs) was scoped out — tracked in `TODO.md`.
-
-See `PLATFORM_ENDPOINTS.md` for full request/response schemas.
-
-Default `docker compose up` brings up `platform` with the Hugot backend. The model is downloaded into the `hugot_models` named volume on first request.
-
-Enable Ollama only when needed:
-
-```bash
-docker compose --profile ollama up --build -d
-```
-
-Then set `ANALYZER_BACKEND=ollama` for `platform` (and optionally `OLLAMA_ENDPOINT` / `OLLAMA_MODEL`).
-
-### Benchmarking against Microsoft Presidio
-
-Presidio is no longer a runtime backend. To compare anonde against Presidio's detection on a labeled corpus, see `bench/parity/README.md` — it provisions a Python venv with `presidio-analyzer`, runs both engines over `ai4privacy/pii-masking-200k`, and emits a span-exact F1 comparison report.
-
-## License
-
-MIT
+`SupportedLanguages()` returning `"*"` lets the recognizer match any language. NER-named recognizers (name suffix `NERRecognizer`) get auto-skipped under `DisableNER` and under the no-capitals heuristic.
