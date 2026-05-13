@@ -1,5 +1,8 @@
-# Set `app` to your Fly app name (or run `fly launch` once to create/link).
-# Build uses Dockerfile.platform (same image as local docker-compose).
+# fly.toml app configuration file generated for anonde-platform on 2026-05-13T20:43:33Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = "anonde-platform"
 primary_region = "iad"
 
@@ -27,3 +30,11 @@ primary_region = "iad"
     path = "/healthz"
     protocol = "http"
     tls_skip_verify = false
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 4
+  memory = '2gb'
+  memory_mb = 2048
+  processes = ['app']
+  size = 'shared-cpu-4x'
