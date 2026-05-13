@@ -225,6 +225,14 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		if len(localFindings) == 0 {
 			return input, localFindings, nil
 		}
+		// Pre-merge same-type adjacent spans (e.g. GLiNER returns
+		// "Elena" and "Rossi" as separate PERSON findings; the
+		// anonymizer would merge them anyway, but doing it here keeps
+		// the cleartext we register in byCleartext below in lock-step
+		// with what the anonymizer ends up requesting from the
+		// tokenize operator. Without this, post-merge lookups miss
+		// and produce "no token mapped for X" errors.
+		localFindings = anonymizer.MergeAdjacentSameType(localFindings, input)
 
 		cfg := anonymizer.AnonymizerConfig{}
 		entityOperators := map[string]*tokenOperator{}

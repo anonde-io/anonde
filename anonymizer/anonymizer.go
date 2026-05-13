@@ -62,7 +62,7 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 		return sorted[i].Score > sorted[j].Score
 	})
 	sorted = analyzer.RemoveConflicts(sorted)
-	sorted = mergeAdjacentSameType(sorted, text)
+	sorted = MergeAdjacentSameType(sorted, text)
 
 	// Process right-to-left so offsets stay valid.
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
@@ -119,13 +119,13 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 	return &AnonymizerResult{Text: string(out), Items: items}, nil
 }
 
-// mergeAdjacentSameType folds same-type spans separated only by ASCII
+// MergeAdjacentSameType folds same-type spans separated only by ASCII
 // whitespace into a single span. Walks left-to-right after a sort by
 // start; chains of three or more adjacent components collapse correctly.
 // The merged span keeps the higher score and the first span's
 // RecognizerName (so token operators that key on that field remain
 // stable).
-func mergeAdjacentSameType(in []analyzer.RecognizerResult, text string) []analyzer.RecognizerResult {
+func MergeAdjacentSameType(in []analyzer.RecognizerResult, text string) []analyzer.RecognizerResult {
 	if len(in) < 2 {
 		return in
 	}
