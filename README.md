@@ -1,6 +1,14 @@
-# anonde
+<p align="center">
+  <img src="docs/assets/anonde-icon.jpg" alt="anonde" width="128" height="128">
+</p>
 
-**Local-first PII detection and reversible anonymization toolkit.** A Go-native alternative to [Microsoft Presidio](https://github.com/microsoft/presidio), with German clinical text as a first-class target. Patterns + open-set NER + optional LLM reconciler, all in-process. No cloud calls.
+<h1 align="center">anonde</h1>
+
+<p align="center">
+  <strong>Local-first PII detection and reversible anonymization toolkit.</strong><br>
+  A Go-native alternative to <a href="https://github.com/microsoft/presidio">Microsoft Presidio</a>, with German clinical text as a first-class target.<br>
+  Patterns + open-set NER + optional LLM reconciler, all in-process. No cloud calls.
+</p>
 
 ```
 ┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
@@ -190,27 +198,47 @@ ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 
 All defaults are wired in `Dockerfile.platform-ner`; you don't need to set them yourself unless you're swapping the model.
 
-## HTTP API
+## API (Connect / gRPC)
+
+The platform serves a single Connect handler that speaks Connect/JSON,
+Connect/Protobuf, gRPC, and gRPC-Web on one port. JSON callers can
+POST to the Connect URLs directly; gRPC clients use the generated
+client in `gen/anonde/platform/v1/platformv1connect`. Source of truth
+is [`proto/anonde/platform/v1/platform.proto`](proto/anonde/platform/v1/platform.proto).
 
 ```bash
-# Anonymize + mint reversible tokens
-curl -sS -X POST https://anonde-platform.fly.dev/v1/ingest \
+# Anonymize + mint reversible tokens. Proto3 JSON uses lowerCamelCase
+# field names (tenant_id → tenantId).
+curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/IngestDocument \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id":"t1","doc_id":"d1","content":"Patient Herr Müller, …","language":"de"}'
+  -d '{"tenantId":"t1","docId":"d1","content":"Patient Herr Müller, …","options":{"language":"de"}}'
 
-# Exchange tokens back for cleartext (vault lookup)
-curl -sS -X POST https://anonde-platform.fly.dev/v1/detokenize \
+# Exchange tokens back for cleartext (vault lookup, audited).
+curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/DetokenizeTokens \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id":"t1","doc_id":"d1","tokens":["<PERSON_T1_000001>"], "actor":"clinician-42","purpose":"chart-review"}'
+  -d '{"tenantId":"t1","docId":"d1","tokens":["<PERSON_T1_000001>"],"actor":"clinician-42","purpose":"chart-review"}'
 
-# One-shot reveal (substitutes tokens in a body of text in one call)
-curl -sS -X POST https://anonde-platform.fly.dev/v1/reveal -d '{ … }'
+# One-shot reveal (substitutes tokens inside a body of text).
+curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/RevealContent \
+  -H "Content-Type: application/json" -d '{ … }'
 
-# Health
+# Delete a document and every vault entry it minted (idempotent).
+curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/DeleteDocument \
+  -H "Content-Type: application/json" \
+  -d '{"tenantId":"t1","docId":"d1"}'
+
+# Backend / model / build info.
+curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/GetVersion \
+  -H "Content-Type: application/json" -d '{}'
+
+# Health (plain HTTP GET, not Connect).
 curl -sS https://anonde-platform.fly.dev/healthz
 ```
 
-Full schemas in `PLATFORM_ENDPOINTS.md`. Memory-vault TTLs and request-size limits are env-configurable:
+Regenerate Connect handlers after editing the proto: `buf generate` from
+the repo root.
+
+Memory-vault TTLs and request-size limits are env-configurable:
 
 - `MEMORY_VAULT_TTL` (default `5m`) — token ↔ cleartext retention.
 - `MEMORY_STORE_TTL` (default `5m`) — anonymized-document retention.

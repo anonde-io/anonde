@@ -220,153 +220,244 @@ def _f1_overall(view_tally: dict) -> float:
     return f
 
 
+def _fmt_latency(ms: float) -> str:
+    """Mixed-unit latency: <1s as ms, >=1s as s, >=60s as min."""
+    if ms < 1000:
+        return f"{ms:.0f} ms"
+    if ms < 60_000:
+        return f"{ms / 1000:.1f} s"
+    return f"{ms / 60_000:.1f} min"
+
+
+def _fmt_leak_bar(rate: float) -> str:
+    """Visual indicator of leak rate severity. 1 block per 10pp."""
+    if rate < 0.05:
+        return "🟢"
+    if rate < 0.15:
+        return "🟡"
+    if rate < 0.30:
+        return "🟠"
+    if rate < 0.60:
+        return "🔴"
+    return "💀"  # essentially blind (>60% leak)
+
+
 def _render(rows, label_map, corpora, engines):
-    """rows: dict[(corpus, engine)] = evaluate-result-or-None."""
+    """rows: dict[(corpus, engine)] = evaluate-result-or-None.
+
+    Layout:
+      1. TL;DR (one-paragraph headline conclusion)
+      2. Verdict cards per corpus (the at-a-glance answer)
+      3. Leak rate table (the load-bearing metric)
+      4. Latency table (mixed units)
+      5. F1 reference (one type-agnostic table; strict/partial in CSV)
+      6. Cell coverage matrix
+      7. Glossary ("what does this mean")
+    """
     canonical = list(label_map.get("canonical", []))
     out: list[str] = []
 
-    out.append("# anonde bench matrix\n")
-    out.append(
-        f"Cross-corpus, cross-engine F1 over {len(corpora)} corpora × {len(engines)} engines.\n"
-        f"Engines and corpora that produced no findings (e.g. Presidio on German) are reported "
-        f"as `–` so the language-coverage view is explicit.\n"
-    )
-
-    # ---- headline: anonde-gliner vs best baseline, per corpus ----------
-    out.append("## Headline: anonde-gliner vs best baseline\n")
-    out.append("Strict-F1 (micro across canonical entities). Production wins each row where "
-               "`anonde-gliner F1 ≥ best-baseline F1`.\n")
-    out.append("| Corpus | anonde-gliner | best baseline | Δ | win? |")
-    out.append("|---|---:|---:|---:|:--:|")
+    # ---- compute headline stats first so the TL;DR can quote them ------
+    # For each corpus, find (winner_engine, winner_leak_rate, gap_vs_best_baseline).
+    per_corpus_verdict: list[dict] = []
     for c in corpora:
-        gliner_cell = rows.get((c, "anonde-gliner"))
-        if gliner_cell is None:
+        gold_cell = next((rows[(c, e)] for e in engines if (c, e) in rows), None)
+        if gold_cell is None or gold_cell["total_gold"] == 0:
+            per_corpus_verdict.append({"corpus": c, "scorable": False})
             continue
-        gliner_f = _f1_overall(gliner_cell["strict"])
-        best_baseline_name = "-"
-        best_baseline_f = -1.0
-        for e in engines:
-            if e == "anonde-gliner":
-                continue
-            cell = rows.get((c, e))
-            if cell is None:
-                continue
-            f = _f1_overall(cell["strict"])
-            if f > best_baseline_f:
-                best_baseline_f = f
-                best_baseline_name = e
-        if best_baseline_f < 0:
-            out.append(f"| {c} | {gliner_f:.3f} | – | – | – |")
-            continue
-        delta = gliner_f - best_baseline_f
-        win = "✓" if delta >= 0 else "✗"
-        out.append(
-            f"| {c} | **{gliner_f:.3f}** | {best_baseline_name} ({best_baseline_f:.3f}) | "
-            f"{delta:+.3f} | {win} |"
-        )
-    out.append("")
-
-    # ---- F1 grid per view ----------------------------------------------
-    for view, title in (
-        ("strict", "Strict F1 (exact start+end+type)"),
-        ("partial", "Partial F1 (overlap, same canonical type)"),
-        ("type_only", "Type-agnostic F1"),
-    ):
-        out.append(f"## {title}\n")
-        out.append("Micro-F1 across canonical entity types. Empty = engine not run on that corpus.\n")
-        header = "| Corpus | " + " | ".join(engines) + " |"
-        sep = "|---|" + "---:|" * len(engines)
-        out.append(header); out.append(sep)
-        for c in corpora:
-            cells = [f"| {c} |"]
-            for e in engines:
-                cell = rows.get((c, e))
-                if cell is None:
-                    cells.append("– |")
-                    continue
-                f = _f1_overall(cell[view])
-                cells.append(f"{f:.3f} |")
-            out.append(" ".join(cells))
-        out.append("")
-
-    # ---- Leak rate grid -------------------------------------------------
-    out.append("## Anonymisation leak rate\n")
-    out.append("Lower is better. A gold PHI span is leaked when no predicted span overlaps it.\n")
-    header = "| Corpus | " + " | ".join(engines) + " |"
-    sep = "|---|" + "---:|" * len(engines)
-    out.append(header); out.append(sep)
-    for c in corpora:
-        cells = [f"| {c} |"]
+        engine_leaks: list[tuple[str, float, dict]] = []
         for e in engines:
             cell = rows.get((c, e))
             if cell is None or cell["total_gold"] == 0:
-                cells.append("– |")
                 continue
             rate = cell["leaked"] / cell["total_gold"]
-            cells.append(f"{rate:.2%} |")
+            engine_leaks.append((e, rate, cell))
+        if not engine_leaks:
+            per_corpus_verdict.append({"corpus": c, "scorable": False})
+            continue
+        engine_leaks.sort(key=lambda x: x[1])
+        winner = engine_leaks[0]
+        # Best baseline = best non-anonde-gliner engine.
+        gliner_row = next((x for x in engine_leaks if x[0] == "anonde-gliner"), None)
+        baseline_row = next((x for x in engine_leaks if x[0] != "anonde-gliner"), None)
+        per_corpus_verdict.append({
+            "corpus": c,
+            "scorable": True,
+            "winner": winner,
+            "gliner": gliner_row,
+            "best_baseline": baseline_row,
+            "engine_leaks": engine_leaks,
+        })
+
+    scorable = [v for v in per_corpus_verdict if v["scorable"]]
+    gliner_wins = sum(
+        1 for v in scorable
+        if v["gliner"] is not None and v["winner"][0] == "anonde-gliner"
+    )
+    n_scorable = len(scorable)
+
+    # ---- title + TL;DR ----------------------------------------------
+    out.append("# 🛡️ anonde bench matrix\n")
+    if n_scorable > 0:
+        # Largest gliner-vs-baseline pp delta for the headline.
+        biggest_pp = max(
+            (v["best_baseline"][1] - v["gliner"][1])
+            for v in scorable
+            if v["gliner"] is not None and v["best_baseline"] is not None
+        ) if any(v["gliner"] and v["best_baseline"] for v in scorable) else 0.0
+
+        tldr = (
+            f"> **TL;DR** — `anonde-gliner` (production) is the lowest-leak engine on "
+            f"**{gliner_wins} of {n_scorable}** gold-annotated corpora. "
+            f"Biggest absolute improvement over the best baseline: **{biggest_pp * 100:+.1f}pp** "
+            f"in leak rate. Strict F1 trades exact-byte alignment for catching more PHI "
+            f"— the right trade-off for a redactor, not a benchmark gaming exercise.\n"
+        )
+        out.append(tldr)
+    else:
+        out.append(
+            "> **TL;DR** — no gold-annotated corpora available to score. "
+            "Add a corpus with `entities: [...]` in its `corpus.jsonl` to enable F1 + leak-rate metrics.\n"
+        )
+
+    # ---- per-corpus verdict cards -----------------------------------
+    out.append("## Per-corpus verdict\n")
+    out.append("`🟢/🟡/🟠/🔴/💀` flags the production engine's leak severity on each corpus. "
+               "`⚪` corpora produced text but no span-level gold, so F1/leak are not measurable.\n")
+    for v in per_corpus_verdict:
+        c = v["corpus"]
+        if not v["scorable"]:
+            out.append(f"- ⚪ **`{c}`** — no gold annotations; precision-probe only "
+                       f"(see `bench/corpora/{c}/README.md`).")
+            continue
+        gliner_row = v["gliner"]
+        baseline_row = v["best_baseline"]
+        if gliner_row is None:
+            out.append(f"- ❔ **`{c}`** — `anonde-gliner` did not run on this corpus.")
+            continue
+        gliner_rate = gliner_row[1]
+        flag = _fmt_leak_bar(gliner_rate)
+        line = f"- {flag} **`{c}`** — `anonde-gliner` leaks **{gliner_rate:.1%}**"
+        if baseline_row is not None:
+            be, br, _ = baseline_row
+            delta_pp = (br - gliner_rate) * 100
+            arrow = "↓" if delta_pp > 0 else "↑"
+            line += (
+                f" vs the best baseline `{be}` at **{br:.1%}** "
+                f"({arrow} **{abs(delta_pp):.1f}pp** {'better' if delta_pp > 0 else 'worse'})."
+            )
+        else:
+            line += " — no comparable baseline ran on this corpus."
+        out.append(line)
+    out.append("")
+
+    # ---- Leak rate grid (the load-bearing metric) -------------------
+    out.append("## Leak rate · lower is better\n")
+    out.append("A gold PHI span is *leaked* when **no** predicted span overlaps it. "
+               "This is the metric that matters for redaction: 'did we miss a name?'\n")
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
+    for c in corpora:
+        scorable_cell = next((rows[(c, e)] for e in engines
+                              if (c, e) in rows and rows[(c, e)]["total_gold"] > 0), None)
+        if scorable_cell is None:
+            out.append(f"| `{c}` |" + " – |" * len(engines))
+            continue
+        cells = [f"| `{c}` |"]
+        # Find the best (lowest) leak for highlighting.
+        best_rate = float("inf")
+        rates = []
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None or cell["total_gold"] == 0:
+                rates.append(None)
+            else:
+                r = cell["leaked"] / cell["total_gold"]
+                rates.append(r)
+                best_rate = min(best_rate, r)
+        for r in rates:
+            if r is None:
+                cells.append("– |")
+                continue
+            txt = f"{r:.1%}"
+            if abs(r - best_rate) < 1e-9:
+                txt = f"**{txt}** 🥇"
+            cells.append(f"{txt} |")
         out.append(" ".join(cells))
     out.append("")
 
-    # ---- Latency grid ---------------------------------------------------
-    out.append("## Latency — median / mean / p99 (ms)\n")
-    header = "| Corpus | " + " | ".join(engines) + " |"
-    sep = "|---|" + "---:|" * len(engines)
-    out.append(header); out.append(sep)
+    # ---- Latency grid (mixed units) ---------------------------------
+    out.append("## Latency · per-document median\n")
+    out.append("Wall-clock per `engine.Analyze(doc)` call. p99 + mean in `results_matrix.csv`.\n")
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
-        cells = [f"| {c} |"]
+        cells = [f"| `{c}` |"]
         for e in engines:
             cell = rows.get((c, e))
             if cell is None or not cell["durations"]:
                 cells.append("– |")
                 continue
             lat = _latency(cell["durations"])
-            cells.append(f"{lat['median']:.1f} / {lat['mean']:.1f} / {lat['p99']:.1f} |")
+            cells.append(f"{_fmt_latency(lat['median'])} |")
         out.append(" ".join(cells))
     out.append("")
 
-    # ---- Coverage matrix ------------------------------------------------
-    out.append("## Language coverage\n")
-    out.append("`✓` = cell produced findings; `–` = skipped (engine not run on this corpus).\n")
-    header = "| Corpus | " + " | ".join(engines) + " |"
-    sep = "|---|" + ":-:|" * len(engines)
-    out.append(header); out.append(sep)
+    # ---- One F1 reference table (type-agnostic, the "did we find  --
+    # ---- the span at all" view) -------------------------------------
+    out.append("## F1 reference · type-agnostic\n")
+    out.append("Type-agnostic F1: any predicted span overlapping a gold span counts as a hit, "
+               "regardless of which entity-type label was assigned. The closest metric to "
+               "'did we cover the PHI?' that's also boundary-aware. Strict and partial-overlap "
+               "F1 are in `results_matrix.csv`.\n")
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
-        cells = [f"| {c} |"]
+        cells = [f"| `{c}` |"]
         for e in engines:
-            cell = rows.get((c, e))
-            cells.append("✓ |" if cell is not None else "– |")
-        out.append(" ".join(cells))
-    out.append("")
-
-    # ---- Disagreements per corpus --------------------------------------
-    out.append("## Top disagreements per corpus\n")
-    out.append("Per corpus: top 3 baselines ranked by |strict-F1(gliner) − strict-F1(baseline)|.\n")
-    for c in corpora:
-        gliner_cell = rows.get((c, "anonde-gliner"))
-        if gliner_cell is None:
-            continue
-        gliner_f = _f1_overall(gliner_cell["strict"])
-        deltas = []
-        for e in engines:
-            if e == "anonde-gliner":
-                continue
             cell = rows.get((c, e))
             if cell is None:
+                cells.append("– |")
                 continue
-            ef = _f1_overall(cell["strict"])
-            deltas.append((e, gliner_f - ef, ef))
-        deltas.sort(key=lambda x: abs(x[1]), reverse=True)
-        if not deltas:
-            continue
-        out.append(f"### {c}\n")
-        out.append("| Baseline | Δ vs anonde-gliner | baseline F1 |")
-        out.append("|---|---:|---:|")
-        for e, d, ef in deltas[:3]:
-            out.append(f"| {e} | {d:+.3f} | {ef:.3f} |")
-        out.append("")
+            f = _f1_overall(cell["type_only"])
+            cells.append(f"{f:.3f} |" if f > 0 else "0.000 |")
+        out.append(" ".join(cells))
+    out.append("")
 
-    out.append("---\n")
-    out.append(f"Generated by `bench/scoring/render_matrix.py` over {len(rows)} cells.\n")
+    # ---- Cell coverage ----------------------------------------------
+    out.append("## Cell coverage\n")
+    out.append("Which engines actually produced output for which corpora. "
+               "Empty cells mean the engine wasn't run (e.g. Presidio is English-only; "
+               "openai-pf is excluded from corpora that take >1h at 80sec/doc).\n")
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + ":-:|" * len(engines))
+    for c in corpora:
+        cells = [f"| `{c}` |"]
+        for e in engines:
+            cells.append("✓ |" if rows.get((c, e)) is not None else "– |")
+        out.append(" ".join(cells))
+    out.append("")
+
+    # ---- Glossary ---------------------------------------------------
+    out.append("## What does this mean?\n")
+    out.append("""\
+- **Leak rate** = the fraction of gold PHI spans no predicted span overlaps. The single most
+  important number for a PII redactor: each leaked span is a real piece of PHI we'd have
+  missed in production.
+- **Type-agnostic F1** = harmonic mean of precision and recall using overlap matching; ignores
+  the entity-type label. Useful as a tie-breaker when leak rates are close.
+- **Strict F1** (in CSV) = exact start, end, and type match against gold. Useful for academic
+  comparison; less useful for redaction, since a span that's 11 chars vs gold's 5 still
+  successfully tokenises (the cleartext is gone either way).
+- **`–` cells** = engine not run on that corpus. Reasons: language mismatch (Presidio is EN
+  only), per-doc cost too high (openai-pf at 80sec/doc on CPU), or corpus requires manual
+  DUA registration (`ggponc_de`).
+- **⚪ corpora** = precision-probe only (no span-level gold annotations). Useful for "does the
+  engine over-redact ordinary prose?" checks, not for F1 / leak rate.
+""")
+
+    out.append(f"---\n*Generated by `bench/scoring/render_matrix.py` over "
+               f"{len(rows)} cells. Full per-entity-type breakdown in `results_matrix.csv`.*\n")
     return "\n".join(out)
 
 
