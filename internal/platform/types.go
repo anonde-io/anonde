@@ -1,6 +1,6 @@
 package platform
 
-import "github.com/moogacs/anonde/analyzer"
+import "github.com/anonde-io/anonde/analyzer"
 
 type IngestRequest struct {
 	TenantID      string `json:"tenant_id"`

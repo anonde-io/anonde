@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 var creditCardRE = regexp.MustCompile(

@@ -29,9 +29,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/moogacs/anonde"
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
 
 func main() {

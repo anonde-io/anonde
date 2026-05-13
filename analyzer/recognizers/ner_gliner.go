@@ -76,7 +76,7 @@ import (
 	"github.com/knights-analytics/hugot"
 	ort "github.com/yalue/onnxruntime_go"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // Hard-coded model parameters. The Python sidecar uses identical

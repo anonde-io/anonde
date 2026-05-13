@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
 
 func TestEmailRecognizer(t *testing.T) {

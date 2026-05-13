@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
 
 // ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // OllamaConfig configures the Ollama-backed auditor. Zero values are

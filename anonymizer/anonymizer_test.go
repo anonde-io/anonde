@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/anonymizer"
-	"github.com/moogacs/anonde/anonymizer/operators"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/anonymizer"
+	"github.com/anonde-io/anonde/anonymizer/operators"
 )
 
 func results(items ...analyzer.RecognizerResult) []analyzer.RecognizerResult { return items }

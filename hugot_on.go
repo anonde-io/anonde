@@ -3,8 +3,8 @@
 package anonde
 
 import (
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
 
 // DefaultAnalyzerEngineWithHugot returns an engine that uses a pre-trained

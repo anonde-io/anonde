@@ -1,13 +1,18 @@
-module github.com/moogacs/anonde
+module github.com/anonde-io/anonde
 
 go 1.26.0
 
 require (
+	connectrpc.com/connect v1.19.2
 	github.com/gomlx/go-huggingface v0.3.5
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0
 	github.com/knights-analytics/hugot v0.7.2
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/yalue/onnxruntime_go v1.28.0
 	golang.org/x/sync v0.20.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20260511170946-3700d4141b60
+	google.golang.org/grpc v1.81.0
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -25,12 +30,13 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/viant/afs v1.30.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/image v0.39.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/term v0.42.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/term v0.43.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260504160031-60b97b32f348 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )

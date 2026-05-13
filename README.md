@@ -51,7 +51,7 @@ was charged twice on <DATE_TIME_1> for $89.99, please refund.
 ## Quick start: Go library
 
 ```bash
-go get github.com/moogacs/anonde
+go get github.com/anonde-io/anonde
 ```
 
 ```go
@@ -61,10 +61,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/moogacs/anonde"
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/anonymizer"
-	"github.com/moogacs/anonde/anonymizer/operators"
+	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/anonymizer"
+	"github.com/anonde-io/anonde/anonymizer/operators"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // ibanRE matches the IBAN structural shape: 2-letter country code, 2 check

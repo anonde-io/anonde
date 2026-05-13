@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"regexp"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 var (

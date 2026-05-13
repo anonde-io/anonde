@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // DEDateContextRecognizer detects bare years (1900–2099) and partial dates

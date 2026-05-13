@@ -17,7 +17,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // errGLiNERDisabled is the canned error returned by every Analyze call

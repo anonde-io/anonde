@@ -12,10 +12,10 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/moogacs/anonde"
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/anonymizer"
-	"github.com/moogacs/anonde/anonymizer/operators"
+	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/anonymizer"
+	"github.com/anonde-io/anonde/anonymizer/operators"
 )
 
 func main() {

@@ -40,11 +40,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/moogacs/anonde"
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/analyzer/auditor"
-	"github.com/moogacs/anonde/analyzer/recognizers"
-	"github.com/moogacs/anonde/analyzer/reconciler"
+	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/auditor"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/reconciler"
 )
 
 type goldDoc struct {

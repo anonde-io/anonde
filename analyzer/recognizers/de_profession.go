@@ -4,7 +4,7 @@ import (
 	"context"
 	"regexp"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // DEProfessionRecognizer detects German profession words. PROFESSION is a

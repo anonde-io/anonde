@@ -5,8 +5,8 @@ package anonde
 import (
 	"log"
 
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
 
 // DefaultAnalyzerEngineWithHugot is a fail-fast stub used when the binary

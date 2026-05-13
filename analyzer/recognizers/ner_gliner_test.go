@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moogacs/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
 
 // gliner_probeText is the German clinical sentence used by

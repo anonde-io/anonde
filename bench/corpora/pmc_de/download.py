@@ -36,7 +36,7 @@ DEFAULT_QUERY = (
     "(case reports[PT]) AND ger[Language] AND open access[Filter]"
 )
 
-UA = "anonde-bench/0.1 (https://github.com/moogacs/anonde; mailto:bk@m-mooga.com)"
+UA = "anonde-bench/0.1 (https://github.com/anonde-io/anonde; mailto:bk@m-mooga.com)"
 
 
 def _http_get(url: str, timeout: int = 30) -> bytes:

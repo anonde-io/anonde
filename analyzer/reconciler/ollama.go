@@ -23,7 +23,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // OllamaConfig configures the Ollama-backed reconciler. Zero values are

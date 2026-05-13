@@ -4,7 +4,7 @@ import (
 	"context"
 	"regexp"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // ITIN: 9XX-7X-XXXX where the middle group is 70-88, 90-92, or 94-99.

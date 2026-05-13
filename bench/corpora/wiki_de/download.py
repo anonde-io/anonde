@@ -46,7 +46,7 @@ def _api_get(params: dict) -> dict:
     url = API + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "anonde-bench/0.1 (https://github.com/moogacs/anonde)"},
+        headers={"User-Agent": "anonde-bench/0.1 (https://github.com/anonde-io/anonde)"},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))

@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 var ssnRE = regexp.MustCompile(`\b(\d{3})[- ](\d{2})[- ](\d{4})\b`)

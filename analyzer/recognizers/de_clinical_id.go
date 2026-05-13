@@ -4,7 +4,7 @@ import (
 	"context"
 	"regexp"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // DEClinicalIDRecognizer detects German clinical identifiers. GraSCCo shows

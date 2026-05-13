@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 func TestENAnomalyRecognizer(t *testing.T) {

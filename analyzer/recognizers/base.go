@@ -4,7 +4,7 @@ import (
 	"context"
 	"regexp"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // PatternRecognizer is a regex-based recognizer.

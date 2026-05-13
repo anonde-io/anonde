@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 const ollamaNERSystemPrompt = `You are a multilingual named entity recognition system. Extract all named entities from the text in any language (English, German, Spanish, French, Italian, etc.).

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/anonymizer/operators"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/anonymizer/operators"
 )
 
 // AnonymizerResult is the output of anonymizing a text.

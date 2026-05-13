@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/moogacs/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer"
 )
 
 // fakeRecognizer returns a fixed set of results for every input. Used to

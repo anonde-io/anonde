@@ -3,11 +3,11 @@
 package anonde
 
 import (
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/analyzer/auditor"
-	"github.com/moogacs/anonde/analyzer/recognizers"
-	"github.com/moogacs/anonde/analyzer/reconciler"
-	"github.com/moogacs/anonde/anonymizer"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/auditor"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/reconciler"
+	"github.com/anonde-io/anonde/anonymizer"
 )
 
 // patternRecognizers returns the slice of non-NER recognizers shared by all engines.
