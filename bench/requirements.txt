@@ -1,0 +1,26 @@
+# anonde bench Python deps.
+#
+# These cover the engines the CI matrix runs (gliner-py sidecar +
+# corpus loaders + scoring scripts). The local-only matrix also
+# uses presidio-analyzer + spacy + en_core_web_lg for the Presidio
+# baseline cell — those are intentionally NOT here so CI doesn't
+# pay the ~700 MB spaCy-model cost on every run. Install them
+# locally with:
+#
+#   pip install presidio-analyzer spacy
+#   python -m spacy download en_core_web_lg
+
+# GLiNER Python package — used by bench/runners/gliner_sidecar.py.
+# Pinned: bench numbers shift with gliner version.
+gliner==0.2.26
+
+# transformers — used by bench/runners/openai_pf.py (the openai-pf
+# cell, excluded from the CI subset but kept loadable for local
+# debugging) and pulled transitively by gliner.
+transformers
+
+# pyyaml — corpus loaders + scoring scripts read label_map.yaml.
+pyyaml
+
+# torch is a transitive dep of gliner; do not pin here — let gliner's
+# constraint pick a compatible version.
