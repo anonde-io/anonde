@@ -5,57 +5,54 @@
 <h1 align="center">anonde</h1>
 
 <p align="center">
-  <strong>Local-first PII detection and reversible anonymization toolkit.</strong><br>
-  A Go-native alternative to <a href="https://github.com/microsoft/presidio">Microsoft Presidio</a>, with German clinical text as a first-class target.<br>
-  Patterns + open-set NER + optional LLM reconciler, all in-process. No cloud calls.
+  <strong>Make regulated data safe to use with LLMs.</strong><br>
+  Anonymize before the model sees it. Reveal only where it's allowed.<br>
+  <sub>A developer toolkit for building copilots, RAG, and agents over healthcare, finance, and enterprise data.</sub>
 </p>
 
+<p align="center">
+  <a href="https://anonde.io">anonde.io</a> ·
+  <a href="https://anonde.io/demo/">Live demo</a> ·
+  <a href="docs/QUICKSTART.md">Quickstart</a> ·
+  <a href="bench/REPORT_MATRIX.md">Benchmarks</a>
+</p>
+
+---
+
+## See it in 10 seconds
+
+**Your input** (text, JSON, NDJSON, logs, or PDF):
+
+```text
+From: sarah.chen@acme.example
+Hi, this is Sarah Chen (+1 415 555 0142). Card 4111-1111-1111-1111
+was charged twice on 2024-03-15 for $89.99, please refund.
 ```
-┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│  text   ├──▶│ 40+ regex /  ├──▶│  GLiNER NER  ├──▶│  anonymizer  │──▶ tokenised text + vault
-│         │   │  checksum    │   │  (PII labels │   │  (6 ops)     │
-│         │   │  recognizers │   │  + DE clin.) │   │              │
-└─────────┘   └──────────────┘   └──────────────┘   └──────────────┘
-                     │                  │                   │
-                     ▼                  ▼                   ▼
-              ENGLISH/EU IDs       PERSON/ORG/LOC      Replace, Redact,
-              IBAN, phone,         AGE, PROFESSION,    Mask, Hash,
-              email, SSN,          (multilingual)      Encrypt, Synthesize
-              passport, …
+
+**What the LLM sees:**
+
+```text
+From: <EMAIL_ADDRESS_1>
+Hi, this is <PERSON_1> (<PHONE_NUMBER_1>). Card <CREDIT_CARD_1>
+was charged twice on <DATE_TIME_1> for $89.99, please refund.
 ```
 
-The detection bias is **recall > precision**: anonde would rather over-tokenise (safe) than miss a PHI span (a leak). The bench tracks this explicitly via the `leak_rate` metric (lower = better).
+**What your user sees:** the original text, restored inside your trust boundary, gated by `actor` + `purpose` audit metadata. Tokens are stable per `(tenant, doc)` and reversible via an in-memory vault you control.
 
-## Status
+## Why anonde
 
-- **Production deploy**: `https://anonde-platform.fly.dev` — Fly.io single-machine, NER-backend = GLiNER, libonnxruntime baked into the image, German + English + 5 more languages.
-- **CI**: `.github/workflows/bench.yml` runs the bench matrix on every PR/push to bench-relevant code, with a guard rail that fails if GLiNER silently degrades to patterns-only.
-- **Bench**: `bench/REPORT_MATRIX.md` is the authoritative comparison (5 engines × 3 gold-annotated corpora). The headline finding lives in [`.claude/memory/bench_findings_2026_05_13.md`](.claude/memory/bench_findings_2026_05_13.md).
+- **Drop-in for any LLM workflow.** Same shape in, same shape out. Plug it between your app and OpenAI, Anthropic, Bedrock, Ollama, or your own model. They see only tokens.
+- **Wins on leak rate.** anonde-gliner has the lowest leak rate on 5 of 6 gold-annotated corpora the bench tracks, including German clinical, German finance, German legal, and English PII. ([numbers](#benchmarks))
+- **Local-first.** Ships as a Go library or a Docker image you run yourself. No cloud calls. NER models are baked into the image, so there is no outbound HuggingFace traffic at request time.
+- **Multilingual.** Open-set NER (GLiNER) plus 52 region-aware pattern recognizers covering 12+ jurisdictions: international IDs, US, UK, Germany, Italy, Spain, Australia, India, Poland, Singapore, Finland, Korea.
+- **Reversible, audited.** Tokens map back to cleartext only where you allow it. The reveal call requires `actor` + `purpose` and is the only place plaintext comes back.
+- **Recall-biased.** Missing a span is a leak; tokenising one too many is cheap. The bench tracks this explicitly via `leak_rate` (lower is better).
 
-## Features
-
-- **52 pattern recognizers** organised by region (international + EN/US + UK + IT + ES + AU + IN + PL + SG + FI + KR + DE). Most validate (Luhn / MOD-97 / Codice Fiscale check digits / etc.) so precision is high.
-- **Three NER backends**:
-  - **GLiNER** (in-process, production default) — open-set NER trained for PII; ~280 MB ONNX, ~200 ms/doc on Fly amd64 hardware. Wins leak rate vs Presidio, OpenAI Privacy Filter, and patterns-only across all benched corpora.
-  - **hugot/XLM-R** (in-process, legacy) — pre-GLiNER backend, kept for regression detection. Slower and less recall than GLiNER on German clinical text.
-  - **Ollama** (local LLM) — opt-in for users who already run an Ollama daemon. Useful as an LLM-reconciler stage layered on top of patterns or GLiNER.
-  - **Patterns-only** mode is also fully supported (no model download, no CGO).
-- **6 anonymization operators** — replace, redact, mask, hash, encrypt (AES-GCM), synthesize (Luhn-valid / MOD-97-valid / structurally-sound fake data).
-- **Conflict resolution that prefers NER for unstructured types** (PERSON, ORGANIZATION, LOCATION, AGE, PROFESSION) and patterns for structured (IBAN, phone, date, …). See `analyzer/result.go::shouldReplace`.
-- **Per-recognizer error visibility** — silent failures in the analyzer pipeline are now logged via `analyzer: recognizer error (swallowed)` so a broken NER backend can't masquerade as patterns-only.
-- **In-memory vault** for the platform service — token ↔ cleartext with configurable TTL, no DB required for ephemeral workloads.
-
-## Installation
+## Quick start: Go library
 
 ```bash
 go get github.com/moogacs/anonde
 ```
-
-Requires Go 1.26. Default build is pure-Go (no CGO). The `-tags hugot` build is required for the in-process NER backends (Hugot, GLiNER) and pulls in CGO + libonnxruntime as a runtime dep.
-
-## Quick start — patterns-only
-
-Zero deps, zero model downloads:
 
 ```go
 package main
@@ -63,7 +60,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/moogacs/anonde"
 	"github.com/moogacs/anonde/analyzer"
@@ -72,297 +68,105 @@ import (
 )
 
 func main() {
-	text := `Patient Herr Müller, geboren 14.03.1962, Hauptstr. 8, 10115 Berlin, Tel 030-12345678.`
+	text := `Hi, I'm Sarah Chen (sarah.chen@acme.example, +1 415 555 0142). Card 4111-1111-1111-1111.`
 
 	engine := anonde.DefaultAnalyzerEngine()
-	results, err := engine.Analyze(context.Background(), text, analyzer.AnalysisConfig{
-		Language:        "de",
+	results, _ := engine.Analyze(context.Background(), text, analyzer.AnalysisConfig{
+		Language:        "en",
 		ScoreThreshold:  0.3,
 		RemoveConflicts: true,
 	})
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	anon := anonde.DefaultAnonymizerEngine()
 	out, _ := anon.Anonymize(text, results, anonymizer.AnonymizerConfig{
-		"*": &operators.Replace{}, // → <PERSON_1>, <DATE_TIME_1>, …
+		"*": &operators.Replace{}, // → <PERSON_1>, <EMAIL_ADDRESS_1>, <PHONE_NUMBER_1>, <CREDIT_CARD_1>
 	})
 	fmt.Println(out.Text)
 }
 ```
 
-## Quick start — GLiNER (production NER)
+Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER (GLiNER, hugot); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Requires `-tags hugot` + a runtime libonnxruntime:
+## Run the HTTP server
 
-```go
-engine := anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
-	ModelName:    "knowledgator/gliner-pii-base-v1.0",
-	OnnxFilePath: "onnx/model_quint8.onnx",
-	AutoDownload: true,            // pulls ~200 MB on first call
-	Threshold:    0.40,
-})
-```
-
-The first call lazy-downloads the model into `~/.cache/anonde/models/`. At runtime the recognizer dlopens `libonnxruntime.so` (Linux) / `.dylib` (macOS) — see Deployment below.
-
-## Pattern recognizers (52)
-
-Score is the pattern's confidence band; recognizers that validate via checksums score higher than pure-regex ones.
-
-| Region | Recognizers |
-|---|---|
-| Generic / international | `EmailRecognizer` · `PhoneRecognizer` · `CreditCardRecognizer` (Luhn) · `IBANRecognizer` (MOD-97) · `IPAddressRecognizer` · `MACAddressRecognizer` · `URLRecognizer` · `CryptoRecognizer` (Bitcoin/Ethereum) · `DateTimeRecognizer` |
-| English / US | `USSocialSecurityRecognizer` · `USPassportRecognizer` · `USBankRecognizer` · `USDriverLicenseRecognizer` · `USITINRecognizer` · `MedicalLicenseRecognizer` · `ENAnomalyRecognizer` (clinical-context PERSON) · `ENOrganizationRecognizer` |
-| United Kingdom | `UKNHSRecognizer` · `UKNINORecognizer` |
-| Italy | `ITFiscalCodeRecognizer` · `ITDriverLicenseRecognizer` · `ITVATCodeRecognizer` · `ITPassportRecognizer` · `ITIdentityCardRecognizer` |
-| Spain | `ESNIFRecognizer` · `ESNIERecognizer` |
-| Australia | `AUABNRecognizer` · `AUACNRecognizer` · `AUTFNRecognizer` · `AUMedicareRecognizer` |
-| India | `INPANRecognizer` · `INAadhaarRecognizer` · `INVehicleRegistrationRecognizer` · `INVoterRecognizer` · `INPassportRecognizer` |
-| Poland | `PLPESELRecognizer` |
-| Singapore | `SGNRICRecognizer` · `SGUENRecognizer` |
-| Finland | `FIPersonalIdentityCodeRecognizer` |
-| Korea | `KRRRNRecognizer` |
-| Germany (first-class) | `DEDateTimeRecognizer` · `DEDateContextRecognizer` · `DEPhoneRecognizer` · `DEPostalCodeRecognizer` · `DEStreetRecognizer` · `DESteuerIDRecognizer` · `DEAgeRecognizer` · `DEPlaceRecognizer` · `DEClinicalIDRecognizer` · `DEOrganizationRecognizer` · `DEProfessionRecognizer` · `DEAnomalyRecognizer` (closed-vocab clinical anomaly → PERSON candidate) |
-
-Most recognizers are language-gated (`SupportedLanguages()`), so a request with `language: "de"` skips US-specific recognizers and vice versa. Universal pattern recognizers (email, IBAN, etc.) run on every language.
-
-## NER backends — current matrix
-
-From `bench/REPORT_MATRIX.md` (2026-05-13, 3 gold-annotated corpora: `openmed` = GraSCCo PHI synthetic German clinical, `synth_clinical` = anonde-generated DE, `ai4privacy_en` = 5000 EN PII docs). **Lower leak rate = better.**
-
-| Engine | openmed leak | synth_clinical leak | ai4privacy_en leak | Median latency |
-|---|---:|---:|---:|---:|
-| anonde-patterns (no NER) | 22.85% | 11.76% | 55.36% | ≤1 ms |
-| **anonde-gliner** ⭐ production | **17.15%** | **11.15%** | **24.95%** | 59–927 ms |
-| gliner-py (Python sidecar) | 50.00% | 25.36% | 25.82% | 77–593 ms |
-| Microsoft Presidio | — (EN-only) | — | 28.37% | 6 ms |
-| OpenAI Privacy Filter | 98.38% | — | — | 3174 ms |
-
-**Read**:
-- anonde-gliner beats every other engine on leak rate on every corpus.
-- On English, the closest competitor is Presidio at 28.37% (anonde-gliner: 24.95%).
-- On German clinical, OpenAI Privacy Filter is unusable (98% leak — almost blind).
-- `gliner-py` is the same model run via the official Python `gliner` library; it confirms our Go-native wrap produces correct inference (it's a parity check, not a competitor).
-
-The strict-F1 column intentionally not shown in this overview — it penalises wider-than-gold spans, which doesn't matter for redaction. See `bench/REPORT_MATRIX.md` for the full strict / partial / type-agnostic F1 grid.
-
-### Running the bench locally
+With Go:
 
 ```bash
-# fast subset — what CI runs (~10–15 min cold cache, ~2 min warm)
-make -C bench corpus-openmed
-make -C bench corpus-synth_clinical
-
-# full matrix across all gold corpora + English
-make -C bench matrix         # → bench/REPORT_MATRIX.md + bench/results_matrix.csv
-
-# DE-only / EN-only subsets
-make -C bench matrix-de
-make -C bench matrix-en
-
-# add the slow engines (off by default — openai-pf is ~80 sec/doc on CPU)
-make bench/corpora/openmed/data/anonde_openai-pf.jsonl
+ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/platform/
 ```
 
-Each corpus has its own `Makefile` and `README.md` under `bench/corpora/<NAME>/` documenting data provenance, gold-annotation source, and any DUA/registration requirements.
-
-## Deployment
-
-Two Fly.io variants of the same `cmd/platform` HTTP API:
-
-| File | What it ships | Image size | When to use |
-|---|---|---:|---|
-| `Dockerfile.platform` | Pure Go binary, no NER, no CGO | ~12 MB | patterns-only deployments; max throughput |
-| `Dockerfile.platform-ner` | Same binary + libonnxruntime + baked GLiNER model | ~470 MB | production: detects PERSON/ORG/etc. via GLiNER |
-
-`fly.toml` deploys the patterns-only image; `fly.ner.toml` deploys the NER image to the same app. Both target `anonde-platform.fly.dev`.
-
-The NER image:
-- Uses `gcr.io/distroless/cc-debian12` (needs glibc for libonnxruntime).
-- Downloads `libonnxruntime.so.1.26.0` from Microsoft's release tarball at build time and copies it to `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`.
-- Bakes the GLiNER ONNX + tokenizer into `/models/` so first-request startup needs no outbound network.
-- Warms the recognizer at process start via `WARMUP_ON_START=1` (set in `fly.ner.toml`) so the first user request doesn't pay the model-init cost.
-
-### Required env vars (NER variant)
+With Docker (patterns-only image, ~12 MB):
 
 ```bash
-ANALYZER_BACKEND=gliner
-GLINER_MODELS_DIR=/models
-GLINER_MODEL=knowledgator/gliner-pii-base-v1.0
-GLINER_ONNX_FILE=onnx/model_quint8.onnx
-GLINER_THRESHOLD=0.40
-ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+docker build -f Dockerfile.platform -t anonde-platform .
+docker run --rm -p 8081:8080 anonde-platform
 ```
 
-All defaults are wired in `Dockerfile.platform-ner`; you don't need to set them yourself unless you're swapping the model.
+The NER variant (GLiNER + libonnxruntime baked in, ~470 MB) builds the same way from `Dockerfile.platform-ner`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars, image internals, and Fly.io configs.
 
-## API (Connect / gRPC)
-
-The platform serves a single Connect handler that speaks Connect/JSON,
-Connect/Protobuf, gRPC, and gRPC-Web on one port. JSON callers can
-POST to the Connect URLs directly; gRPC clients use the generated
-client in `gen/anonde/platform/v1/platformv1connect`. Source of truth
-is [`proto/anonde/platform/v1/platform.proto`](proto/anonde/platform/v1/platform.proto).
+Hit the running server:
 
 ```bash
-# Anonymize + mint reversible tokens. Proto3 JSON uses lowerCamelCase
-# field names (tenant_id → tenantId).
-curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/IngestDocument \
+curl -sS -X POST http://localhost:8081/v1/tenants/demo/documents/d1:ingest \
   -H "Content-Type: application/json" \
-  -d '{"tenantId":"t1","docId":"d1","content":"Patient Herr Müller, …","options":{"language":"de"}}'
-
-# Exchange tokens back for cleartext (vault lookup, audited).
-curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/DetokenizeTokens \
-  -H "Content-Type: application/json" \
-  -d '{"tenantId":"t1","docId":"d1","tokens":["<PERSON_T1_000001>"],"actor":"clinician-42","purpose":"chart-review"}'
-
-# One-shot reveal (substitutes tokens inside a body of text).
-curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/RevealContent \
-  -H "Content-Type: application/json" -d '{ … }'
-
-# Delete a document and every vault entry it minted (idempotent).
-curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/DeleteDocument \
-  -H "Content-Type: application/json" \
-  -d '{"tenantId":"t1","docId":"d1"}'
-
-# Backend / model / build info.
-curl -sS -X POST https://anonde-platform.fly.dev/anonde.platform.v1.PlatformService/GetVersion \
-  -H "Content-Type: application/json" -d '{}'
-
-# Health (plain HTTP GET, not Connect).
-curl -sS https://anonde-platform.fly.dev/healthz
+  -d '{"content":"Hi, this is Sarah Chen (sarah.chen@acme.example)."}'
 ```
 
-Regenerate Connect handlers after editing the proto: `buf generate` from
-the repo root.
+## HTTP API
 
-Memory-vault TTLs and request-size limits are env-configurable:
+The same server speaks three transports on one port:
 
-- `MEMORY_VAULT_TTL` (default `5m`) — token ↔ cleartext retention.
-- `MEMORY_STORE_TTL` (default `5m`) — anonymized-document retention.
-- `MAX_CONTENT_BYTES` (default 10 MiB) — request body cap.
+- **REST/JSON** via grpc-gateway: `/v1/tenants/{tenant_id}/documents/{doc_id}:ingest|reveal|detokenize`, `DELETE /v1/tenants/{tenant_id}/documents/{doc_id}`, `GET /v1/version`, `POST /v1/synthesize`.
+- **Connect** (Connect/JSON, Connect/Protobuf, gRPC-Web): `POST /anonde.platform.v1.PlatformService/<Method>`.
+- **Native gRPC** over HTTP/2 cleartext: same `/anonde.platform.v1.PlatformService/<Method>` path.
 
-## Architecture
+Source of truth: [`proto/anonde/platform/v1/platform.proto`](proto/anonde/platform/v1/platform.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-```
-anonde/
-├── analyzer/                  # recognizer registry + parallel dispatch
-│   ├── analyzer.go            # AnalyzerEngine.Analyze: filter → dispatch → conflict resolve
-│   ├── result.go              # RecognizerResult + RemoveConflicts (NER-preference rule)
-│   ├── reconciler/            # optional LLM disambiguation stage (Ollama)
-│   ├── auditor/               # post-anonymization LLM audit (Ollama)
-│   └── recognizers/           # 52 pattern + 3 NER recognizers
-│       ├── *Recognizer.go     # per-region pattern recognizers
-│       ├── ner_hugot.go       # `-tags hugot`: in-process ONNX TokenClassification
-│       ├── ner_gliner.go      # `-tags hugot`: GLiNER (open-set NER) via yalue/onnxruntime_go
-│       └── ner_ollama.go      # Ollama HTTP client
-├── anonymizer/                # apply operators to detected spans
-│   ├── anonymizer.go          # mergeAdjacentSameType + dispatch to operators
-│   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize
-├── cmd/platform/              # HTTP service
-├── internal/platform/         # service + in-memory vault/store/policy
-└── bench/                     # single bench harness (was vs/, benchmark/, bench/parity/)
-    ├── Makefile               # top-level `make matrix`, `make matrix-de`, `make matrix-en`, …
-    ├── corpora/<NAME>/        # per-corpus Makefile + loader + data + gold
-    ├── runners/               # one Go runner, three Python sidecars (gliner, openai_pf, presidio)
-    ├── probes/                # diagnostic loaders for hugot, gliner
-    └── scoring/               # compare.py, render_matrix.py, label_map.yaml
-```
+## Built for
 
-### Conflict resolution (the non-obvious part)
+- **Healthcare.** Chart summaries, discharge letters, clinical Q&A. Keep PHI off the wire to third-party models.
+- **Finance.** KYC review, support triage, statement summarisation. Account numbers, card data, and PII stay inside your boundary.
+- **Logs & telemetry.** Application logs, audit trails, SIEM exports, and traces often carry emails, IPs, account IDs, and free-text from users. Run them through anonde before they hit a remote LLM, a log aggregator, or a BI store.
+- **Enterprise.** Internal copilots over support tickets, contracts, HR docs. Audit who reveals what, and why.
 
-`RemoveConflicts` keeps the highest-scoring span when two overlap — **except** for entity types where NER is more reliable than heuristic patterns (PERSON, ORGANIZATION, LOCATION, AGE, PROFESSION, NRP). For those, an NER finding beats a pattern finding regardless of score. Pattern recognizers like `DEAnomalyRecognizer` produce fixed scores (0.85); GLiNER produces sigmoid floats (0.4–0.85); without this rule patterns always won and the NER's contextual judgement was wasted.
+Want to see the full flow in the browser? [anonde.io/demo](https://anonde.io/demo/).
 
-For structured types (IBAN, PHONE_NUMBER, DATE_TIME, EMAIL_ADDRESS, …) the score-only rule still applies — regex+checksum precision matters more than NER context there.
+## Benchmarks
 
-See `analyzer/result.go::shouldReplace` for the implementation.
+Public bench matrix, re-run on every PR. Each row is a gold-annotated corpus; **lower leak rate is better**.
 
-## Anonymization operators
+| Corpus | Best non-anonde baseline | anonde-gliner | Δ |
+|---|---|---:|---:|
+| `openmed` (German clinical) | gliner-py 50.0% | **17.2%** | ↓ 32.8 pp |
+| `synth_clinical` (German) | gliner-py 25.4% | **11.1%** | ↓ 14.3 pp |
+| `ai4privacy_en` (English PII) | gliner-py 25.8% · Presidio 28.4% | **25.0%** | ↓ 0.8 pp |
+| `finance_de` (German finance) | gliner-py 26.2% | **9.8%** | ↓ 16.4 pp |
+| `legal_de` (German legal) | gliner-py 25.4% | **6.9%** | ↓ 18.5 pp |
+| `wikiann_de` (German Wikipedia) | gliner-py **12.8%** | 15.3% | ↑ 2.5 pp |
 
-Configure per-entity via `anonymizer.AnonymizerConfig`. Use `"*"` for a catch-all default.
+anonde-gliner has the lowest leak rate on 5 of 6 corpora. On `wikiann_de` it's 2.5 pp behind the Python `gliner-py` sidecar (same model, different runtime; included as a parity check).
 
-### Replace
+**Vs external baselines** on the corpora where they were benched:
 
-```go
-&operators.Replace{NewValue: "<EMAIL>"}   // → <EMAIL>
-&operators.Replace{}                       // → <EMAIL_ADDRESS> (entity type as tag)
-```
+- **Microsoft Presidio** on `ai4privacy_en` (English PII): anonde-gliner **25.0%** vs Presidio 28.4%.
+- **OpenAI Privacy Filter** on `openmed` (German clinical): anonde-gliner **17.2%** vs OpenAI PF 98.4%.
 
-### Redact / Mask / Hash / Encrypt
+Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench harness uses its English pipeline only, and OpenAI Privacy Filter is ~80 s/doc on CPU, which makes it impractical on the larger corpora. Both engines can technically run on more languages; the bench numbers reflect what's been measured, not capability ceilings. Full grid (strict / partial / type-agnostic F1, all corpora, all engines) lives in [bench/REPORT_MATRIX.md](bench/REPORT_MATRIX.md).
 
-```go
-&operators.Redact{}
-&operators.Mask{MaskingChar: "*", CharsToMask: 4, FromEnd: true}   // +1-800-555-**** 
-&operators.Hash{HashType: operators.HashSHA256}
-&operators.Encrypt{Key: "32-byte-aes-key-……………………………"}            // AES-GCM, base64 nonce+ct
-operators.Decrypt(value, key)                                       // reversible
-```
+## Status
 
-### Synthesize — structurally-valid fake data
+- **Live**: <https://anonde-platform.fly.dev> · [Demo UI](https://anonde.io/demo/)
+- **CI**: `.github/workflows/bench.yml` runs the bench matrix on every relevant PR, with a guard rail that fails if the NER backend silently degrades to patterns-only.
 
-Replaces PII with realistic fakes that pass the same checksums as the original (Luhn for cards, MOD-97 for IBAN, valid SSN area codes, same IP class, etc.). The result looks real but contains no actual personal information — useful for staging environments, test fixtures, demo videos.
+## Docs
 
-```go
-&operators.Synthesize{}                              // random per call
-&operators.Synthesize{Consistent: true}              // globally deterministic: same input → same fake
-&operators.Synthesize{Consistent: true, DocumentScoped: true}  // per-document aliasing; call .Reset()
-```
+- [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
+- [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
+- [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
+- [Operators](docs/OPERATORS.md): Replace, Redact, Mask, Hash, Encrypt, Synthesize
+- [Deployment](docs/DEPLOYMENT.md): Docker, Fly.io, env vars, CI
+- [Benchmark matrix](bench/REPORT_MATRIX.md): full results
 
-See the prior README's table for per-entity-type generation rules — that section is unchanged.
+## License
 
-## CI
-
-`.github/workflows/bench.yml` runs on every push to `main` and every PR whose changes touch `analyzer/**`, `bench/**`, `cmd/platform/**`, or the build chain. The workflow:
-
-1. Builds the default (no-CGO) target.
-2. Builds the `-tags hugot` target with CGO.
-3. Runs the Go unit-test suite.
-4. Runs `make corpus-openmed && make corpus-synth_clinical` — patterns + GLiNER + GLiNER-py sidecar across two German corpora.
-5. Renders `bench/REPORT_MATRIX.md` and uploads it (+ `results_matrix.csv` + per-cell findings JSONLs) as workflow artifacts.
-6. **Guard rail**: fails the job if either GLiNER cell produced 0 NER-attributable findings (caught a real silent-fallback bug the first time it landed).
-
-Headline is rendered into the GitHub Actions job summary, so PR reviewers see numbers without downloading artifacts.
-
-Local dev installs the bench Python deps via:
-
-```bash
-pip install -r bench/requirements.txt
-```
-
-The Presidio cell needs `presidio-analyzer + spacy + en_core_web_lg` separately (~700 MB; not in `requirements.txt` to keep CI fast):
-
-```bash
-pip install presidio-analyzer spacy
-python -m spacy download en_core_web_lg
-```
-
-## Building custom engines
-
-```go
-registry := analyzer.NewRecognizerRegistry()
-registry.Add(recognizers.NewEmailRecognizer())
-registry.Add(recognizers.NewCreditCardRecognizer())
-// add your own — interface in analyzer/recognizer.go
-
-engine := analyzer.NewAnalyzerEngine(registry)
-```
-
-### Custom recognizer
-
-```go
-type MyRecognizer struct{}
-
-func (r *MyRecognizer) Name() string                 { return "MyRecognizer" }
-func (r *MyRecognizer) SupportedEntities() []string  { return []string{"MY_ENTITY"} }
-func (r *MyRecognizer) SupportedLanguages() []string { return []string{"en", "*"} }
-
-func (r *MyRecognizer) Analyze(ctx context.Context, text string, entities []string, lang string) ([]analyzer.RecognizerResult, error) {
-	return []analyzer.RecognizerResult{
-		{Start: 0, End: 5, Score: 0.9, EntityType: "MY_ENTITY", RecognizerName: r.Name()},
-	}, nil
-}
-```
-
-`SupportedLanguages()` returning `"*"` lets the recognizer match any language. NER-named recognizers (name suffix `NERRecognizer`) get auto-skipped under `DisableNER` and under the no-capitals heuristic.
+See [LICENSE](LICENSE).
