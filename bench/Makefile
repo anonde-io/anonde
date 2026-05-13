@@ -37,6 +37,11 @@ CORPORA_DIR := $(HERE)corpora
 
 PYTHON   ?= python3
 GLINER_MODEL     ?= knowledgator/gliner-pii-base-v1.0
+# The repo ships three ONNX variants (model.onnx, model_fp16.onnx,
+# model_quint8.onnx); hugot's downloader can't pick on its own. Pin the
+# int8-quantised build for CI/bench — same ~196 MB file the recognizer
+# falls back to when ModelName == default AND OnnxFilePath == "".
+GLINER_ONNX_FILE ?= onnx/model_quint8.onnx
 GLINER_THRESHOLD ?= 0.40
 HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
@@ -154,7 +159,7 @@ $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	    --language $(call LANG_FOR_CORPUS,$(1)) \
 	    --ner-score-floor $(NER_SCORE_FLOOR) \
 	    --model "$(if $(filter $(2),anonde-gliner),$(GLINER_MODEL),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
-	    --onnx-file "$(ANONDE_ONNX_FILE)" \
+	    --onnx-file "$(if $(filter $(2),anonde-gliner),$(GLINER_ONNX_FILE),$(ANONDE_ONNX_FILE))" \
 	    --gliner-threshold $(if $(filter $(2),anonde-gliner),$(GLINER_THRESHOLD),0) \
 	    $(if $(filter $(2),anonde-gliner),--ort-library "$(ORT_LIB)",) \
 	    $(call FOLD_FOR_CORPUS,$(1))
