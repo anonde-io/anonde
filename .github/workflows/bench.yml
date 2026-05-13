@@ -80,6 +80,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: bench/requirements.txt
 
       # libonnxruntime.so is needed at runtime by the GLiNER recognizer
       # (yalue/onnxruntime_go is a thin dlopen wrapper). Cache it across
@@ -108,15 +109,11 @@ jobs:
 
       # Python deps for the bench sidecars + corpus loaders. torch is
       # heavy (~1 GB) — the pip cache from setup-python amortises it
-      # across runs. Pinning is intentional: bench numbers shift with
-      # gliner/transformers versions.
+      # across runs. Versions live in bench/requirements.txt.
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            gliner==0.2.26 \
-            transformers \
-            pyyaml
+          pip install -r bench/requirements.txt
 
       # GLiNER pulls model weights from HF Hub on first use. Cache the
       # HF hub dir keyed on the model id so repeat runs skip the
