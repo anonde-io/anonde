@@ -107,16 +107,17 @@ The NER variant (GLiNER + libonnxruntime baked in, ~470 MB) builds the same way 
 Hit the running server:
 
 ```bash
-curl -sS -X POST http://localhost:8081/v1/tenants/demo/documents/d1:ingest \
+curl -sS -X POST http://localhost:8081/v1/anonymizations \
   -H "Content-Type: application/json" \
-  -d '{"content":"Hi, this is Sarah Chen (sarah.chen@acme.example)."}'
+  -d '{"tenant_id":"demo","content":"Hi, this is Sarah Chen (sarah.chen@acme.example)."}'
+# → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
 ```
 
 ## HTTP API
 
 The same server speaks three transports on one port:
 
-- **REST/JSON** via grpc-gateway: `/v1/tenants/{tenant_id}/documents/{doc_id}:ingest|reveal|detokenize`, `DELETE /v1/tenants/{tenant_id}/documents/{doc_id}`, `GET /v1/version`, `POST /v1/synthesize`.
+- **REST/JSON** via grpc-gateway: `POST /v1/anonymizations`, `POST /v1/anonymizations/{id}/reveal|detokenize`, `DELETE /v1/anonymizations/{id}?tenant_id={tenant_id}`, `POST /v1/synthesize`, `GET /v1/version`. `id` is optional on create (server mints `anon_<hex>` if omitted); tenant lives in the request body / query for now and moves to a bearer-token header when auth lands. JSON fields are snake_case on the wire (`tenant_id`, `content_format`, `anonymized_content`, …); inputs also accept the camelCase form so generated gRPC clients work without translation.
 - **Connect** (Connect/JSON, Connect/Protobuf, gRPC-Web): `POST /anonde.platform.v1.PlatformService/<Method>`.
 - **Native gRPC** over HTTP/2 cleartext: same `/anonde.platform.v1.PlatformService/<Method>` path.
 

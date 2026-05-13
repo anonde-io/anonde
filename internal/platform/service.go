@@ -2,6 +2,8 @@ package platform
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -9,9 +11,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/anonymizer"
-	"github.com/moogacs/anonde/anonymizer/operators"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/anonymizer"
+	"github.com/anonde-io/anonde/anonymizer/operators"
 )
 
 // PolicyAuthorizer gates deanonymization access.
@@ -23,12 +25,22 @@ type PolicyAuthorizer interface {
 type Vault interface {
 	Put(ctx context.Context, tenantID string, entry VaultEntry) error
 	Get(ctx context.Context, tenantID, token string) (VaultEntry, error)
+	// Delete removes a token mapping. Missing tokens are NOT an error —
+	// callers (e.g. DeleteAnonymization) iterate over what the store
+	// says and must tolerate races / partial state.
+	Delete(ctx context.Context, tenantID, token string) error
 }
 
-// Store persists anonymized documents only.
+// Store persists anonymizations (anonymized content + per-doc token
+// offsets) keyed by (tenant_id, id).
 type Store interface {
 	Put(ctx context.Context, record StoreRecord) error
-	Get(ctx context.Context, tenantID, docID string) (StoreRecord, error)
+	Get(ctx context.Context, tenantID, id string) (StoreRecord, error)
+	// Delete removes a stored anonymization. Returns existed=true iff
+	// the record was present before the call so callers can report a
+	// meaningful "did anything happen" signal while keeping the
+	// operation itself idempotent.
+	Delete(ctx context.Context, tenantID, id string) (existed bool, err error)
 }
 
 // VaultEntry stores one token mapping.
@@ -36,6 +48,26 @@ type VaultEntry struct {
 	Token      string
 	EntityType string
 	Cleartext  string
+}
+
+// VersionInfo is populated by the binary entrypoint (cmd/platform) and
+// served back by GetVersion. The service layer doesn't introspect the
+// analyzer because the backend selection lives at main wiring time.
+type VersionInfo struct {
+	AnalyzerBackend string
+	Model           string
+	BuildSHA        string
+	GoVersion       string
+	APIVersion      string
+}
+
+// DeleteResult reports what DeleteAnonymization actually did. The RPC
+// itself is idempotent OK, but callers may want to distinguish
+// "nothing was here" from "we cleaned up N tokens" for metrics / audit
+// purposes.
+type DeleteResult struct {
+	Deleted       bool
+	TokensDeleted int
 }
 
 // Service coordinates recognition, tokenization and controlled reveal.
@@ -47,8 +79,9 @@ type Service struct {
 	policy         PolicyAuthorizer
 	defaultScore   float64
 	defaultLang    string
-	docSeqMu       sync.Mutex
-	docSeqByTenant map[string]int
+	tokenSeqMu       sync.Mutex
+	tokenSeqByTenant map[string]int
+	versionInfo    VersionInfo
 }
 
 var ErrPolicyDenied = errors.New("policy denied")
@@ -68,8 +101,63 @@ func NewService(
 		policy:         policy,
 		defaultScore:   0.3,
 		defaultLang:    "en",
-		docSeqByTenant: map[string]int{},
+		tokenSeqByTenant: map[string]int{},
 	}
+}
+
+// SetVersionInfo records the build metadata GetVersion returns. Called
+// by cmd/platform after backend selection — the service has no other
+// way to know which backend wraps its analyzer.
+func (s *Service) SetVersionInfo(info VersionInfo) {
+	s.versionInfo = info
+}
+
+// GetVersion returns the stamped VersionInfo. Always nil error; the
+// signature matches the RPC shape for forward-compat with a future
+// backend that genuinely needs to probe state.
+func (s *Service) GetVersion(_ context.Context) (VersionInfo, error) {
+	return s.versionInfo, nil
+}
+
+// DeleteAnonymization removes the stored anonymization for (tenant, id)
+// and every vault entry it references. Idempotent: a missing record
+// returns Deleted=false, nil error. Token vault errors are surfaced so
+// the caller can detect partial-cleanup states.
+func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) (DeleteResult, error) {
+	if tenantID == "" || id == "" {
+		return DeleteResult{}, fmt.Errorf("tenant_id and id are required")
+	}
+
+	record, err := s.store.Get(ctx, tenantID, id)
+	if err != nil {
+		// Missing record → nothing to do. The Vault may technically still
+		// hold dangling entries from an interrupted earlier ingest, but
+		// without a record we have no way to enumerate them; that's
+		// acceptable today since the in-memory store dies with the
+		// process. Persisted stores will need a reverse-index.
+		return DeleteResult{}, nil
+	}
+
+	seen := make(map[string]struct{}, len(record.Tokens))
+	deleted := 0
+	for _, tokenRef := range record.Tokens {
+		if _, dup := seen[tokenRef.Token]; dup {
+			continue
+		}
+		seen[tokenRef.Token] = struct{}{}
+		if err := s.vault.Delete(ctx, tenantID, tokenRef.Token); err != nil {
+			return DeleteResult{Deleted: false, TokensDeleted: deleted},
+				fmt.Errorf("delete vault entry %q: %w", tokenRef.Token, err)
+		}
+		deleted++
+	}
+
+	existed, err := s.store.Delete(ctx, tenantID, id)
+	if err != nil {
+		return DeleteResult{Deleted: false, TokensDeleted: deleted},
+			fmt.Errorf("delete store record: %w", err)
+	}
+	return DeleteResult{Deleted: existed, TokensDeleted: deleted}, nil
 }
 
 func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*SynthesizeResponse, error) {
@@ -162,8 +250,16 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 }
 
 func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestResponse, error) {
-	if req.TenantID == "" || req.DocID == "" || req.Content == "" {
-		return nil, fmt.Errorf("tenant_id, doc_id and content are required")
+	if req.TenantID == "" || req.Content == "" {
+		return nil, fmt.Errorf("tenant_id and content are required")
+	}
+	// Caller-supplied ID is the round-trip key (replayable from logs);
+	// empty means the caller doesn't care, so mint a Stripe-style
+	// `anon_<hex>` ID and return it. Either way the response always
+	// echoes the final id so the client can reveal/delete later.
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		id = newAnonymizationID()
 	}
 	format := normalizeContentFormat(req.ContentFormat)
 	if format == "" {
@@ -334,23 +430,39 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 
 	record := StoreRecord{
 		TenantID:          req.TenantID,
-		DocID:             req.DocID,
+		ID:                id,
 		ContentFormat:     format,
 		AnonymizedContent: anonymizedContent,
 		Tokens:            tokens,
 	}
 	if err := s.store.Put(ctx, record); err != nil {
-		return nil, fmt.Errorf("store anonymized document: %w", err)
+		return nil, fmt.Errorf("store anonymization: %w", err)
 	}
 
 	return &IngestResponse{
 		TenantID:           req.TenantID,
-		DocID:              req.DocID,
+		ID:                 id,
 		AnonymizedContent:  anonymizedContent,
 		DetectedEntitySize: len(findings),
 		Findings:           findings,
 		Tokens:             tokens,
 	}, nil
+}
+
+// newAnonymizationID returns a Stripe-style identifier:
+// `anon_<16 hex chars>` (64 bits of entropy from crypto/rand). Used
+// when the caller omits an explicit id at ingest time. Non-secret —
+// the ID is a routing key, not an authorization token.
+func newAnonymizationID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand.Read only fails when the system entropy pool is
+		// unavailable, which doesn't happen on Linux/macOS in normal
+		// operation. Panicking surfaces the rare failure rather than
+		// minting a predictable id.
+		panic("mint anonymization id: " + err.Error())
+	}
+	return "anon_" + hex.EncodeToString(b[:])
 }
 
 // mintToken returns a fresh token for (tenant, entity), using a per-tenant
@@ -360,16 +472,16 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 // Cross-document token reuse for the same cleartext is intentionally NOT
 // supported here — see TODO.md ("Tenant-scoped token reuse").
 func (s *Service) mintToken(tenantID, entityType string) string {
-	s.docSeqMu.Lock()
-	idx := s.docSeqByTenant[tenantID]
-	s.docSeqByTenant[tenantID] = idx + 1
-	s.docSeqMu.Unlock()
+	s.tokenSeqMu.Lock()
+	idx := s.tokenSeqByTenant[tenantID]
+	s.tokenSeqByTenant[tenantID] = idx + 1
+	s.tokenSeqMu.Unlock()
 	return buildToken(tenantID, entityType, idx)
 }
 
 func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*DetokenizeResponse, error) {
-	if req.TenantID == "" || req.DocID == "" || req.Actor == "" || req.Purpose == "" {
-		return nil, fmt.Errorf("tenant_id, doc_id, actor and purpose are required")
+	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" {
+		return nil, fmt.Errorf("tenant_id, id, actor and purpose are required")
 	}
 	if len(req.Tokens) == 0 {
 		return nil, fmt.Errorf("at least one token is required")
@@ -379,9 +491,9 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*Detok
 		return nil, fmt.Errorf("%w: %v", ErrPolicyDenied, err)
 	}
 
-	record, err := s.store.Get(ctx, req.TenantID, req.DocID)
+	record, err := s.store.Get(ctx, req.TenantID, req.ID)
 	if err != nil {
-		return nil, fmt.Errorf("load anonymized document: %w", err)
+		return nil, fmt.Errorf("load anonymization: %w", err)
 	}
 
 	allowed := make(map[string]struct{}, len(record.Tokens))
@@ -392,7 +504,7 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*Detok
 	resolved := make(map[string]string, len(req.Tokens))
 	for _, token := range req.Tokens {
 		if _, ok := allowed[token]; !ok {
-			return nil, fmt.Errorf("token %q not linked to doc %q", token, req.DocID)
+			return nil, fmt.Errorf("token %q not linked to anonymization %q", token, req.ID)
 		}
 		entry, err := s.vault.Get(ctx, req.TenantID, token)
 		if err != nil {
@@ -403,19 +515,19 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*Detok
 
 	return &DetokenizeResponse{
 		TenantID: req.TenantID,
-		DocID:    req.DocID,
+		ID:       req.ID,
 		Resolved: resolved,
 	}, nil
 }
 
 func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealResponse, error) {
-	if req.TenantID == "" || req.DocID == "" || req.Actor == "" || req.Purpose == "" || req.Content == "" {
-		return nil, fmt.Errorf("tenant_id, doc_id, actor, purpose and content are required")
+	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" || req.Content == "" {
+		return nil, fmt.Errorf("tenant_id, id, actor, purpose and content are required")
 	}
 
-	record, err := s.store.Get(ctx, req.TenantID, req.DocID)
+	record, err := s.store.Get(ctx, req.TenantID, req.ID)
 	if err != nil {
-		return nil, fmt.Errorf("load anonymized document: %w", err)
+		return nil, fmt.Errorf("load anonymization: %w", err)
 	}
 
 	tokenSet := make(map[string]struct{}, len(record.Tokens))
@@ -431,7 +543,7 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 	if len(orderedTokens) == 0 {
 		return &RevealResponse{
 			TenantID:            req.TenantID,
-			DocID:               req.DocID,
+			ID:                  req.ID,
 			DeanonymizedContent: req.Content,
 			Resolved:            map[string]string{},
 		}, nil
@@ -439,7 +551,7 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 
 	detok, err := s.Detokenize(ctx, DetokenizeRequest{
 		TenantID: req.TenantID,
-		DocID:    req.DocID,
+		ID:       req.ID,
 		Actor:    req.Actor,
 		Purpose:  req.Purpose,
 		Tokens:   orderedTokens,
@@ -495,7 +607,7 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 
 	return &RevealResponse{
 		TenantID:            req.TenantID,
-		DocID:               req.DocID,
+		ID:                  req.ID,
 		DeanonymizedContent: out,
 		Resolved:            detok.Resolved,
 	}, nil

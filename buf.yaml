@@ -1,0 +1,29 @@
+version: v2
+modules:
+  - path: proto
+# google/api/annotations.proto + google/api/http.proto live under
+# proto/google/api/, vendored from the googleapis repo. buf.build BSR
+# isn't reachable in our build environments, so the canonical
+# googleapis dep would block offline + air-gapped builds. Refresh via:
+#   curl -fsSL https://raw.githubusercontent.com/googleapis/googleapis/master/google/api/{annotations,http}.proto \
+#        -o proto/google/api/{annotations,http}.proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # Connect/HTTP routes use the proto package name verbatim
+    # (POST /anonde.platform.v1.PlatformService/Method) so we want the
+    # package to read clean (`anonde.platform.v1`). Buf's standard rule
+    # wants a leading directory prefix matching the module root; we
+    # explicitly opt out of that.
+    - PACKAGE_DIRECTORY_MATCH
+  # Skip lint rules on the vendored googleapis tree — we don't own
+  # those files, and the upstream package `google.api` legitimately
+  # doesn't follow our local conventions (no version suffix, etc.).
+  ignore:
+    - proto/google
+breaking:
+  use:
+    - FILE
+  ignore:
+    - proto/google

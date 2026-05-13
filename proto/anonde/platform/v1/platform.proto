@@ -1,0 +1,266 @@
+syntax = "proto3";
+
+// Anonde platform API.
+//
+// v1 is not yet released; breaking changes are allowed within this version
+// until the first tagged release. Once tagged, follow the usual proto
+// rules (no field renumbering, no required→optional flips, etc.).
+//
+// Two transports share these messages:
+//
+//   - gRPC / Connect (RPC-style URLs):
+//       POST /anonde.platform.v1.PlatformService/<Method>
+//
+//   - REST gateway (grpc-gateway, path-based URLs):
+//       see the (google.api.http) option on each rpc below.
+//
+// Tenant/anonymization identifiers live in the URL path / body on the
+// REST side and inside the request message on the RPC side. The
+// gateway populates the message fields from the path before
+// dispatching, so the service layer only ever sees one shape.
+package anonde.platform.v1;
+
+import "google/api/annotations.proto";
+
+option go_package = "github.com/anonde-io/anonde/gen/anonde/platform/v1;platformv1";
+
+// REST URL conventions follow the Stripe / common-API style: flat
+// `/v1/<resource>[/<id>][/<action>]` paths, tenant identity lives in
+// the auth credential (not the URL). Until an auth interceptor lands
+// (TODO #2), tenant is passed in the request body for POSTs and as a
+// `tenantId` query parameter for DELETE.
+//
+// The persisted entity is an "anonymization" — the anonymized content
+// blob plus the token-to-cleartext map it produced. Callers may
+// supply their own `id` at create time (replayable round-trips) or
+// omit it to let the server mint one (`anon_<hex>` prefix).
+//
+// gRPC and Connect callers continue to use the RPC-style URL
+// (`/anonde.platform.v1.PlatformService/<Method>`) and put tenant_id
+// directly on the message. Only the REST gateway URLs differ; the
+// underlying proto messages are identical across surfaces.
+service PlatformService {
+  // CreateAnonymization analyzes content, mints tokens for every
+  // detected entity, persists the (token → cleartext) map in the
+  // vault, and stores the anonymization keyed by (tenant_id, id).
+  //
+  // REST: POST /v1/anonymizations   (tenant_id + optional id in body)
+  rpc CreateAnonymization(CreateAnonymizationRequest) returns (CreateAnonymizationResponse) {
+    option (google.api.http) = {
+      post: "/v1/anonymizations"
+      body: "*"
+    };
+  }
+
+  // DetokenizeTokens resolves a list of tokens to cleartext. Requires
+  // actor + purpose for audit; the configured PolicyAuthorizer can deny
+  // (PermissionDenied in gRPC; HTTP 403 over REST).
+  //
+  // REST: POST /v1/anonymizations/{id}/detokenize   (tenant_id in body)
+  rpc DetokenizeTokens(DetokenizeTokensRequest) returns (DetokenizeTokensResponse) {
+    option (google.api.http) = {
+      post: "/v1/anonymizations/{id}/detokenize"
+      body: "*"
+    };
+  }
+
+  // RevealContent restores tokens inside a piece of anonymized content
+  // back to cleartext. Wraps DetokenizeTokens + format-aware string
+  // replacement. Requires the same policy check.
+  //
+  // REST: POST /v1/anonymizations/{id}/reveal   (tenant_id in body)
+  rpc RevealContent(RevealContentRequest) returns (RevealContentResponse) {
+    option (google.api.http) = {
+      post: "/v1/anonymizations/{id}/reveal"
+      body: "*"
+    };
+  }
+
+  // SynthesizeContent anonymizes content with realistic fake values
+  // (Synthesize operator) without persisting anything. Stateless.
+  //
+  // REST: POST /v1/synthesize
+  rpc SynthesizeContent(SynthesizeContentRequest) returns (SynthesizeContentResponse) {
+    option (google.api.http) = {
+      post: "/v1/synthesize"
+      body: "*"
+    };
+  }
+
+  // DeleteAnonymization removes the stored anonymization and every
+  // vault entry it linked. Idempotent: returns OK even if nothing
+  // existed (deleted=false in that case).
+  //
+  // REST: DELETE /v1/anonymizations/{id}?tenantId={tenant_id}
+  //   (no body on DELETE, so tenant goes in the query string;
+  //   moves to auth-derived once the bearer-token interceptor lands.)
+  rpc DeleteAnonymization(DeleteAnonymizationRequest) returns (DeleteAnonymizationResponse) {
+    option (google.api.http) = {
+      delete: "/v1/anonymizations/{id}"
+    };
+  }
+
+  // GetVersion reports the running backend, model, and build info.
+  //
+  // REST: GET /v1/version
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse) {
+    option (google.api.http) = {
+      get: "/v1/version"
+    };
+  }
+
+  // HealthCheck is a cheap liveness probe. Always returns SERVING for
+  // now; readiness (analyzer warm, vault reachable) is a separate
+  // future endpoint.
+  //
+  // REST: GET /v1/health (the plain /healthz endpoint also stays).
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse) {
+    option (google.api.http) = {
+      get: "/v1/health"
+    };
+  }
+}
+
+// Finding is one detected PII span. Mirrors analyzer.RecognizerResult.
+message Finding {
+  int32 start = 1;
+  int32 end = 2;
+  double score = 3;
+  string entity_type = 4;
+  string recognizer_name = 5;
+}
+
+// TokenRef is one minted token tied to a finding offset.
+message TokenRef {
+  string token = 1;
+  string entity_type = 2;
+  int32 start = 3;
+  int32 end = 4;
+}
+
+// AnalyzerOptions are optional overrides for the analyzer pipeline.
+// Empty values fall back to service defaults.
+message AnalyzerOptions {
+  // Language filter (e.g. "en", "de"). Empty = auto-detect.
+  string language = 1;
+  // Allow-list of entity types. Empty = every recognizer fires.
+  repeated string entities = 2;
+  // Minimum confidence score. Use score_threshold_set to distinguish
+  // "field present and 0" (include everything) from "field absent"
+  // (apply service default).
+  double score_threshold = 3;
+  bool score_threshold_set = 4;
+  // disable_ner = true → skip NER recognizers (pattern-only path).
+  bool disable_ner = 5;
+}
+
+message CreateAnonymizationRequest {
+  string tenant_id = 1;
+  // id is optional. Empty = server mints one (`anon_<hex>`) and
+  // returns it in the response. Supplied = used verbatim; the caller
+  // is responsible for uniqueness within (tenant_id).
+  string id = 2;
+  string content = 3;
+  // text | json | ndjson | logs | pdf | auto. Empty = text.
+  string content_format = 4;
+  AnalyzerOptions options = 5;
+}
+
+message CreateAnonymizationResponse {
+  string tenant_id = 1;
+  // id is always present in the response (caller-supplied or minted).
+  string id = 2;
+  string anonymized_content = 3;
+  int32 detected_entity_size = 4;
+  repeated Finding findings = 5;
+  repeated TokenRef tokens = 6;
+}
+
+message DetokenizeTokensRequest {
+  string tenant_id = 1;
+  string id = 2;
+  string actor = 3;
+  string purpose = 4;
+  repeated string tokens = 5;
+}
+
+message DetokenizeTokensResponse {
+  string tenant_id = 1;
+  string id = 2;
+  // token -> cleartext.
+  map<string, string> resolved = 3;
+}
+
+message RevealContentRequest {
+  string tenant_id = 1;
+  string id = 2;
+  string actor = 3;
+  string purpose = 4;
+  string content = 5;
+  // Empty = inherit the format the anonymization was created with.
+  string content_format = 6;
+}
+
+message RevealContentResponse {
+  string tenant_id = 1;
+  string id = 2;
+  string deanonymized_content = 3;
+  map<string, string> resolved = 4;
+}
+
+message SynthesizeContentRequest {
+  string content = 1;
+  string content_format = 2;
+  AnalyzerOptions options = 3;
+  // Consistent = same input always produces the same fake.
+  bool consistent = 4;
+  // DocScoped (requires consistent) = same text maps to the same fake
+  // within this single request only.
+  bool doc_scoped = 5;
+}
+
+message SynthesizeContentResponse {
+  string content = 1;
+  repeated Finding findings = 2;
+}
+
+message DeleteAnonymizationRequest {
+  string tenant_id = 1;
+  string id = 2;
+}
+
+message DeleteAnonymizationResponse {
+  // tokens_deleted reports how many vault entries were removed. 0 means
+  // either nothing existed or there were no tokens.
+  int32 tokens_deleted = 1;
+  // deleted is true iff a record was present before the call. Useful
+  // for callers that want a real "was anything actually there" signal
+  // while keeping the operation itself idempotent.
+  bool deleted = 2;
+}
+
+message GetVersionRequest {}
+
+message GetVersionResponse {
+  // analyzer_backend = patterns | hugot | gliner | ollama.
+  string analyzer_backend = 1;
+  // model name reported by the backend, empty for patterns.
+  string model = 2;
+  // build_sha is the git revision the binary was built from.
+  string build_sha = 3;
+  // go_version is runtime.Version().
+  string go_version = 4;
+  // api_version is the proto package version (v1, v2, …).
+  string api_version = 5;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    SERVING_STATUS_UNSPECIFIED = 0;
+    SERVING_STATUS_SERVING = 1;
+    SERVING_STATUS_NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
+}

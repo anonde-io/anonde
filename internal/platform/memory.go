@@ -53,10 +53,17 @@ func (v *MemoryVault) Get(_ context.Context, tenantID, token string) (VaultEntry
 	return entry.Value, nil
 }
 
-// MemoryStore is an in-process anonymized document store. Not persistent across restarts.
+func (v *MemoryVault) Delete(_ context.Context, tenantID, token string) error {
+	v.mu.Lock()
+	delete(v.m, tenantID+":"+token)
+	v.mu.Unlock()
+	return nil
+}
+
+// MemoryStore is an in-process anonymization store. Not persistent across restarts.
 type MemoryStore struct {
 	mu            sync.Mutex
-	m             map[string]storeEntry // key: tenantID+":"+docID
+	m             map[string]storeEntry // key: tenantID+":"+id
 	ttl           time.Duration
 	lastSweep     time.Time
 	sweepInterval time.Duration
@@ -76,7 +83,7 @@ func NewMemoryStoreWithTTL(ttl time.Duration) *MemoryStore {
 
 func (s *MemoryStore) Put(_ context.Context, record StoreRecord) error {
 	s.mu.Lock()
-	s.m[record.TenantID+":"+record.DocID] = storeEntry{
+	s.m[record.TenantID+":"+record.ID] = storeEntry{
 		Value:     record,
 		ExpiresAt: expirationFromNow(s.ttl),
 	}
@@ -85,18 +92,34 @@ func (s *MemoryStore) Put(_ context.Context, record StoreRecord) error {
 	return nil
 }
 
-func (s *MemoryStore) Get(_ context.Context, tenantID, docID string) (StoreRecord, error) {
+func (s *MemoryStore) Get(_ context.Context, tenantID, id string) (StoreRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec, ok := s.m[tenantID+":"+docID]
+	rec, ok := s.m[tenantID+":"+id]
 	if !ok {
-		return StoreRecord{}, fmt.Errorf("document %q not found for tenant %q", docID, tenantID)
+		return StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
 	}
 	if rec.expiredAt(time.Now()) {
-		delete(s.m, tenantID+":"+docID)
-		return StoreRecord{}, fmt.Errorf("document %q not found for tenant %q", docID, tenantID)
+		delete(s.m, tenantID+":"+id)
+		return StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
 	}
 	return rec.Value, nil
+}
+
+func (s *MemoryStore) Delete(_ context.Context, tenantID, id string) (bool, error) {
+	key := tenantID + ":" + id
+	s.mu.Lock()
+	rec, ok := s.m[key]
+	if ok {
+		delete(s.m, key)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	// A record present-but-expired counts as "didn't exist" for the
+	// caller; that lines up with Get's behavior.
+	return !rec.expiredAt(time.Now()), nil
 }
 
 type vaultEntry struct {

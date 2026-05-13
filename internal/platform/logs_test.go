@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moogacs/anonde"
+	"github.com/anonde-io/anonde"
 )
 
 func newTestService() *Service {
@@ -82,7 +82,7 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 
 	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		DocID:         "ndjson-1",
+		ID:         "ndjson-1",
 		ContentFormat: "ndjson",
 		Content:       in,
 	})
@@ -98,7 +98,7 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 
 	rev, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "acme",
-		DocID:         "ndjson-1",
+		ID:         "ndjson-1",
 		Actor:         "tester",
 		Purpose:       "roundtrip",
 		ContentFormat: "ndjson",
@@ -120,7 +120,7 @@ func TestIngest_NDJSON_RejectsNonJSONLine(t *testing.T) {
 	in := `{"a":1}` + "\nnot json\n"
 	_, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		DocID:         "ndjson-bad",
+		ID:         "ndjson-bad",
 		ContentFormat: "ndjson",
 		Content:       in,
 	})
@@ -142,7 +142,7 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 
 	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		DocID:         "logs-1",
+		ID:         "logs-1",
 		ContentFormat: "logs",
 		Content:       in,
 	})
@@ -163,7 +163,7 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 
 	rev, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "acme",
-		DocID:         "logs-1",
+		ID:         "logs-1",
 		Actor:         "tester",
 		Purpose:       "roundtrip",
 		ContentFormat: "logs",
@@ -200,7 +200,7 @@ func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
 	// surrounding text.
 	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		DocID:         "ner-off",
+		ID:         "ner-off",
 		ContentFormat: "text",
 		Content:       "Patient John Doe emailed alice@example.com",
 		DisableNER:    true,
@@ -224,7 +224,7 @@ func TestIngest_EntitiesAllowlist_OnlyEmail(t *testing.T) {
 	svc := newTestService()
 	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		DocID:         "ents-1",
+		ID:         "ents-1",
 		ContentFormat: "text",
 		Content:       "Email alice@example.com SSN 123-45-6789 IP 10.0.0.1",
 		Entities:      []string{"EMAIL_ADDRESS"},
@@ -282,22 +282,34 @@ func TestBuildTokenReplacer_PrefersLongerMatch(t *testing.T) {
 // HTTP body size limit
 // ---------------------------------------------------------------------------
 
-func TestHTTP_IngestRejectsOversizedBody(t *testing.T) {
+// TestConnect_IngestRejectsOversizedBody verifies the Connect handler
+// honors WithReadMaxBytes. Connect maps body-too-large to
+// CodeResourceExhausted, which the Connect/JSON spec renders as HTTP
+// 429 (Too Many Requests). Not HTTP 413 — that's a deliberate Connect
+// design choice. Asserting on the status code locks in the contract
+// so a future Connect upgrade that changes the mapping fails loudly.
+//
+// proto3 JSON field names are lowerCamelCase (tenant_id -> tenantId).
+func TestConnect_IngestRejectsOversizedBody(t *testing.T) {
 	svc := newTestService()
 	api := NewHTTPServer(svc)
-	api.SetMaxRequestBytes(64) // tiny
+	api.SetMaxRequestBytes(64)
 
 	srv := httptest.NewServer(api.Routes())
 	defer srv.Close()
 
-	body := `{"tenant_id":"acme","doc_id":"d","content_format":"text","content":"` +
+	body := `{"tenantId":"acme","id":"d","contentFormat":"text","content":"` +
 		strings.Repeat("a", 1024) + `"}`
-	resp, err := http.Post(srv.URL+"/v1/ingest", "application/json", strings.NewReader(body))
+	resp, err := http.Post(
+		srv.URL+"/anonde.platform.v1.PlatformService/CreateAnonymization",
+		"application/json",
+		strings.NewReader(body),
+	)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusRequestEntityTooLarge {
-		t.Fatalf("expected 413, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", resp.StatusCode)
 	}
 }

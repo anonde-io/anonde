@@ -1,27 +1,57 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"log"
 	"net/http"
 	"runtime/debug"
-	"strings"
 	"time"
+
+	"connectrpc.com/connect"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/protobuf/encoding/protojson"
+
+	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
+	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
 )
 
-// DefaultMaxRequestBytes caps a single ingest/reveal request body. Configurable
-// via NewHTTPServer/SetMaxRequestBytes; the platform main reads MAX_CONTENT_BYTES.
+// DefaultMaxRequestBytes caps a single Connect request body. Configurable
+// via NewHTTPServer/SetMaxRequestBytes; the platform main reads
+// MAX_CONTENT_BYTES. Connect enforces this via connect.WithReadMaxBytes,
+// which returns ResourceExhausted (HTTP 429 over JSON) for oversized
+// payloads. The REST gateway path does not enforce this today — see
+// TODO.md.
 const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
 
+// HTTPServer fans the same Service out across three transports on one
+// listener:
+//
+//   - REST/JSON via grpc-gateway:        /v1/...
+//     (the public-facing surface, path-based URLs with verb suffixes)
+//   - Connect/JSON + Connect/Protobuf:   /anonde.platform.v1.PlatformService/<Method>
+//     (Connect SDK clients, gRPC-Web)
+//   - native gRPC (over HTTP/2):         same Connect URL, content-negotiated
+//     (Connect's handler also speaks the gRPC wire protocol)
+//
+// Plus a plain-HTTP /healthz for Fly's healthcheck. The gateway and the
+// Connect handler share the underlying Service, so behaviour is
+// identical across surfaces; only error mapping differs (gRPC codes
+// vs connect.Code) and that's handled in proto_logic.go's siblings.
 type HTTPServer struct {
 	svc             *Service
+	connectServer   *ConnectServer
+	grpcServer      *GRPCServer
 	maxRequestBytes int64
 }
 
 func NewHTTPServer(svc *Service) *HTTPServer {
-	return &HTTPServer{svc: svc, maxRequestBytes: DefaultMaxRequestBytes}
+	return &HTTPServer{
+		svc:             svc,
+		connectServer:   NewConnectServer(svc),
+		grpcServer:      NewGRPCServer(svc),
+		maxRequestBytes: DefaultMaxRequestBytes,
+	}
 }
 
 // SetMaxRequestBytes overrides the per-request body cap. Use 0 to disable.
@@ -32,14 +62,68 @@ func (s *HTTPServer) SetMaxRequestBytes(n int64) {
 	s.maxRequestBytes = n
 }
 
+// Routes returns the wired http.Handler suitable for http.Server.
+//
+// Mount on an http.Server whose Protocols field has both HTTP/1.1 and
+// UnencryptedHTTP2 enabled (see NewServerProtocols below) so a single
+// port serves REST, Connect, and native gRPC without TLS.
 func (s *HTTPServer) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.healthz)
-	mux.HandleFunc("/v1/ingest", s.ingest)
-	mux.HandleFunc("/v1/detokenize", s.detokenize)
-	mux.HandleFunc("/v1/reveal", s.reveal)
-	mux.HandleFunc("/v1/synthesize", s.synthesize)
+	mux.HandleFunc("GET /healthz", s.healthz)
+
+	connectOpts := []connect.HandlerOption{
+		// Replace Connect's default JSON codec with one that uses
+		// snake_case proto names on the wire (UseProtoNames=true).
+		// Input still accepts both snake_case and camelCase per the
+		// proto3 JSON spec.
+		connect.WithCodec(newSnakeCaseJSONCodec()),
+	}
+	if s.maxRequestBytes > 0 {
+		connectOpts = append(connectOpts, connect.WithReadMaxBytes(int(s.maxRequestBytes)))
+	}
+	connectPath, connectHandler := platformv1connect.NewPlatformServiceHandler(s.connectServer, connectOpts...)
+	mux.Handle(connectPath, connectHandler)
+
+	// REST gateway: dispatches /v1/... requests in-process to the gRPC
+	// server implementation (no separate gRPC port, no networking).
+	// JSON shape mirrors the Connect codec above — snake_case on
+	// output, tolerant of both shapes + unknown fields on input —
+	// so callers see one consistent JSON contract across surfaces.
+	gw := runtime.NewServeMux(
+		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
+			MarshalOptions: protojson.MarshalOptions{
+				UseProtoNames: true,
+			},
+			UnmarshalOptions: protojson.UnmarshalOptions{
+				DiscardUnknown: true,
+			},
+		}),
+	)
+	if err := platformv1.RegisterPlatformServiceHandlerServer(context.Background(), gw, s.grpcServer); err != nil {
+		// Programmer error: only fires if codegen + registration drift.
+		// Surfacing as panic keeps the wiring contract honest.
+		panic("register grpc-gateway handler: " + err.Error())
+	}
+	mux.Handle("/v1/", gw)
+
 	return loggingMiddleware(recoverMiddleware(corsMiddleware(mux)))
+}
+
+// NewServerProtocols returns the http.Protocols value needed so a single
+// TCP listener can serve HTTP/1.1 (browsers, curl, REST gateway) and
+// unencrypted HTTP/2 (native gRPC clients) at once. Without
+// UnencryptedHTTP2, gRPC over cleartext would not work without TLS.
+func NewServerProtocols() *http.Protocols {
+	p := &http.Protocols{}
+	p.SetHTTP1(true)
+	p.SetUnencryptedHTTP2(true)
+	return p
+}
+
+func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 type statusRecorder struct {
@@ -57,16 +141,19 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		log.Printf("http request method=%s path=%s status=%d duration_ms=%d remote=%s", r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds(), r.RemoteAddr)
+		log.Printf("http request method=%s path=%s status=%d duration_ms=%d remote=%s",
+			r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds(), r.RemoteAddr)
 	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Local dev default: allow browser clients from other localhost ports.
+		// Local dev default: allow browser clients from other localhost
+		// ports. Tighten via a CORS_ALLOW_ORIGINS env var before
+		// exposing the service publicly — see TODO.md.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,Connect-Protocol-Version,Connect-Timeout-Ms")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -80,145 +167,12 @@ func recoverMiddleware(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				log.Printf("panic serving %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
 			}
 		}()
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func (s *HTTPServer) synthesize(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	body := s.limitBody(w, r)
-	var req SynthesizeRequest
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		writeErr(w, requestBodyErrStatus(err), err)
-		return
-	}
-
-	resp, err := s.svc.Synthesize(r.Context(), req)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *HTTPServer) ingest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	body := s.limitBody(w, r)
-	var req IngestRequest
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		writeErr(w, requestBodyErrStatus(err), err)
-		return
-	}
-
-	resp, err := s.svc.Ingest(r.Context(), req)
-	if err != nil {
-		log.Printf("usage ingest tenant=%q doc=%q bytes=%d msg=%q error=%q", req.TenantID, req.DocID, len(req.Content), req.Content, err)
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	log.Printf("usage ingest tenant=%q doc=%q bytes=%d msg=%q entities=%d tokens=%d", req.TenantID, req.DocID, len(req.Content), req.Content, resp.DetectedEntitySize, len(resp.Tokens))
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *HTTPServer) detokenize(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	body := s.limitBody(w, r)
-	var req DetokenizeRequest
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		writeErr(w, requestBodyErrStatus(err), err)
-		return
-	}
-
-	resp, err := s.svc.Detokenize(r.Context(), req)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, ErrPolicyDenied) {
-			status = http.StatusForbidden
-		}
-		log.Printf("usage detokenize tenant=%q doc=%q actor=%q purpose=%q tokens=%d status=%d error=%q", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Tokens), status, err)
-		writeErr(w, status, err)
-		return
-	}
-	log.Printf("usage detokenize tenant=%q doc=%q actor=%q purpose=%q requested_tokens=%d resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Tokens), len(resp.Resolved))
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *HTTPServer) reveal(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	body := s.limitBody(w, r)
-	var req RevealRequest
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		writeErr(w, requestBodyErrStatus(err), err)
-		return
-	}
-
-	resp, err := s.svc.Reveal(r.Context(), req)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, ErrPolicyDenied) {
-			status = http.StatusForbidden
-		}
-		log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d msg=%q status=%d error=%q", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), req.Content, status, err)
-		writeErr(w, status, err)
-		return
-	}
-	log.Printf("usage reveal tenant=%q doc=%q actor=%q purpose=%q content_bytes=%d msg=%q resolved_tokens=%d", req.TenantID, req.DocID, req.Actor, req.Purpose, len(req.Content), req.Content, len(resp.Resolved))
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *HTTPServer) limitBody(w http.ResponseWriter, r *http.Request) io.Reader {
-	if s.maxRequestBytes <= 0 {
-		return r.Body
-	}
-	return http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
-}
-
-// requestBodyErrStatus returns 413 for MaxBytesReader errors (best-effort —
-// http.MaxBytesError is in stdlib since Go 1.19) and 400 for everything else.
-func requestBodyErrStatus(err error) int {
-	if err == nil {
-		return http.StatusBadRequest
-	}
-	var maxErr *http.MaxBytesError
-	if errors.As(err, &maxErr) {
-		return http.StatusRequestEntityTooLarge
-	}
-	if strings.Contains(err.Error(), "request body too large") {
-		return http.StatusRequestEntityTooLarge
-	}
-	return http.StatusBadRequest
-}
-
-func writeErr(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }

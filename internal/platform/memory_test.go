@@ -31,7 +31,7 @@ func TestMemoryStore_TTLExpiry(t *testing.T) {
 	store := NewMemoryStoreWithTTL(20 * time.Millisecond)
 	err := store.Put(context.Background(), StoreRecord{
 		TenantID:          "acme",
-		DocID:             "doc-1",
+		ID:             "doc-1",
 		ContentFormat:     contentFormatText,
 		AnonymizedContent: "<EMAIL_ACME_1>",
 	})

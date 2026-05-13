@@ -2,9 +2,13 @@ package platform
 
 import "github.com/anonde-io/anonde/analyzer"
 
+// IngestRequest creates a new anonymization. The internal Go type
+// keeps the short verb name; the public proto / RPC equivalent is
+// CreateAnonymizationRequest. ID is optional — if empty, the service
+// mints one (prefixed `anon_`) and returns it in IngestResponse.
 type IngestRequest struct {
 	TenantID      string `json:"tenant_id"`
-	DocID         string `json:"doc_id"`
+	ID            string `json:"id,omitempty"`
 	Content       string `json:"content"`
 	ContentFormat string `json:"content_format,omitempty"`
 
@@ -17,7 +21,7 @@ type IngestRequest struct {
 
 type IngestResponse struct {
 	TenantID           string                      `json:"tenant_id"`
-	DocID              string                      `json:"doc_id"`
+	ID                 string                      `json:"id"`
 	AnonymizedContent  string                      `json:"anonymized_content"`
 	DetectedEntitySize int                         `json:"detected_entity_size"`
 	Findings           []analyzer.RecognizerResult `json:"findings"`
@@ -31,9 +35,11 @@ type TokenRef struct {
 	End        int    `json:"end"`
 }
 
+// StoreRecord is the persisted anonymization: the anonymized blob plus
+// the token offsets needed to reveal it.
 type StoreRecord struct {
 	TenantID          string     `json:"tenant_id"`
-	DocID             string     `json:"doc_id"`
+	ID                string     `json:"id"`
 	ContentFormat     string     `json:"content_format,omitempty"`
 	AnonymizedContent string     `json:"anonymized_content"`
 	Tokens            []TokenRef `json:"tokens"`
@@ -41,7 +47,7 @@ type StoreRecord struct {
 
 type DetokenizeRequest struct {
 	TenantID string   `json:"tenant_id"`
-	DocID    string   `json:"doc_id"`
+	ID       string   `json:"id"`
 	Actor    string   `json:"actor"`
 	Purpose  string   `json:"purpose"`
 	Tokens   []string `json:"tokens"`
@@ -49,13 +55,13 @@ type DetokenizeRequest struct {
 
 type DetokenizeResponse struct {
 	TenantID string            `json:"tenant_id"`
-	DocID    string            `json:"doc_id"`
+	ID       string            `json:"id"`
 	Resolved map[string]string `json:"resolved"`
 }
 
 type RevealRequest struct {
 	TenantID      string `json:"tenant_id"`
-	DocID         string `json:"doc_id"`
+	ID            string `json:"id"`
 	Actor         string `json:"actor"`
 	Purpose       string `json:"purpose"`
 	Content       string `json:"content"`
@@ -64,18 +70,18 @@ type RevealRequest struct {
 
 type RevealResponse struct {
 	TenantID            string            `json:"tenant_id"`
-	DocID               string            `json:"doc_id"`
+	ID                  string            `json:"id"`
 	DeanonymizedContent string            `json:"deanonymized_content"`
 	Resolved            map[string]string `json:"resolved"`
 }
 
 type SynthesizeRequest struct {
-	Content       string   `json:"content"`
-	ContentFormat string   `json:"content_format,omitempty"`
-	Language      string   `json:"language,omitempty"`
-	Entities      []string `json:"entities,omitempty"`
-	ScoreThreshold float64 `json:"score_threshold,omitempty"`
-	DisableNER    bool     `json:"disable_ner,omitempty"`
+	Content        string   `json:"content"`
+	ContentFormat  string   `json:"content_format,omitempty"`
+	Language       string   `json:"language,omitempty"`
+	Entities       []string `json:"entities,omitempty"`
+	ScoreThreshold float64  `json:"score_threshold,omitempty"`
+	DisableNER     bool     `json:"disable_ner,omitempty"`
 	// Consistent=true means the same input text always produces the same fake.
 	Consistent bool `json:"consistent,omitempty"`
 	// DocScoped=true (requires Consistent) means the same text maps to the same

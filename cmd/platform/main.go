@@ -5,19 +5,21 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/moogacs/anonde"
-	"github.com/moogacs/anonde/analyzer"
-	"github.com/moogacs/anonde/analyzer/recognizers"
-	"github.com/moogacs/anonde/internal/platform"
+	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/internal/platform"
 )
 
 func main() {
 	addr := platformAddr()
-	analyzerEngine := analyzerFromEnv()
+	analyzerEngine, backendName, modelName := analyzerFromEnv()
 
 	// One-shot bootstrap used by Dockerfile.platform-ner: initialise the
 	// active analyzer, run one trivial inference call to force the NER
@@ -50,6 +52,13 @@ func main() {
 		platform.NewMemoryStoreWithTTL(storeTTL),
 		&platform.StaticPolicy{},
 	)
+	svc.SetVersionInfo(platform.VersionInfo{
+		AnalyzerBackend: backendName,
+		Model:           modelName,
+		BuildSHA:        buildSHA(),
+		GoVersion:       runtime.Version(),
+		APIVersion:      "v1",
+	})
 
 	httpAPI := platform.NewHTTPServer(svc)
 	httpAPI.SetMaxRequestBytes(maxBytes)
@@ -58,12 +67,30 @@ func main() {
 		Addr:              addr,
 		Handler:           httpAPI.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
+		Protocols:         platform.NewServerProtocols(),
 	}
 
-	log.Printf("platform server listening on %s (max_request_bytes=%d)", addr, maxBytes)
+	log.Printf("platform server listening on %s (max_request_bytes=%d backend=%s model=%s)",
+		addr, maxBytes, backendName, modelName)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// buildSHA pulls the vcs.revision stamp the Go toolchain bakes into
+// the binary at build time. Returns "" when the build was made outside
+// a git checkout (e.g. go run from a tarball).
+func buildSHA() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
 }
 
 // warmupAnalyzer forces the analyzer engine's lazy initialisation paths
@@ -144,18 +171,19 @@ func platformAddr() string {
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
 // Presidio, see bench/corpora/ai4privacy_en/.
-func analyzerFromEnv() *analyzer.AnalyzerEngine {
+func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "patterns")))
 	switch backend {
 	case "patterns", "patterns-only", "":
 		log.Printf("analyzer backend: patterns-only (no NER)")
-		return anonde.DefaultAnalyzerEngine()
+		return anonde.DefaultAnalyzerEngine(), "patterns", ""
 	case "ollama":
+		modelName := os.Getenv("OLLAMA_MODEL")
 		log.Printf("analyzer backend: ollama")
 		return anonde.DefaultAnalyzerEngineWithOllama(
 			os.Getenv("OLLAMA_ENDPOINT"),
-			os.Getenv("OLLAMA_MODEL"),
-		)
+			modelName,
+		), "ollama", modelName
 	case "hugot":
 		modelName := getenvDefault("HUGOT_MODEL", "Isotonic/distilbert_finetuned_ai4privacy_v2")
 		log.Printf("analyzer backend: hugot (model=%s)", modelName)
@@ -163,7 +191,7 @@ func analyzerFromEnv() *analyzer.AnalyzerEngine {
 			os.Getenv("HUGOT_MODELS_DIR"),
 			modelName,
 			true, // auto-download on first run
-		)
+		), "hugot", modelName
 	case "gliner":
 		modelName := getenvDefault("GLINER_MODEL", "onnx-community/gliner_multi_pii-v1")
 		onnxPath := getenvDefault("GLINER_ONNX_FILE", "onnx/model_quantized.onnx")
@@ -187,10 +215,10 @@ func analyzerFromEnv() *analyzer.AnalyzerEngine {
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
 			// Labels left empty → DefaultPIILabels.
-		})
+		}), "gliner", modelName
 	default:
 		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, ollama)", backend)
-		return nil
+		return nil, "", ""
 	}
 }
 
