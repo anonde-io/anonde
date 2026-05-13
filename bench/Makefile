@@ -57,7 +57,7 @@ OPENAI_PF_MODEL  ?= openai/privacy-filter
 # bench/corpora/ggponc_de/README.md). Run it manually via
 # `make -C bench/corpora/ggponc_de all` once the raw archive is in
 # bench/corpora/ggponc_de/data/raw/.
-DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de
+DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de wikiann_de
 EN_CORPORA := ai4privacy_en
 ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA)
 
