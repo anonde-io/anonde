@@ -25,7 +25,7 @@ type HugotNERConfig struct {
 	//     language coverage but weaker on clinical text.
 	//   * "Isotonic/distilbert_finetuned_ai4privacy_v2" — English-only,
 	//     ai4privacy-tuned, highest core-entity F1 on the English bench
-	//     (see bench/parity/REPORT.md).
+	//     (see bench/corpora/ai4privacy_en/REPORT.md).
 	ModelName string
 
 	// AutoDownload, when true, downloads the model on first use if not present locally.

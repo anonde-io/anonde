@@ -32,3 +32,35 @@ go.work.sum
 # .vscode/
 
 .DS_Store
+
+# bench harnesses: commit the code + Makefiles, ignore generated data,
+# reports, CSVs, and corpora. Each bench/corpora/<NAME>/data/ is
+# populated by `make -C bench data` (or per-corpus `make data`).
+bench/corpora/**/data/
+bench/corpora/**/REPORT*.md
+bench/corpora/**/results*.csv
+bench/corpora/**/*.jsonl
+bench/REPORT_MATRIX.md
+bench/results_matrix.csv
+
+.venv*
+bench-go-lib/*
+
+# Developer-only shared libraries (libonnxruntime, libtokenizers etc.)
+# staged for test invocation. See ner_gliner_test.go for how it's used.
+.tokenlib/
+
+# GLiNER debug log (set via recognizers.GLiNERDebug = true).
+gliner_debug.log
+
+# Per-session Claude memory: cross-session findings kept local, not shared
+# via git. CLAUDE.md (committed) points at this dir for the local session
+# to load; populate via .claude/sync_memory.sh (also committed).
+.claude/memory/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json/platform
+
+# Python bytecode caches
+__pycache__/
+*.pyc

@@ -4,7 +4,7 @@
 // Tokenisation is pure Go (gomlx/go-huggingface/tokenizers/hftokenizer);
 // model execution goes through yalue/onnxruntime_go, which is a CGO wrapper
 // around libonnxruntime. Pairing them gets us the same span quality as the
-// Python sidecar (bench/runner_gliner_pii.py) without spinning up a Python
+// Python sidecar (bench/runners/gliner.py) without spinning up a Python
 // process per inference batch.
 //
 // CGO contract
@@ -16,6 +16,11 @@
 // which raises a clear error at Analyze-time. Production deployments must
 // run a CGO build and ship libonnxruntime.{so,dylib} alongside the binary.
 //
+// Compatibility with the Python sidecar (bench/runners/gliner.py): same
+// model id (knowledgator/gliner-pii-base-v1.0) and same canonical-entity
+// mapping. The sidecar exists for parity-check (kept in the bench matrix
+// as `gliner-py`) not as the production path — production is this file.
+//
 // Backend lifecycle
 // -----------------
 // `ort.InitializeEnvironment()` is process-wide and must be called exactly
@@ -23,7 +28,7 @@
 // fire BEFORE InitializeEnvironment, so callers wanting a non-default
 // libonnxruntime location set GLiNERConfig.SharedLibraryPath on the FIRST
 // recognizer they construct — later changes are ignored (the env is
-// already up). The `--ort-library` flag on vs/openmed/runner_anonde.go
+// already up). The `--ort-library` flag on bench/runners/anonde.go
 // is the usual way to plumb this through.
 //
 // Session lifecycle

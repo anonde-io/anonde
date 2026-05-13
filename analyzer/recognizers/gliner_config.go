@@ -84,7 +84,7 @@ type GLiNERConfig struct {
 }
 
 // DefaultPIILabels is the curated PII label set used by the Python
-// sidecar (bench/runner_gliner_pii.py). Tuning labels here changes
+// sidecar (bench/runners/gliner.py). Tuning labels here changes
 // recall; keep the list narrow to avoid noisy false positives, but wide
 // enough to cover common anonde entity types.
 //
@@ -127,7 +127,7 @@ var DefaultPIILabels = []string{
 }
 
 // DefaultLabelToEntity mirrors LABEL_TO_CANONICAL in
-// bench/runner_gliner_pii.py: it maps each prompt label to the anonde
+// bench/runners/gliner.py: it maps each prompt label to the anonde
 // canonical entity type, the same identifiers the pattern recognizers
 // emit. Keep in lock-step with the Python sidecar so cross-engine
 // comparisons stay apples-to-apples.
