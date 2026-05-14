@@ -78,7 +78,7 @@ type GLiNERConfig struct {
 	ChunkOverlap int
 
 	// SharedLibraryPath optionally overrides the onnxruntime shared
-	// library location. Empty uses platform defaults (libonnxruntime.dylib
+	// library location. Empty uses defaults (libonnxruntime.dylib
 	// on macOS, libonnxruntime.so on Linux).
 	SharedLibraryPath string
 }
