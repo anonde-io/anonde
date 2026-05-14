@@ -1,101 +1,36 @@
-package platform
+package core
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/anonde-io/anonde"
-	"github.com/anonde-io/anonde/internal/content"
-	"github.com/anonde-io/anonde/internal/core"
-	"github.com/anonde-io/anonde/internal/store"
 )
 
-// allowAllPolicy is a test-only PolicyAuthorizer that permits every
-// detokenize. Mirrors the same-named helper in internal/core/service_test.go;
-// duplicated here so each test package stays self-contained while the
-// split is in flight.
-type allowAllPolicy struct{}
+// Ingest → Reveal round-trip tests exercising the line-oriented content
+// formats (NDJSON / Logs) and the per-request analyzer overrides
+// (DisableNER, Entities allow-list). Uses the real DefaultAnalyzerEngine
+// against the in-test Vault/Store stubs from testhelpers_test.go.
 
-func (allowAllPolicy) AllowDetokenize(context.Context, core.DetokenizeRequest) error {
-	return nil
-}
-
-func newTestService() *core.Service {
-	return core.NewService(
+func newRoundtripService() *Service {
+	return NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		store.NewMemoryVault(),
-		store.NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 }
 
-// ---------------------------------------------------------------------------
-// content format helpers
-// ---------------------------------------------------------------------------
-
-func TestNormalizeContentFormat_NewFormats(t *testing.T) {
-	t.Parallel()
-	cases := map[string]string{
-		"ndjson":     content.FormatNDJSON,
-		"NDJSON":     content.FormatNDJSON,
-		"jsonl":      content.FormatNDJSON,
-		"json-lines": content.FormatNDJSON,
-		"logs":       content.FormatLogs,
-		"log":        content.FormatLogs,
-	}
-	for in, want := range cases {
-		if got := content.NormalizeFormat(in); got != want {
-			t.Errorf("content.NormalizeFormat(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestResolveAutoContentFormat_NDJSON(t *testing.T) {
-	t.Parallel()
-	in := `{"a":1}` + "\n" + `{"b":2}` + "\n"
-	if got := content.ResolveAutoFormat(in); got != content.FormatNDJSON {
-		t.Errorf("expected ndjson, got %q", got)
-	}
-}
-
-func TestStripANSI_RemovesEscapes(t *testing.T) {
-	t.Parallel()
-	in := "\x1b[31mERROR\x1b[0m something happened"
-	got := content.StripANSI(in)
-	if got != "ERROR something happened" {
-		t.Errorf("expected escapes removed, got %q", got)
-	}
-}
-
-func TestSanitizeUTF8_ReplacesInvalid(t *testing.T) {
-	t.Parallel()
-	// "abc" + invalid byte 0xff + "def"
-	in := "abc\xffdef"
-	got := content.SanitizeUTF8(in)
-	if !strings.Contains(got, "abc") || !strings.Contains(got, "def") {
-		t.Errorf("expected valid surrounding text preserved, got %q", got)
-	}
-	if strings.ContainsRune(got, 0xff) {
-		t.Errorf("expected invalid byte to be removed, got %q", got)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// NDJSON ingest/reveal round trip
-// ---------------------------------------------------------------------------
-
 func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
-	svc := newTestService()
+	svc := newRoundtripService()
 	in := `{"user":"John Doe","email":"john@example.com"}` + "\n" +
 		`{"user":"Jane Roe","email":"jane@example.com"}` + "\n"
 
-	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
+	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "ndjson-1",
+		ID:            "ndjson-1",
 		ContentFormat: "ndjson",
 		Content:       in,
 	})
@@ -109,9 +44,9 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 		t.Fatalf("expected line structure preserved, got %q", ing.AnonymizedContent)
 	}
 
-	rev, err := svc.Reveal(context.Background(), core.RevealRequest{
+	rev, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "acme",
-		ID:         "ndjson-1",
+		ID:            "ndjson-1",
 		Actor:         "tester",
 		Purpose:       "roundtrip",
 		ContentFormat: "ndjson",
@@ -129,11 +64,11 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 }
 
 func TestIngest_NDJSON_RejectsNonJSONLine(t *testing.T) {
-	svc := newTestService()
+	svc := newRoundtripService()
 	in := `{"a":1}` + "\nnot json\n"
-	_, err := svc.Ingest(context.Background(), core.IngestRequest{
+	_, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "ndjson-bad",
+		ID:            "ndjson-bad",
 		ContentFormat: "ndjson",
 		Content:       in,
 	})
@@ -142,20 +77,16 @@ func TestIngest_NDJSON_RejectsNonJSONLine(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Logs format: per-line auto, ANSI stripping, mixed text/JSON
-// ---------------------------------------------------------------------------
-
 func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
-	svc := newTestService()
+	svc := newRoundtripService()
 	// Three lines: colored text log, JSON log, plain text — emails on each.
 	in := "\x1b[31mERROR\x1b[0m contact alice@example.com about login\n" +
 		`{"level":"info","email":"bob@example.com"}` + "\n" +
 		"plain message charlie@example.com\n"
 
-	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
+	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "logs-1",
+		ID:            "logs-1",
 		ContentFormat: "logs",
 		Content:       in,
 	})
@@ -174,9 +105,9 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 		t.Fatalf("expected 3 newlines preserved, got %q", ing.AnonymizedContent)
 	}
 
-	rev, err := svc.Reveal(context.Background(), core.RevealRequest{
+	rev, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "acme",
-		ID:         "logs-1",
+		ID:            "logs-1",
 		Actor:         "tester",
 		Purpose:       "roundtrip",
 		ContentFormat: "logs",
@@ -192,10 +123,6 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Per-request analyzer overrides: DisableNER + Entities
-// ---------------------------------------------------------------------------
-
 // TestIngest_DisableNER_SkipsModelBackedRecognizers verifies that DisableNER
 // gates off only the model-backed NER recognizers (suffix "NERRecognizer" —
 // HugotNERRecognizer, OllamaNERRecognizer). Pattern-based PERSON detectors
@@ -204,16 +131,16 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 // usable for person redaction. Other pattern entities like EMAIL_ADDRESS
 // remain unaffected.
 func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
-	svc := newTestService()
+	svc := newRoundtripService()
 	// "Patient John Doe …" triggers ENAnomalyRecognizer's structural path
 	// ("Patient" + 1–4 capitalised tokens), which emits PERSON at score 0.85
 	// — well above the default 0.30 threshold. The bare-name path emits at
 	// 0.25 and only clears the threshold via a context-keyword boost; using
 	// the structural anchor here keeps the test stable regardless of the
 	// surrounding text.
-	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
+	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "ner-off",
+		ID:            "ner-off",
 		ContentFormat: "text",
 		Content:       "Patient John Doe emailed alice@example.com",
 		DisableNER:    true,
@@ -234,10 +161,10 @@ func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
 }
 
 func TestIngest_EntitiesAllowlist_OnlyEmail(t *testing.T) {
-	svc := newTestService()
-	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
+	svc := newRoundtripService()
+	ing, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "ents-1",
+		ID:            "ents-1",
 		ContentFormat: "text",
 		Content:       "Email alice@example.com SSN 123-45-6789 IP 10.0.0.1",
 		Entities:      []string{"EMAIL_ADDRESS"},
@@ -256,49 +183,5 @@ func TestIngest_EntitiesAllowlist_OnlyEmail(t *testing.T) {
 	}
 	if !strings.Contains(ing.AnonymizedContent, "10.0.0.1") {
 		t.Fatalf("expected IP preserved, got %q", ing.AnonymizedContent)
-	}
-}
-
-// Tenant-scoped token reuse across documents was deliberately removed (see
-// TODO.md). Tokens are minted per-doc via a per-tenant counter; the same
-// cleartext in two docs gets two distinct tokens.
-
-// Replacer ordering: TestBuildTokenReplacer_PrefersLongerMatch now
-// lives in internal/core/tokens_test.go (it tests an internal core
-// helper).
-
-// ---------------------------------------------------------------------------
-// HTTP body size limit
-// ---------------------------------------------------------------------------
-
-// TestConnect_IngestRejectsOversizedBody verifies the Connect handler
-// honors WithReadMaxBytes. Connect maps body-too-large to
-// CodeResourceExhausted, which the Connect/JSON spec renders as HTTP
-// 429 (Too Many Requests). Not HTTP 413 — that's a deliberate Connect
-// design choice. Asserting on the status code locks in the contract
-// so a future Connect upgrade that changes the mapping fails loudly.
-//
-// proto3 JSON field names are lowerCamelCase (tenant_id -> tenantId).
-func TestConnect_IngestRejectsOversizedBody(t *testing.T) {
-	svc := newTestService()
-	api := NewHTTPServer(svc)
-	api.SetMaxRequestBytes(64)
-
-	srv := httptest.NewServer(api.Routes())
-	defer srv.Close()
-
-	body := `{"tenantId":"acme","id":"d","contentFormat":"text","content":"` +
-		strings.Repeat("a", 1024) + `"}`
-	resp, err := http.Post(
-		srv.URL+"/anonde.platform.v1.PlatformService/CreateAnonymization",
-		"application/json",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("expected 429, got %d", resp.StatusCode)
 	}
 }
