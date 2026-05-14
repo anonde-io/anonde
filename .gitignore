@@ -33,6 +33,12 @@ go.work.sum
 
 .DS_Store
 
+# Local-only working notes — never share via git.
+# TODO.md is the personal punch-list; treated like a scratchpad,
+# not a docs artifact. Use issues / PR descriptions for anything
+# meant for other contributors.
+TODO.md
+
 # bench harnesses: commit the code + Makefiles, ignore generated data,
 # reports, CSVs, and corpora. Each bench/corpora/<NAME>/data/ is
 # populated by `make -C bench data` (or per-corpus `make data`).
