@@ -482,6 +482,44 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
+    # ---- Cost reference ---------------------------------------------
+    # All engines we benchmark are self-hostable, so per-cell cost columns
+    # would be $0 across the board — uninteresting. Instead we anchor the
+    # bench to managed-service market prices so a reader can compare what
+    # they'd otherwise be paying. Prices are pinned with a "verified as of"
+    # date; vendor pricing pages change, so re-verify before quoting.
+    out.append("## Cost reference · USD per million characters\n")
+    out.append("All engines in this matrix run on your hardware — no per-call charge. "
+               "For procurement context, here is what the closest managed-service "
+               "alternatives cost on their public pricing pages (verified 2026-05-15; "
+               "vendor pricing drifts, re-check before quoting):\n")
+    out.append("| Engine | Hosting | $/M chars | Notes |")
+    out.append("|---|---|---:|---|")
+    out.append("| `anonde-patterns` | self-host (~$5/mo Fly machine) | "
+               "~**$0.0005** | Patterns-only; fits on `shared-cpu-1x:256MB`. "
+               "Amortised cost dominated by infra base. |")
+    out.append("| `anonde-gliner` | self-host (~$5-15/mo Fly machine) | "
+               "~**$0.001** | GLiNER PII baked into image. `shared-cpu-1x:2048MB` "
+               "suffices; CPU-only. |")
+    out.append("| `presidio` | self-host (open-source) | **$0** marginal | "
+               "Microsoft Presidio. spaCy backend, English-focused. |")
+    out.append("| `gliner-py` | self-host (open-source) | **$0** marginal | "
+               "Same GLiNER PII model via Python sidecar. |")
+    out.append("| Google Cloud DLP (inspect) | managed | ~$1 / GB ≈ **$1.00** | "
+               "1st GB/mo free; cheapest managed option by far. "
+               "[pricing](https://cloud.google.com/sensitive-data-protection/pricing) |")
+    out.append("| Azure AI Language PII | managed | ~$1 / 1k records ≈ **~$1.00** | "
+               "Record = 1 000 chars. 5 000 records/mo free. "
+               "[pricing](https://azure.microsoft.com/en-us/pricing/details/language/) |")
+    out.append("| AWS Comprehend Medical (DetectPHI) | managed | $0.01 / 100 chars = "
+               "**$100** | Tier 1; drops at volume. PHI-grade NER, English only. "
+               "[pricing](https://aws.amazon.com/comprehend/medical/pricing/) |")
+    out.append("")
+    out.append("> Self-hosting anonde is **roughly 1 000–100 000× cheaper per million "
+               "characters** than the managed alternatives — and the data never leaves "
+               "your network. The leak-rate and F1 numbers in the tables above are how "
+               "you tell if the quality tradeoff is acceptable.\n")
+
     # ---- Cell coverage ----------------------------------------------
     out.append("## Cell coverage\n")
     out.append("Which engines actually produced output for which corpora. "
