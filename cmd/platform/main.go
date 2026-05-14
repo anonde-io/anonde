@@ -15,7 +15,7 @@ import (
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
 	"github.com/anonde-io/anonde/internal/core"
-	"github.com/anonde-io/anonde/internal/platform"
+	"github.com/anonde-io/anonde/internal/api"
 	"github.com/anonde-io/anonde/internal/policy"
 	"github.com/anonde-io/anonde/internal/store"
 )
@@ -46,7 +46,7 @@ func main() {
 
 	vaultTTL := durationFromEnv("MEMORY_VAULT_TTL", 5*time.Minute)
 	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
-	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", platform.DefaultMaxRequestBytes)
+	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", api.DefaultMaxRequestBytes)
 
 	svc := core.NewService(
 		analyzerEngine,
@@ -63,14 +63,14 @@ func main() {
 		APIVersion:      "v1",
 	})
 
-	httpAPI := platform.NewHTTPServer(svc)
+	httpAPI := api.NewHTTPServer(svc)
 	httpAPI.SetMaxRequestBytes(maxBytes)
 
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           httpAPI.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
-		Protocols:         platform.NewServerProtocols(),
+		Protocols:         api.NewServerProtocols(),
 	}
 
 	log.Printf("platform server listening on %s (max_request_bytes=%d backend=%s model=%s)",
