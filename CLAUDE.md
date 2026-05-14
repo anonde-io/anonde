@@ -33,8 +33,8 @@ state.
 ## Production deployment shape
 
 - Two Fly variants share the `anonde-platform` app in `iad`:
-  - `fly.toml` → `Dockerfile.platform` → patterns-only (~12 MB image)
-  - `fly.ner.toml` → `Dockerfile.platform-ner` → GLiNER PII baked in
+  - `fly.toml` → `Dockerfile.anonde` → patterns-only (~12 MB image)
+  - `fly.ner.toml` → `Dockerfile.anonde-ner` → GLiNER PII baked in
     (~470 MB image, CGO_ENABLED=1, distroless/cc-debian12, bundled
     libonnxruntime.so.1.26.0)
 - The NER variant runs `ANALYZER_BACKEND=gliner` with the English-base
@@ -49,7 +49,7 @@ state.
 
 - Default build: pure Go, no NER, no CGO. Production-safe everywhere.
 - `-tags hugot`: enables the in-process ONNX recognizers
-  (HugotNERRecognizer + GLiNERRecognizer). Used by `Dockerfile.platform-ner`.
+  (HugotNERRecognizer + GLiNERRecognizer). Used by `Dockerfile.anonde-ner`.
 - For the GLiNER path, CGO is required AND libonnxruntime.so must be
   reachable at runtime via `ORT_SO_PATH` (set by the Dockerfile).
 

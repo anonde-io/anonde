@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 )
 
-// snakeCaseJSONCodec is the Connect JSON codec used by the platform.
+// snakeCaseJSONCodec is the Connect JSON codec used by the anonde server.
 //
 // It overrides Connect's default JSON behaviour to emit snake_case
 // field names on the wire (the original proto field names), matching

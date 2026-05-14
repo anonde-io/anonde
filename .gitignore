@@ -59,7 +59,7 @@ gliner_debug.log
 .claude/memory/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
-.claude/settings.local.json/platform
+.claude/settings.local.json
 
 # Python bytecode caches
 __pycache__/

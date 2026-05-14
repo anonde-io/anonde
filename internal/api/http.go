@@ -18,7 +18,7 @@ import (
 )
 
 // DefaultMaxRequestBytes caps a single Connect request body. Configurable
-// via NewHTTPServer/SetMaxRequestBytes; the platform main reads
+// via NewHTTPServer/SetMaxRequestBytes; cmd/anonde/main reads
 // MAX_CONTENT_BYTES. Connect enforces this via connect.WithReadMaxBytes,
 // which returns ResourceExhausted (HTTP 429 over JSON) for oversized
 // payloads. The REST gateway path does not enforce this today — see

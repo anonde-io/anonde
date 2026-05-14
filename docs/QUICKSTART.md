@@ -1,4 +1,4 @@
-# anonde platform — local quickstart
+# anonde server — local quickstart
 
 Run the HTTP API locally and round-trip a document through
 **ingest → detokenize → reveal**. Works with plain text and JSON. The
@@ -193,7 +193,7 @@ in every string leaf is detected on ingest and restored on reveal.
 `content_format` accepts `text`, `json`, `ndjson`, `logs`, `pdf`, and
 `auto`. NDJSON treats each line as a separate JSON document, logs are
 mixed text/JSON (with ANSI stripped), and PDF is base64-encoded — see
-`internal/platform/content.go`.
+`internal/content/content.go`.
 
 ## Docker image variants
 
@@ -246,7 +246,7 @@ other.
 ## Notes
 
 - All ingest data lives in memory (TTL configurable via
-  `MEMORY_VAULT_TTL` and `MEMORY_STORE_TTL` env vars). The platform is
+  `MEMORY_VAULT_TTL` and `MEMORY_STORE_TTL` env vars). The anonde server is
   designed for a tenant to plug in their own vault + store.
 - The same cleartext within a single doc gets the same token. The same
   cleartext across docs does NOT — `mintToken` is per-(tenant, entity)

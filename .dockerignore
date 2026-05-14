@@ -5,7 +5,7 @@
 #      docs, and tests that don't affect the binary.
 #
 # The build needs: go.mod, go.sum, and every .go source file imported
-# (transitively) from ./cmd/platform. Everything else is excluded.
+# (transitively) from ./cmd/anonde. Everything else is excluded.
 
 # Git history + metadata
 .git
@@ -54,7 +54,7 @@ SKYFLOW_PARITY_PLAN.md
 proxy/
 compare/
 
-# Examples (not part of the platform binary)
+# Examples (not part of the anonde binary)
 examples/
 
 # Python venvs and caches from bench tooling

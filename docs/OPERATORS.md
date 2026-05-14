@@ -40,4 +40,4 @@ Replaces PII with realistic fakes that pass the same checksums as the original (
 
 ## Reversibility
 
-Replace, Mask, and Hash are one-way. Encrypt is reversible with the key. Synthesize is reversible only when paired with the platform service's vault — the platform stores the original cleartext keyed by the minted token (`<PERSON_T1_000001>` style), separate from the operator's output shape. See [QUICKSTART.md](QUICKSTART.md) for the round-trip flow.
+Replace, Mask, and Hash are one-way. Encrypt is reversible with the key. Synthesize is reversible only when paired with the anonde server's vault — anonde stores the original cleartext keyed by the minted token (`<PERSON_T1_000001>` style), separate from the operator's output shape. See [QUICKSTART.md](QUICKSTART.md) for the round-trip flow.

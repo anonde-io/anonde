@@ -36,7 +36,7 @@ anonde/
 │   ├── anonymizer.go          # mergeAdjacentSameType + dispatch to operators
 │   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize
 ├── cmd/anonde/              # HTTP service
-├── internal/platform/         # service + in-memory vault/store/policy
+├── internal/api/              # transport (Connect + gRPC + REST gateway)
 └── bench/                     # single bench harness
     ├── Makefile               # top-level `make matrix`, `make matrix-de`, `make matrix-en`, …
     ├── corpora/<NAME>/        # per-corpus Makefile + loader + data + gold
@@ -61,4 +61,4 @@ Silent failures in the analyzer pipeline are logged via `analyzer: recognizer er
 
 ## In-memory vault
 
-The platform service ships an in-memory vault (token ↔ cleartext) with configurable TTL — no DB required for ephemeral workloads. TTLs and the request-size cap are env-tunable; see [DEPLOYMENT.md](DEPLOYMENT.md#env-vars).
+The anonde server ships an in-memory vault (token ↔ cleartext) with configurable TTL — no DB required for ephemeral workloads. TTLs and the request-size cap are env-tunable; see [DEPLOYMENT.md](DEPLOYMENT.md#env-vars).
