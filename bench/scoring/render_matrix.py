@@ -403,13 +403,48 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
-    # ---- One F1 reference table (type-agnostic, the "did we find  --
-    # ---- the span at all" view) -------------------------------------
+    # ---- Strict F1 (CoNLL-style: exact span + type) ----------------
+    # This is the metric every NER paper publishes. We surface it here
+    # (not just CSV) so you can cite a number that compares apples-to-
+    # apples with academic baselines. Note: strict will be uniformly
+    # lower than leak-derived metrics — exact-byte alignment is harder
+    # than overlap, and many recognizers emit "Elena Rossi" vs gold's
+    # ["Elena"] + ["Rossi"]. For a redactor that's not a bug.
+    out.append("## Strict F1 · CoNLL exact span + type\n")
+    out.append("Predicted span counts only if `(start, end, type)` matches gold exactly after "
+               "label normalisation. The number every NER paper publishes; useful for direct "
+               "comparison to academic baselines, less useful as a production metric "
+               "(strict scoring penalises broader-or-narrower spans that still redact the PHI).\n")
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
+    for c in corpora:
+        cells = [f"| `{c}` |"]
+        # Compute strict F1 per engine first so we can highlight the winner.
+        f1s: list[float | None] = []
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None:
+                f1s.append(None)
+                continue
+            f1s.append(_f1_overall(cell["strict"]))
+        best = max((f for f in f1s if f is not None), default=None)
+        for f in f1s:
+            if f is None:
+                cells.append("– |")
+                continue
+            txt = f"{f:.3f}"
+            if best is not None and abs(f - best) < 1e-9 and best > 0:
+                txt = f"**{txt}** 🥇"
+            cells.append(f"{txt} |")
+        out.append(" ".join(cells))
+    out.append("")
+
+    # ---- Type-agnostic F1 (the "did we find the span at all" view) -
     out.append("## F1 reference · type-agnostic\n")
-    out.append("Type-agnostic F1: any predicted span overlapping a gold span counts as a hit, "
-               "regardless of which entity-type label was assigned. The closest metric to "
-               "'did we cover the PHI?' that's also boundary-aware. Strict and partial-overlap "
-               "F1 are in `results_matrix.csv`.\n")
+    out.append("Any predicted span overlapping a gold span counts as a hit, regardless of "
+               "which entity-type label was assigned. The closest metric to 'did we cover "
+               "the PHI?' that's also boundary-aware. Partial-overlap F1 is in "
+               "`results_matrix.csv`.\n")
     out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
     out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
@@ -446,9 +481,10 @@ def _render(rows, label_map, corpora, engines):
   missed in production.
 - **Type-agnostic F1** = harmonic mean of precision and recall using overlap matching; ignores
   the entity-type label. Useful as a tie-breaker when leak rates are close.
-- **Strict F1** (in CSV) = exact start, end, and type match against gold. Useful for academic
-  comparison; less useful for redaction, since a span that's 11 chars vs gold's 5 still
-  successfully tokenises (the cleartext is gone either way).
+- **Strict F1** = exact start, end, and type match against gold. The CoNLL-style metric every
+  NER paper publishes; useful for direct academic comparison. Less useful as a redaction
+  metric, since a span that's 11 chars vs gold's 5 still successfully tokenises (the
+  cleartext is gone either way) — but every leaked span is one we'd have shipped in prod.
 - **`–` cells** = engine not run on that corpus. Reasons: language mismatch (Presidio is EN
   only), per-doc cost too high (openai-pf at 80sec/doc on CPU), or corpus requires manual
   DUA registration (`ggponc_de`).
