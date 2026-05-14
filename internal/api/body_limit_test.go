@@ -27,7 +27,7 @@ func TestConnect_IngestRejectsOversizedBody(t *testing.T) {
 	body := `{"tenantId":"acme","id":"d","contentFormat":"text","content":"` +
 		strings.Repeat("a", 1024) + `"}`
 	resp, err := http.Post(
-		ts.URL+"/anonde.platform.v1.PlatformService/CreateAnonymization",
+		ts.URL+"/anonde.v1.Service/CreateAnonymization",
 		"application/json",
 		strings.NewReader(body),
 	)

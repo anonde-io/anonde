@@ -5,7 +5,7 @@ import (
 
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/internal/core"
-	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
+	anondev1 "github.com/anonde-io/anonde/gen/anonde/v1"
 )
 
 // proto_logic.go centralises the proto↔internal conversion used by
@@ -17,7 +17,7 @@ import (
 // Service stays unaware of proto — it owns business logic against the
 // internal IngestRequest / DetokenizeRequest / … types.
 
-func executeCreate(ctx context.Context, svc *core.Service, msg *platformv1.CreateAnonymizationRequest) (*platformv1.CreateAnonymizationResponse, error) {
+func executeCreate(ctx context.Context, svc *core.Service, msg *anondev1.CreateAnonymizationRequest) (*anondev1.CreateAnonymizationResponse, error) {
 	req := core.IngestRequest{
 		TenantID:      msg.GetTenantId(),
 		ID:            msg.GetId(),
@@ -30,7 +30,7 @@ func executeCreate(ctx context.Context, svc *core.Service, msg *platformv1.Creat
 	if err != nil {
 		return nil, err
 	}
-	return &platformv1.CreateAnonymizationResponse{
+	return &anondev1.CreateAnonymizationResponse{
 		TenantId:           resp.TenantID,
 		Id:                 resp.ID,
 		AnonymizedContent:  resp.AnonymizedContent,
@@ -40,7 +40,7 @@ func executeCreate(ctx context.Context, svc *core.Service, msg *platformv1.Creat
 	}, nil
 }
 
-func executeDetokenize(ctx context.Context, svc *core.Service, msg *platformv1.DetokenizeTokensRequest) (*platformv1.DetokenizeTokensResponse, error) {
+func executeDetokenize(ctx context.Context, svc *core.Service, msg *anondev1.DetokenizeTokensRequest) (*anondev1.DetokenizeTokensResponse, error) {
 	resp, err := svc.Detokenize(ctx, core.DetokenizeRequest{
 		TenantID: msg.GetTenantId(),
 		ID:       msg.GetId(),
@@ -51,14 +51,14 @@ func executeDetokenize(ctx context.Context, svc *core.Service, msg *platformv1.D
 	if err != nil {
 		return nil, err
 	}
-	return &platformv1.DetokenizeTokensResponse{
+	return &anondev1.DetokenizeTokensResponse{
 		TenantId: resp.TenantID,
 		Id:       resp.ID,
 		Resolved: resp.Resolved,
 	}, nil
 }
 
-func executeReveal(ctx context.Context, svc *core.Service, msg *platformv1.RevealContentRequest) (*platformv1.RevealContentResponse, error) {
+func executeReveal(ctx context.Context, svc *core.Service, msg *anondev1.RevealContentRequest) (*anondev1.RevealContentResponse, error) {
 	resp, err := svc.Reveal(ctx, core.RevealRequest{
 		TenantID:      msg.GetTenantId(),
 		ID:            msg.GetId(),
@@ -70,7 +70,7 @@ func executeReveal(ctx context.Context, svc *core.Service, msg *platformv1.Revea
 	if err != nil {
 		return nil, err
 	}
-	return &platformv1.RevealContentResponse{
+	return &anondev1.RevealContentResponse{
 		TenantId:            resp.TenantID,
 		Id:                  resp.ID,
 		DeanonymizedContent: resp.DeanonymizedContent,
@@ -78,7 +78,7 @@ func executeReveal(ctx context.Context, svc *core.Service, msg *platformv1.Revea
 	}, nil
 }
 
-func executeSynthesize(ctx context.Context, svc *core.Service, msg *platformv1.SynthesizeContentRequest) (*platformv1.SynthesizeContentResponse, error) {
+func executeSynthesize(ctx context.Context, svc *core.Service, msg *anondev1.SynthesizeContentRequest) (*anondev1.SynthesizeContentResponse, error) {
 	req := core.SynthesizeRequest{
 		Content:       msg.GetContent(),
 		ContentFormat: msg.GetContentFormat(),
@@ -91,29 +91,29 @@ func executeSynthesize(ctx context.Context, svc *core.Service, msg *platformv1.S
 	if err != nil {
 		return nil, err
 	}
-	return &platformv1.SynthesizeContentResponse{
+	return &anondev1.SynthesizeContentResponse{
 		Content:  resp.Content,
 		Findings: findingsToProto(resp.Findings),
 	}, nil
 }
 
-func executeDelete(ctx context.Context, svc *core.Service, msg *platformv1.DeleteAnonymizationRequest) (*platformv1.DeleteAnonymizationResponse, error) {
+func executeDelete(ctx context.Context, svc *core.Service, msg *anondev1.DeleteAnonymizationRequest) (*anondev1.DeleteAnonymizationResponse, error) {
 	result, err := svc.DeleteAnonymization(ctx, msg.GetTenantId(), msg.GetId())
 	if err != nil {
 		return nil, err
 	}
-	return &platformv1.DeleteAnonymizationResponse{
+	return &anondev1.DeleteAnonymizationResponse{
 		Deleted:       result.Deleted,
 		TokensDeleted: int32(result.TokensDeleted),
 	}, nil
 }
 
-func executeGetVersion(ctx context.Context, svc *core.Service) (*platformv1.GetVersionResponse, error) {
+func executeGetVersion(ctx context.Context, svc *core.Service) (*anondev1.GetVersionResponse, error) {
 	info, err := svc.GetVersion(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &platformv1.GetVersionResponse{
+	return &anondev1.GetVersionResponse{
 		AnalyzerBackend: info.AnalyzerBackend,
 		Model:           info.Model,
 		BuildSha:        info.BuildSHA,
@@ -122,9 +122,9 @@ func executeGetVersion(ctx context.Context, svc *core.Service) (*platformv1.GetV
 	}, nil
 }
 
-func executeHealthCheck() *platformv1.HealthCheckResponse {
-	return &platformv1.HealthCheckResponse{
-		Status: platformv1.HealthCheckResponse_SERVING_STATUS_SERVING,
+func executeHealthCheck() *anondev1.HealthCheckResponse {
+	return &anondev1.HealthCheckResponse{
+		Status: anondev1.HealthCheckResponse_SERVING_STATUS_SERVING,
 	}
 }
 
@@ -140,7 +140,7 @@ func applyAnalyzerOptions(
 	entities *[]string,
 	scoreThreshold *float64,
 	disableNER *bool,
-	opts *platformv1.AnalyzerOptions,
+	opts *anondev1.AnalyzerOptions,
 ) {
 	if opts == nil {
 		return
@@ -153,13 +153,13 @@ func applyAnalyzerOptions(
 	}
 }
 
-func findingsToProto(in []analyzer.RecognizerResult) []*platformv1.Finding {
+func findingsToProto(in []analyzer.RecognizerResult) []*anondev1.Finding {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]*platformv1.Finding, len(in))
+	out := make([]*anondev1.Finding, len(in))
 	for i, f := range in {
-		out[i] = &platformv1.Finding{
+		out[i] = &anondev1.Finding{
 			Start:          int32(f.Start),
 			End:            int32(f.End),
 			Score:          f.Score,
@@ -170,13 +170,13 @@ func findingsToProto(in []analyzer.RecognizerResult) []*platformv1.Finding {
 	return out
 }
 
-func tokensToProto(in []core.TokenRef) []*platformv1.TokenRef {
+func tokensToProto(in []core.TokenRef) []*anondev1.TokenRef {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]*platformv1.TokenRef, len(in))
+	out := make([]*anondev1.TokenRef, len(in))
 	for i, t := range in {
-		out[i] = &platformv1.TokenRef{
+		out[i] = &anondev1.TokenRef{
 			Token:      t.Token,
 			EntityType: t.EntityType,
 			Start:      int32(t.Start),

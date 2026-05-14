@@ -12,8 +12,8 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
-	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
+	anondev1 "github.com/anonde-io/anonde/gen/anonde/v1"
+	"github.com/anonde-io/anonde/gen/anonde/v1/anondev1connect"
 	"github.com/anonde-io/anonde/internal/core"
 )
 
@@ -30,7 +30,7 @@ const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
 //
 //   - REST/JSON via grpc-gateway:        /v1/...
 //     (the public-facing surface, path-based URLs with verb suffixes)
-//   - Connect/JSON + Connect/Protobuf:   /anonde.platform.v1.PlatformService/<Method>
+//   - Connect/JSON + Connect/Protobuf:   /anonde.v1.Service/<Method>
 //     (Connect SDK clients, gRPC-Web)
 //   - native gRPC (over HTTP/2):         same Connect URL, content-negotiated
 //     (Connect's handler also speaks the gRPC wire protocol)
@@ -82,7 +82,7 @@ func (s *HTTPServer) Routes() http.Handler {
 	if s.maxRequestBytes > 0 {
 		connectOpts = append(connectOpts, connect.WithReadMaxBytes(int(s.maxRequestBytes)))
 	}
-	connectPath, connectHandler := platformv1connect.NewPlatformServiceHandler(s.connectServer, connectOpts...)
+	connectPath, connectHandler := anondev1connect.NewServiceHandler(s.connectServer, connectOpts...)
 	mux.Handle(connectPath, connectHandler)
 
 	// REST gateway: dispatches /v1/... requests in-process to the gRPC
@@ -100,7 +100,7 @@ func (s *HTTPServer) Routes() http.Handler {
 			},
 		}),
 	)
-	if err := platformv1.RegisterPlatformServiceHandlerServer(context.Background(), gw, s.grpcServer); err != nil {
+	if err := anondev1.RegisterServiceHandlerServer(context.Background(), gw, s.grpcServer); err != nil {
 		// Programmer error: only fires if codegen + registration drift.
 		// Surfacing as panic keeps the wiring contract honest.
 		panic("register grpc-gateway handler: " + err.Error())

@@ -8,8 +8,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
-	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
+	anondev1 "github.com/anonde-io/anonde/gen/anonde/v1"
+	"github.com/anonde-io/anonde/gen/anonde/v1/anondev1connect"
 	"github.com/anonde-io/anonde/internal/core"
 )
 
@@ -17,22 +17,22 @@ import (
 // service the unit tests use, and returns a Connect client pointed at
 // it. Used to verify the proto-handler wiring end-to-end without
 // having to hand-write JSON bodies for every test.
-func newConnectTestEnv(t *testing.T) (platformv1connect.PlatformServiceClient, *core.Service) {
+func newConnectTestEnv(t *testing.T) (anondev1connect.ServiceClient, *core.Service) {
 	t.Helper()
 	svc := newTestService()
 	api := NewHTTPServer(svc)
 	srv := httptest.NewServer(api.Routes())
 	t.Cleanup(srv.Close)
-	return platformv1connect.NewPlatformServiceClient(srv.Client(), srv.URL), svc
+	return anondev1connect.NewServiceClient(srv.Client(), srv.URL), svc
 }
 
 func TestConnect_HealthCheck(t *testing.T) {
 	client, _ := newConnectTestEnv(t)
-	resp, err := client.HealthCheck(context.Background(), connect.NewRequest(&platformv1.HealthCheckRequest{}))
+	resp, err := client.HealthCheck(context.Background(), connect.NewRequest(&anondev1.HealthCheckRequest{}))
 	if err != nil {
 		t.Fatalf("HealthCheck: %v", err)
 	}
-	if resp.Msg.GetStatus() != platformv1.HealthCheckResponse_SERVING_STATUS_SERVING {
+	if resp.Msg.GetStatus() != anondev1.HealthCheckResponse_SERVING_STATUS_SERVING {
 		t.Fatalf("expected SERVING, got %v", resp.Msg.GetStatus())
 	}
 }
@@ -46,7 +46,7 @@ func TestConnect_GetVersion_ReturnsStampedInfo(t *testing.T) {
 		GoVersion:       "go1.99",
 		APIVersion:      "v1",
 	})
-	resp, err := client.GetVersion(context.Background(), connect.NewRequest(&platformv1.GetVersionRequest{}))
+	resp, err := client.GetVersion(context.Background(), connect.NewRequest(&anondev1.GetVersionRequest{}))
 	if err != nil {
 		t.Fatalf("GetVersion: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestConnect_CreateAnonymization_MintsIDWhenEmpty(t *testing.T) {
 	client, _ := newConnectTestEnv(t)
 	ctx := context.Background()
 
-	resp, err := client.CreateAnonymization(ctx, connect.NewRequest(&platformv1.CreateAnonymizationRequest{
+	resp, err := client.CreateAnonymization(ctx, connect.NewRequest(&anondev1.CreateAnonymizationRequest{
 		TenantId:      "acme",
 		// Id deliberately omitted.
 		ContentFormat: "text",
@@ -88,7 +88,7 @@ func TestConnect_CreateAnonymization_MintsIDWhenEmpty(t *testing.T) {
 
 	// Round-trip the minted ID through reveal — the only ID we hold
 	// is the one the server returned.
-	rev, err := client.RevealContent(ctx, connect.NewRequest(&platformv1.RevealContentRequest{
+	rev, err := client.RevealContent(ctx, connect.NewRequest(&anondev1.RevealContentRequest{
 		TenantId:      "acme",
 		Id:            mintedID,
 		Actor:         "tester",
@@ -113,7 +113,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 	client, _ := newConnectTestEnv(t)
 	ctx := context.Background()
 
-	ing, err := client.CreateAnonymization(ctx, connect.NewRequest(&platformv1.CreateAnonymizationRequest{
+	ing, err := client.CreateAnonymization(ctx, connect.NewRequest(&anondev1.CreateAnonymizationRequest{
 		TenantId:      "acme",
 		Id:         "letter-001",
 		ContentFormat: "text",
@@ -129,7 +129,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("expected at least one token")
 	}
 
-	rev, err := client.RevealContent(ctx, connect.NewRequest(&platformv1.RevealContentRequest{
+	rev, err := client.RevealContent(ctx, connect.NewRequest(&anondev1.RevealContentRequest{
 		TenantId:      "acme",
 		Id:         "letter-001",
 		Actor:         "test",
@@ -144,7 +144,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("expected email restored, got %q", rev.Msg.GetDeanonymizedContent())
 	}
 
-	del, err := client.DeleteAnonymization(ctx, connect.NewRequest(&platformv1.DeleteAnonymizationRequest{
+	del, err := client.DeleteAnonymization(ctx, connect.NewRequest(&anondev1.DeleteAnonymizationRequest{
 		TenantId: "acme",
 		Id:    "letter-001",
 	}))
@@ -162,7 +162,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 	// returns an error from store.Get, which connectErrFor maps to
 	// InvalidArgument (no specific NotFound mapping yet). Asserting on
 	// the error string keeps the test stable across that future mapping.
-	_, err = client.RevealContent(ctx, connect.NewRequest(&platformv1.RevealContentRequest{
+	_, err = client.RevealContent(ctx, connect.NewRequest(&anondev1.RevealContentRequest{
 		TenantId:      "acme",
 		Id:         "letter-001",
 		Actor:         "test",
@@ -183,7 +183,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 // OK with deleted=false, tokens_deleted=0.
 func TestConnect_DeleteDocument_IdempotentForMissingDoc(t *testing.T) {
 	client, _ := newConnectTestEnv(t)
-	resp, err := client.DeleteAnonymization(context.Background(), connect.NewRequest(&platformv1.DeleteAnonymizationRequest{
+	resp, err := client.DeleteAnonymization(context.Background(), connect.NewRequest(&anondev1.DeleteAnonymizationRequest{
 		TenantId: "acme",
 		Id:    "never-existed",
 	}))

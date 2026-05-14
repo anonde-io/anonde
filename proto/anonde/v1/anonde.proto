@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-// Anonde platform API.
+// Anonde service API.
 //
 // v1 is not yet released; breaking changes are allowed within this version
 // until the first tagged release. Once tagged, follow the usual proto
@@ -9,7 +9,7 @@ syntax = "proto3";
 // Two transports share these messages:
 //
 //   - gRPC / Connect (RPC-style URLs):
-//       POST /anonde.platform.v1.PlatformService/<Method>
+//       POST /anonde.v1.Service/<Method>
 //
 //   - REST gateway (grpc-gateway, path-based URLs):
 //       see the (google.api.http) option on each rpc below.
@@ -18,11 +18,11 @@ syntax = "proto3";
 // REST side and inside the request message on the RPC side. The
 // gateway populates the message fields from the path before
 // dispatching, so the service layer only ever sees one shape.
-package anonde.platform.v1;
+package anonde.v1;
 
 import "google/api/annotations.proto";
 
-option go_package = "github.com/anonde-io/anonde/gen/anonde/platform/v1;platformv1";
+option go_package = "github.com/anonde-io/anonde/gen/anonde/v1;anondev1";
 
 // REST URL conventions follow the Stripe / common-API style: flat
 // `/v1/<resource>[/<id>][/<action>]` paths, tenant identity lives in
@@ -36,10 +36,10 @@ option go_package = "github.com/anonde-io/anonde/gen/anonde/platform/v1;platform
 // omit it to let the server mint one (`anon_<hex>` prefix).
 //
 // gRPC and Connect callers continue to use the RPC-style URL
-// (`/anonde.platform.v1.PlatformService/<Method>`) and put tenant_id
+// (`/anonde.v1.Service/<Method>`) and put tenant_id
 // directly on the message. Only the REST gateway URLs differ; the
 // underlying proto messages are identical across surfaces.
-service PlatformService {
+service Service {
   // CreateAnonymization analyzes content, mints tokens for every
   // detected entity, persists the (token → cleartext) map in the
   // vault, and stores the anonymization keyed by (tenant_id, id).

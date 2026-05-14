@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             (unknown)
-// source: anonde/platform/v1/platform.proto
+// source: anonde/v1/anonde.proto
 
-// Anonde platform API.
+// Anonde service API.
 //
 // v1 is not yet released; breaking changes are allowed within this version
 // until the first tagged release. Once tagged, follow the usual proto
@@ -13,7 +13,7 @@
 // Two transports share these messages:
 //
 //   - gRPC / Connect (RPC-style URLs):
-//       POST /anonde.platform.v1.PlatformService/<Method>
+//       POST /anonde.v1.Service/<Method>
 //
 //   - REST gateway (grpc-gateway, path-based URLs):
 //       see the (google.api.http) option on each rpc below.
@@ -23,7 +23,7 @@
 // gateway populates the message fields from the path before
 // dispatching, so the service layer only ever sees one shape.
 
-package platformv1
+package anondev1
 
 import (
 	context "context"
@@ -38,16 +38,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_CreateAnonymization_FullMethodName = "/anonde.platform.v1.PlatformService/CreateAnonymization"
-	PlatformService_DetokenizeTokens_FullMethodName    = "/anonde.platform.v1.PlatformService/DetokenizeTokens"
-	PlatformService_RevealContent_FullMethodName       = "/anonde.platform.v1.PlatformService/RevealContent"
-	PlatformService_SynthesizeContent_FullMethodName   = "/anonde.platform.v1.PlatformService/SynthesizeContent"
-	PlatformService_DeleteAnonymization_FullMethodName = "/anonde.platform.v1.PlatformService/DeleteAnonymization"
-	PlatformService_GetVersion_FullMethodName          = "/anonde.platform.v1.PlatformService/GetVersion"
-	PlatformService_HealthCheck_FullMethodName         = "/anonde.platform.v1.PlatformService/HealthCheck"
+	Service_CreateAnonymization_FullMethodName = "/anonde.v1.Service/CreateAnonymization"
+	Service_DetokenizeTokens_FullMethodName    = "/anonde.v1.Service/DetokenizeTokens"
+	Service_RevealContent_FullMethodName       = "/anonde.v1.Service/RevealContent"
+	Service_SynthesizeContent_FullMethodName   = "/anonde.v1.Service/SynthesizeContent"
+	Service_DeleteAnonymization_FullMethodName = "/anonde.v1.Service/DeleteAnonymization"
+	Service_GetVersion_FullMethodName          = "/anonde.v1.Service/GetVersion"
+	Service_HealthCheck_FullMethodName         = "/anonde.v1.Service/HealthCheck"
 )
 
-// PlatformServiceClient is the client API for PlatformService service.
+// ServiceClient is the client API for Service service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
@@ -63,10 +63,10 @@ const (
 // omit it to let the server mint one (`anon_<hex>` prefix).
 //
 // gRPC and Connect callers continue to use the RPC-style URL
-// (`/anonde.platform.v1.PlatformService/<Method>`) and put tenant_id
+// (`/anonde.v1.Service/<Method>`) and put tenant_id
 // directly on the message. Only the REST gateway URLs differ; the
 // underlying proto messages are identical across surfaces.
-type PlatformServiceClient interface {
+type ServiceClient interface {
 	// CreateAnonymization analyzes content, mints tokens for every
 	// detected entity, persists the (token → cleartext) map in the
 	// vault, and stores the anonymization keyed by (tenant_id, id).
@@ -111,86 +111,86 @@ type PlatformServiceClient interface {
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
 }
 
-type platformServiceClient struct {
+type serviceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewPlatformServiceClient(cc grpc.ClientConnInterface) PlatformServiceClient {
-	return &platformServiceClient{cc}
+func NewServiceClient(cc grpc.ClientConnInterface) ServiceClient {
+	return &serviceClient{cc}
 }
 
-func (c *platformServiceClient) CreateAnonymization(ctx context.Context, in *CreateAnonymizationRequest, opts ...grpc.CallOption) (*CreateAnonymizationResponse, error) {
+func (c *serviceClient) CreateAnonymization(ctx context.Context, in *CreateAnonymizationRequest, opts ...grpc.CallOption) (*CreateAnonymizationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateAnonymizationResponse)
-	err := c.cc.Invoke(ctx, PlatformService_CreateAnonymization_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_CreateAnonymization_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *platformServiceClient) DetokenizeTokens(ctx context.Context, in *DetokenizeTokensRequest, opts ...grpc.CallOption) (*DetokenizeTokensResponse, error) {
+func (c *serviceClient) DetokenizeTokens(ctx context.Context, in *DetokenizeTokensRequest, opts ...grpc.CallOption) (*DetokenizeTokensResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DetokenizeTokensResponse)
-	err := c.cc.Invoke(ctx, PlatformService_DetokenizeTokens_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_DetokenizeTokens_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *platformServiceClient) RevealContent(ctx context.Context, in *RevealContentRequest, opts ...grpc.CallOption) (*RevealContentResponse, error) {
+func (c *serviceClient) RevealContent(ctx context.Context, in *RevealContentRequest, opts ...grpc.CallOption) (*RevealContentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RevealContentResponse)
-	err := c.cc.Invoke(ctx, PlatformService_RevealContent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_RevealContent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *platformServiceClient) SynthesizeContent(ctx context.Context, in *SynthesizeContentRequest, opts ...grpc.CallOption) (*SynthesizeContentResponse, error) {
+func (c *serviceClient) SynthesizeContent(ctx context.Context, in *SynthesizeContentRequest, opts ...grpc.CallOption) (*SynthesizeContentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SynthesizeContentResponse)
-	err := c.cc.Invoke(ctx, PlatformService_SynthesizeContent_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_SynthesizeContent_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *platformServiceClient) DeleteAnonymization(ctx context.Context, in *DeleteAnonymizationRequest, opts ...grpc.CallOption) (*DeleteAnonymizationResponse, error) {
+func (c *serviceClient) DeleteAnonymization(ctx context.Context, in *DeleteAnonymizationRequest, opts ...grpc.CallOption) (*DeleteAnonymizationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteAnonymizationResponse)
-	err := c.cc.Invoke(ctx, PlatformService_DeleteAnonymization_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_DeleteAnonymization_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *platformServiceClient) GetVersion(ctx context.Context, in *GetVersionRequest, opts ...grpc.CallOption) (*GetVersionResponse, error) {
+func (c *serviceClient) GetVersion(ctx context.Context, in *GetVersionRequest, opts ...grpc.CallOption) (*GetVersionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetVersionResponse)
-	err := c.cc.Invoke(ctx, PlatformService_GetVersion_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_GetVersion_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *platformServiceClient) HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error) {
+func (c *serviceClient) HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthCheckResponse)
-	err := c.cc.Invoke(ctx, PlatformService_HealthCheck_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Service_HealthCheck_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// PlatformServiceServer is the server API for PlatformService service.
-// All implementations must embed UnimplementedPlatformServiceServer
+// ServiceServer is the server API for Service service.
+// All implementations must embed UnimplementedServiceServer
 // for forward compatibility.
 //
 // REST URL conventions follow the Stripe / common-API style: flat
@@ -205,10 +205,10 @@ func (c *platformServiceClient) HealthCheck(ctx context.Context, in *HealthCheck
 // omit it to let the server mint one (`anon_<hex>` prefix).
 //
 // gRPC and Connect callers continue to use the RPC-style URL
-// (`/anonde.platform.v1.PlatformService/<Method>`) and put tenant_id
+// (`/anonde.v1.Service/<Method>`) and put tenant_id
 // directly on the message. Only the REST gateway URLs differ; the
 // underlying proto messages are identical across surfaces.
-type PlatformServiceServer interface {
+type ServiceServer interface {
 	// CreateAnonymization analyzes content, mints tokens for every
 	// detected entity, persists the (token → cleartext) map in the
 	// vault, and stores the anonymization keyed by (tenant_id, id).
@@ -251,220 +251,220 @@ type PlatformServiceServer interface {
 	//
 	// REST: GET /v1/health (the plain /healthz endpoint also stays).
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
-	mustEmbedUnimplementedPlatformServiceServer()
+	mustEmbedUnimplementedServiceServer()
 }
 
-// UnimplementedPlatformServiceServer must be embedded to have
+// UnimplementedServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedPlatformServiceServer struct{}
+type UnimplementedServiceServer struct{}
 
-func (UnimplementedPlatformServiceServer) CreateAnonymization(context.Context, *CreateAnonymizationRequest) (*CreateAnonymizationResponse, error) {
+func (UnimplementedServiceServer) CreateAnonymization(context.Context, *CreateAnonymizationRequest) (*CreateAnonymizationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateAnonymization not implemented")
 }
-func (UnimplementedPlatformServiceServer) DetokenizeTokens(context.Context, *DetokenizeTokensRequest) (*DetokenizeTokensResponse, error) {
+func (UnimplementedServiceServer) DetokenizeTokens(context.Context, *DetokenizeTokensRequest) (*DetokenizeTokensResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DetokenizeTokens not implemented")
 }
-func (UnimplementedPlatformServiceServer) RevealContent(context.Context, *RevealContentRequest) (*RevealContentResponse, error) {
+func (UnimplementedServiceServer) RevealContent(context.Context, *RevealContentRequest) (*RevealContentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevealContent not implemented")
 }
-func (UnimplementedPlatformServiceServer) SynthesizeContent(context.Context, *SynthesizeContentRequest) (*SynthesizeContentResponse, error) {
+func (UnimplementedServiceServer) SynthesizeContent(context.Context, *SynthesizeContentRequest) (*SynthesizeContentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SynthesizeContent not implemented")
 }
-func (UnimplementedPlatformServiceServer) DeleteAnonymization(context.Context, *DeleteAnonymizationRequest) (*DeleteAnonymizationResponse, error) {
+func (UnimplementedServiceServer) DeleteAnonymization(context.Context, *DeleteAnonymizationRequest) (*DeleteAnonymizationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteAnonymization not implemented")
 }
-func (UnimplementedPlatformServiceServer) GetVersion(context.Context, *GetVersionRequest) (*GetVersionResponse, error) {
+func (UnimplementedServiceServer) GetVersion(context.Context, *GetVersionRequest) (*GetVersionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetVersion not implemented")
 }
-func (UnimplementedPlatformServiceServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
+func (UnimplementedServiceServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method HealthCheck not implemented")
 }
-func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
-func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
+func (UnimplementedServiceServer) mustEmbedUnimplementedServiceServer() {}
+func (UnimplementedServiceServer) testEmbeddedByValue()                 {}
 
-// UnsafePlatformServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to PlatformServiceServer will
+// UnsafeServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ServiceServer will
 // result in compilation errors.
-type UnsafePlatformServiceServer interface {
-	mustEmbedUnimplementedPlatformServiceServer()
+type UnsafeServiceServer interface {
+	mustEmbedUnimplementedServiceServer()
 }
 
-func RegisterPlatformServiceServer(s grpc.ServiceRegistrar, srv PlatformServiceServer) {
-	// If the following call panics, it indicates UnimplementedPlatformServiceServer was
+func RegisterServiceServer(s grpc.ServiceRegistrar, srv ServiceServer) {
+	// If the following call panics, it indicates UnimplementedServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&PlatformService_ServiceDesc, srv)
+	s.RegisterService(&Service_ServiceDesc, srv)
 }
 
-func _PlatformService_CreateAnonymization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_CreateAnonymization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateAnonymizationRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).CreateAnonymization(ctx, in)
+		return srv.(ServiceServer).CreateAnonymization(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_CreateAnonymization_FullMethodName,
+		FullMethod: Service_CreateAnonymization_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).CreateAnonymization(ctx, req.(*CreateAnonymizationRequest))
+		return srv.(ServiceServer).CreateAnonymization(ctx, req.(*CreateAnonymizationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_DetokenizeTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_DetokenizeTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DetokenizeTokensRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).DetokenizeTokens(ctx, in)
+		return srv.(ServiceServer).DetokenizeTokens(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_DetokenizeTokens_FullMethodName,
+		FullMethod: Service_DetokenizeTokens_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).DetokenizeTokens(ctx, req.(*DetokenizeTokensRequest))
+		return srv.(ServiceServer).DetokenizeTokens(ctx, req.(*DetokenizeTokensRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_RevealContent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_RevealContent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RevealContentRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).RevealContent(ctx, in)
+		return srv.(ServiceServer).RevealContent(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_RevealContent_FullMethodName,
+		FullMethod: Service_RevealContent_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).RevealContent(ctx, req.(*RevealContentRequest))
+		return srv.(ServiceServer).RevealContent(ctx, req.(*RevealContentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_SynthesizeContent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_SynthesizeContent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SynthesizeContentRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).SynthesizeContent(ctx, in)
+		return srv.(ServiceServer).SynthesizeContent(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_SynthesizeContent_FullMethodName,
+		FullMethod: Service_SynthesizeContent_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).SynthesizeContent(ctx, req.(*SynthesizeContentRequest))
+		return srv.(ServiceServer).SynthesizeContent(ctx, req.(*SynthesizeContentRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_DeleteAnonymization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_DeleteAnonymization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteAnonymizationRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).DeleteAnonymization(ctx, in)
+		return srv.(ServiceServer).DeleteAnonymization(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_DeleteAnonymization_FullMethodName,
+		FullMethod: Service_DeleteAnonymization_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).DeleteAnonymization(ctx, req.(*DeleteAnonymizationRequest))
+		return srv.(ServiceServer).DeleteAnonymization(ctx, req.(*DeleteAnonymizationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_GetVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_GetVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetVersionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).GetVersion(ctx, in)
+		return srv.(ServiceServer).GetVersion(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_GetVersion_FullMethodName,
+		FullMethod: Service_GetVersion_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).GetVersion(ctx, req.(*GetVersionRequest))
+		return srv.(ServiceServer).GetVersion(ctx, req.(*GetVersionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthCheckRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PlatformServiceServer).HealthCheck(ctx, in)
+		return srv.(ServiceServer).HealthCheck(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PlatformService_HealthCheck_FullMethodName,
+		FullMethod: Service_HealthCheck_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).HealthCheck(ctx, req.(*HealthCheckRequest))
+		return srv.(ServiceServer).HealthCheck(ctx, req.(*HealthCheckRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
+// Service_ServiceDesc is the grpc.ServiceDesc for Service service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var PlatformService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "anonde.platform.v1.PlatformService",
-	HandlerType: (*PlatformServiceServer)(nil),
+var Service_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "anonde.v1.Service",
+	HandlerType: (*ServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "CreateAnonymization",
-			Handler:    _PlatformService_CreateAnonymization_Handler,
+			Handler:    _Service_CreateAnonymization_Handler,
 		},
 		{
 			MethodName: "DetokenizeTokens",
-			Handler:    _PlatformService_DetokenizeTokens_Handler,
+			Handler:    _Service_DetokenizeTokens_Handler,
 		},
 		{
 			MethodName: "RevealContent",
-			Handler:    _PlatformService_RevealContent_Handler,
+			Handler:    _Service_RevealContent_Handler,
 		},
 		{
 			MethodName: "SynthesizeContent",
-			Handler:    _PlatformService_SynthesizeContent_Handler,
+			Handler:    _Service_SynthesizeContent_Handler,
 		},
 		{
 			MethodName: "DeleteAnonymization",
-			Handler:    _PlatformService_DeleteAnonymization_Handler,
+			Handler:    _Service_DeleteAnonymization_Handler,
 		},
 		{
 			MethodName: "GetVersion",
-			Handler:    _PlatformService_GetVersion_Handler,
+			Handler:    _Service_GetVersion_Handler,
 		},
 		{
 			MethodName: "HealthCheck",
-			Handler:    _PlatformService_HealthCheck_Handler,
+			Handler:    _Service_HealthCheck_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "anonde/platform/v1/platform.proto",
+	Metadata: "anonde/v1/anonde.proto",
 }

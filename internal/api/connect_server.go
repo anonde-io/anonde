@@ -6,8 +6,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
-	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
+	anondev1 "github.com/anonde-io/anonde/gen/anonde/v1"
+	"github.com/anonde-io/anonde/gen/anonde/v1/anondev1connect"
 	"github.com/anonde-io/anonde/internal/core"
 )
 
@@ -20,13 +20,13 @@ type ConnectServer struct {
 	svc *core.Service
 }
 
-var _ platformv1connect.PlatformServiceHandler = (*ConnectServer)(nil)
+var _ anondev1connect.ServiceHandler = (*ConnectServer)(nil)
 
 func NewConnectServer(svc *core.Service) *ConnectServer {
 	return &ConnectServer{svc: svc}
 }
 
-func (h *ConnectServer) CreateAnonymization(ctx context.Context, req *connect.Request[platformv1.CreateAnonymizationRequest]) (*connect.Response[platformv1.CreateAnonymizationResponse], error) {
+func (h *ConnectServer) CreateAnonymization(ctx context.Context, req *connect.Request[anondev1.CreateAnonymizationRequest]) (*connect.Response[anondev1.CreateAnonymizationResponse], error) {
 	resp, err := executeCreate(ctx, h.svc, req.Msg)
 	if err != nil {
 		return nil, connectErrFor(err, connect.CodeInvalidArgument)
@@ -34,7 +34,7 @@ func (h *ConnectServer) CreateAnonymization(ctx context.Context, req *connect.Re
 	return connect.NewResponse(resp), nil
 }
 
-func (h *ConnectServer) DetokenizeTokens(ctx context.Context, req *connect.Request[platformv1.DetokenizeTokensRequest]) (*connect.Response[platformv1.DetokenizeTokensResponse], error) {
+func (h *ConnectServer) DetokenizeTokens(ctx context.Context, req *connect.Request[anondev1.DetokenizeTokensRequest]) (*connect.Response[anondev1.DetokenizeTokensResponse], error) {
 	resp, err := executeDetokenize(ctx, h.svc, req.Msg)
 	if err != nil {
 		return nil, connectErrFor(err, connect.CodeInvalidArgument)
@@ -42,7 +42,7 @@ func (h *ConnectServer) DetokenizeTokens(ctx context.Context, req *connect.Reque
 	return connect.NewResponse(resp), nil
 }
 
-func (h *ConnectServer) RevealContent(ctx context.Context, req *connect.Request[platformv1.RevealContentRequest]) (*connect.Response[platformv1.RevealContentResponse], error) {
+func (h *ConnectServer) RevealContent(ctx context.Context, req *connect.Request[anondev1.RevealContentRequest]) (*connect.Response[anondev1.RevealContentResponse], error) {
 	resp, err := executeReveal(ctx, h.svc, req.Msg)
 	if err != nil {
 		return nil, connectErrFor(err, connect.CodeInvalidArgument)
@@ -50,7 +50,7 @@ func (h *ConnectServer) RevealContent(ctx context.Context, req *connect.Request[
 	return connect.NewResponse(resp), nil
 }
 
-func (h *ConnectServer) SynthesizeContent(ctx context.Context, req *connect.Request[platformv1.SynthesizeContentRequest]) (*connect.Response[platformv1.SynthesizeContentResponse], error) {
+func (h *ConnectServer) SynthesizeContent(ctx context.Context, req *connect.Request[anondev1.SynthesizeContentRequest]) (*connect.Response[anondev1.SynthesizeContentResponse], error) {
 	resp, err := executeSynthesize(ctx, h.svc, req.Msg)
 	if err != nil {
 		return nil, connectErrFor(err, connect.CodeInvalidArgument)
@@ -58,7 +58,7 @@ func (h *ConnectServer) SynthesizeContent(ctx context.Context, req *connect.Requ
 	return connect.NewResponse(resp), nil
 }
 
-func (h *ConnectServer) DeleteAnonymization(ctx context.Context, req *connect.Request[platformv1.DeleteAnonymizationRequest]) (*connect.Response[platformv1.DeleteAnonymizationResponse], error) {
+func (h *ConnectServer) DeleteAnonymization(ctx context.Context, req *connect.Request[anondev1.DeleteAnonymizationRequest]) (*connect.Response[anondev1.DeleteAnonymizationResponse], error) {
 	resp, err := executeDelete(ctx, h.svc, req.Msg)
 	if err != nil {
 		return nil, connectErrFor(err, connect.CodeInvalidArgument)
@@ -66,7 +66,7 @@ func (h *ConnectServer) DeleteAnonymization(ctx context.Context, req *connect.Re
 	return connect.NewResponse(resp), nil
 }
 
-func (h *ConnectServer) GetVersion(ctx context.Context, _ *connect.Request[platformv1.GetVersionRequest]) (*connect.Response[platformv1.GetVersionResponse], error) {
+func (h *ConnectServer) GetVersion(ctx context.Context, _ *connect.Request[anondev1.GetVersionRequest]) (*connect.Response[anondev1.GetVersionResponse], error) {
 	resp, err := executeGetVersion(ctx, h.svc)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -74,7 +74,7 @@ func (h *ConnectServer) GetVersion(ctx context.Context, _ *connect.Request[platf
 	return connect.NewResponse(resp), nil
 }
 
-func (h *ConnectServer) HealthCheck(_ context.Context, _ *connect.Request[platformv1.HealthCheckRequest]) (*connect.Response[platformv1.HealthCheckResponse], error) {
+func (h *ConnectServer) HealthCheck(_ context.Context, _ *connect.Request[anondev1.HealthCheckRequest]) (*connect.Response[anondev1.HealthCheckResponse], error) {
 	return connect.NewResponse(executeHealthCheck()), nil
 }
 

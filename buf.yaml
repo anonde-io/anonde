@@ -12,8 +12,8 @@ lint:
     - STANDARD
   except:
     # Connect/HTTP routes use the proto package name verbatim
-    # (POST /anonde.platform.v1.PlatformService/Method) so we want the
-    # package to read clean (`anonde.platform.v1`). Buf's standard rule
+    # (POST /anonde.v1.Service/Method) so we want the
+    # package to read clean (`anonde.v1`). Buf's standard rule
     # wants a leading directory prefix matching the module root; we
     # explicitly opt out of that.
     - PACKAGE_DIRECTORY_MATCH

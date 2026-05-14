@@ -118,10 +118,10 @@ curl -sS -X POST http://localhost:8081/v1/anonymizations \
 The same server speaks three transports on one port:
 
 - **REST/JSON** via grpc-gateway: `POST /v1/anonymizations`, `POST /v1/anonymizations/{id}/reveal|detokenize`, `DELETE /v1/anonymizations/{id}?tenant_id={tenant_id}`, `POST /v1/synthesize`, `GET /v1/version`. `id` is optional on create (server mints `anon_<hex>` if omitted); tenant lives in the request body / query for now and moves to a bearer-token header when auth lands. JSON fields are snake_case on the wire (`tenant_id`, `content_format`, `anonymized_content`, …); inputs also accept the camelCase form so generated gRPC clients work without translation.
-- **Connect** (Connect/JSON, Connect/Protobuf, gRPC-Web): `POST /anonde.platform.v1.PlatformService/<Method>`.
-- **Native gRPC** over HTTP/2 cleartext: same `/anonde.platform.v1.PlatformService/<Method>` path.
+- **Connect** (Connect/JSON, Connect/Protobuf, gRPC-Web): `POST /anonde.v1.Service/<Method>`.
+- **Native gRPC** over HTTP/2 cleartext: same `/anonde.v1.Service/<Method>` path.
 
-Source of truth: [`proto/anonde/platform/v1/platform.proto`](proto/anonde/platform/v1/platform.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+Source of truth: [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ## Built for
 
