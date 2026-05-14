@@ -183,14 +183,29 @@ def _evaluate(gold_docs, pred_docs, gmap, pmap, canon_set):
     }
 
 
+def _percentile(sorted_vals: list[float], q: float) -> float:
+    """Nearest-rank percentile on a pre-sorted list (q in [0, 1]).
+
+    Uses ceil(q * N) - 1 (0-indexed), clamped to [0, N-1]. Matches what
+    most monitoring tools call p50/p95/p99.
+    """
+    if not sorted_vals:
+        return 0.0
+    import math
+    idx = max(0, min(len(sorted_vals) - 1, math.ceil(q * len(sorted_vals)) - 1))
+    return sorted_vals[idx]
+
+
 def _latency(durations):
     if not durations:
-        return {"median": 0.0, "mean": 0.0, "p99": 0.0}
+        return {"median": 0.0, "mean": 0.0, "p50": 0.0, "p95": 0.0, "p99": 0.0}
     s = sorted(durations)
     return {
         "median": statistics.median(s),
         "mean": statistics.fmean(s),
-        "p99": s[max(0, int(0.99 * len(s)) - 1)],
+        "p50": _percentile(s, 0.50),
+        "p95": _percentile(s, 0.95),
+        "p99": _percentile(s, 0.99),
     }
 
 
@@ -386,10 +401,16 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
-    # ---- Latency grid (mixed units) ---------------------------------
-    out.append("## Latency · per-document median\n")
-    out.append("Wall-clock per `engine.Analyze(doc)` call. p99 + mean in `results_matrix.csv`.\n")
-    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    # ---- Latency grid (mixed units, p50 + p95) ----------------------
+    # Two columns per engine — p50 for steady-state UX, p95 for the
+    # tail. Mean + p99 are in results_matrix.csv. We bias to p95 over
+    # p99 because at sample sizes 100-1000 (typical bench corpus), p99
+    # is dominated by a handful of outliers and unstable run-to-run.
+    out.append("## Latency · per-document p50 / p95\n")
+    out.append("Wall-clock per `engine.Analyze(doc)` call. p50 = steady-state, p95 = tail. "
+               "Mean + p99 in `results_matrix.csv`. For redaction services, p95 is the SLO "
+               "knob — the latency a customer waiting on `/v1/ingest` actually feels.\n")
+    out.append("| Corpus | " + " | ".join(f"`{e}` p50 / p95" for e in engines) + " |")
     out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
         cells = [f"| `{c}` |"]
@@ -399,7 +420,9 @@ def _render(rows, label_map, corpora, engines):
                 cells.append("– |")
                 continue
             lat = _latency(cell["durations"])
-            cells.append(f"{_fmt_latency(lat['median'])} |")
+            cells.append(
+                f"{_fmt_latency(lat['p50'])} / {_fmt_latency(lat['p95'])} |"
+            )
         out.append(" ".join(cells))
     out.append("")
 
