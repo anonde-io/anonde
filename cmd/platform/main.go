@@ -16,6 +16,7 @@ import (
 	"github.com/anonde-io/anonde/analyzer/recognizers"
 	"github.com/anonde-io/anonde/internal/core"
 	"github.com/anonde-io/anonde/internal/platform"
+	"github.com/anonde-io/anonde/internal/store"
 )
 
 func main() {
@@ -49,8 +50,8 @@ func main() {
 	svc := core.NewService(
 		analyzerEngine,
 		anonde.DefaultAnonymizerEngine(),
-		platform.NewMemoryVaultWithTTL(vaultTTL),
-		platform.NewMemoryStoreWithTTL(storeTTL),
+		store.NewMemoryVaultWithTTL(vaultTTL),
+		store.NewMemoryStoreWithTTL(storeTTL),
 		&platform.StaticPolicy{},
 	)
 	svc.SetVersionInfo(core.VersionInfo{

@@ -10,6 +10,7 @@ import (
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/internal/content"
 	"github.com/anonde-io/anonde/internal/core"
+	"github.com/anonde-io/anonde/internal/store"
 )
 
 // allowAllPolicy is a test-only PolicyAuthorizer that permits every
@@ -26,8 +27,8 @@ func newTestService() *core.Service {
 	return core.NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		NewMemoryVault(),
-		NewMemoryStore(),
+		store.NewMemoryVault(),
+		store.NewMemoryStore(),
 		allowAllPolicy{},
 	)
 }
