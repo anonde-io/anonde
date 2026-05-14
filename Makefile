@@ -87,11 +87,11 @@ tidy: ## go mod tidy
 
 .PHONY: run
 run: ## Run the anonde server on :$(PORT) (patterns backend, no NER)
-	ANALYZER_BACKEND=patterns PLATFORM_ADDR=:$(PORT) go run ./cmd/anonde/
+	ANALYZER_BACKEND=patterns ANONDE_ADDR=:$(PORT) go run ./cmd/anonde/
 
 .PHONY: run-ner
 run-ner: ## Run the anonde server on :$(PORT) with GLiNER NER (needs libonnxruntime)
-	ANALYZER_BACKEND=gliner PLATFORM_ADDR=:$(PORT) go run -tags hugot ./cmd/anonde/
+	ANALYZER_BACKEND=gliner ANONDE_ADDR=:$(PORT) go run -tags hugot ./cmd/anonde/
 
 ##@ Docker
 

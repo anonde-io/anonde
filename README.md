@@ -92,7 +92,7 @@ Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER
 With Go:
 
 ```bash
-ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/anonde/
+ANALYZER_BACKEND=patterns ANONDE_ADDR=:8081 go run ./cmd/anonde/
 ```
 
 With Docker (patterns-only image, ~12 MB):

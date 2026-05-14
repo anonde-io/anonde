@@ -7,10 +7,10 @@ import (
 )
 
 // Minimal in-test Vault/Store impls so core's tests don't pull in the
-// store package (which would create import cycles during the rolling
-// internal/platform→{api,core,store,policy,content} split). Production code uses
-// internal/store/memory.go; these stubs only need to be correct enough
-// to drive Service end-to-end.
+// store package (importing internal/store from core_test would create
+// an import cycle: store already imports core for the interfaces).
+// Production code uses internal/store/memory.go; these stubs only need
+// to be correct enough to drive Service end-to-end.
 
 type testVault struct {
 	mu sync.Mutex

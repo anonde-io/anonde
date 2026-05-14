@@ -48,7 +48,7 @@ primary_region = "iad"
   # exits fatally instead of stalling past the 60s healthcheck grace.
   # On shared-cpu-1x@1024MB the Isotonic distilbert ONNX session
   # typically initialises in 10–30 s.
-  PLATFORM_WARMUP_TIMEOUT = "50s"
+  ANONDE_WARMUP_TIMEOUT = "50s"
 
 [http_service]
   internal_port = 8080

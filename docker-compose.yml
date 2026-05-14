@@ -7,9 +7,9 @@ services:
       dockerfile: Dockerfile.anonde
     image: anonde:local
     ports:
-      - "${PLATFORM_PORT:-8082}:8080"
+      - "${ANONDE_PORT:-8082}:8080"
     environment:
-      PLATFORM_ADDR: ":8080"
+      ANONDE_ADDR: ":8080"
       ANALYZER_BACKEND: "${ANALYZER_BACKEND:-hugot}"
       HUGOT_MODEL: "${HUGOT_MODEL:-Isotonic/distilbert_finetuned_ai4privacy_v2}"
       HUGOT_MODELS_DIR: "/models"

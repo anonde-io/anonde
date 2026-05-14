@@ -104,9 +104,9 @@ func buildSHA() string {
 //
 // The 5 minute timeout accommodates the worst-case cold disk read +
 // pure-Go ONNX session init on the smallest Fly machine. Tighten via
-// PLATFORM_WARMUP_TIMEOUT if you have a tighter SLA for boot latency.
+// ANONDE_WARMUP_TIMEOUT if you have a tighter SLA for boot latency.
 func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
-	timeout := durationFromEnv("PLATFORM_WARMUP_TIMEOUT", 5*time.Minute)
+	timeout := durationFromEnv("ANONDE_WARMUP_TIMEOUT", 5*time.Minute)
 	log.Printf("WARMUP_ON_START=1: priming analyzer (timeout=%s)", timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -145,7 +145,7 @@ func downloadModelsAndExit(engine *analyzer.AnalyzerEngine) {
 }
 
 func listenAddr() string {
-	if addr := strings.TrimSpace(os.ExpandEnv(os.Getenv("PLATFORM_ADDR"))); addr != "" {
+	if addr := strings.TrimSpace(os.ExpandEnv(os.Getenv("ANONDE_ADDR"))); addr != "" {
 		return addr
 	}
 	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {

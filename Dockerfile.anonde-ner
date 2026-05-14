@@ -97,7 +97,7 @@ RUN /out/anonde
 # libonnxruntime.so needs to dlopen and link cleanly. No shell, no package
 # manager, no busybox — same hardened posture as distroless/static.
 #
-# Platform pinned to linux/amd64 to match the build stage. Without this,
+# Arch pinned to linux/amd64 to match the build stage. Without this,
 # `docker pull` on an arm64 host (Apple Silicon) fetches the arm64
 # variant of the distroless image, leaving an amd64 binary in an arm64
 # runtime → fails at startup with rosetta/ld-linux errors.

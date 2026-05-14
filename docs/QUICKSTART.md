@@ -8,14 +8,14 @@ has to specify it.
 ## 1. Start the server
 
 ```bash
-ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/anonde/
+ANALYZER_BACKEND=patterns ANONDE_ADDR=:8081 go run ./cmd/anonde/
 ```
 
 - `ANALYZER_BACKEND=patterns` — pattern recognizers only, no NER model
   download. Fastest start and exercises the German recognizer kernel
   end-to-end. Use `hugot` (default) for a stronger NER pass — first run
   downloads ~250 MB.
-- `PLATFORM_ADDR=:8081` — HTTP listen address. Defaults to `:8080`.
+- `ANONDE_ADDR=:8081` — HTTP listen address. Defaults to `:8080`.
 
 Health check:
 
