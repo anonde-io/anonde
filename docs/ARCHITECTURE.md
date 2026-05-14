@@ -35,7 +35,7 @@ anonde/
 ├── anonymizer/                # apply operators to detected spans
 │   ├── anonymizer.go          # mergeAdjacentSameType + dispatch to operators
 │   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize
-├── cmd/platform/              # HTTP service
+├── cmd/anonde/              # HTTP service
 ├── internal/platform/         # service + in-memory vault/store/policy
 └── bench/                     # single bench harness
     ├── Makefile               # top-level `make matrix`, `make matrix-de`, `make matrix-en`, …

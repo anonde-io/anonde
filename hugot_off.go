@@ -22,7 +22,7 @@ import (
 // PII because NER never runs.
 func DefaultAnalyzerEngineWithHugot(_, _ string, _ bool) *analyzer.AnalyzerEngine {
 	log.Fatalf("hugot backend not available: this binary was built without -tags hugot. " +
-		"Rebuild with `go build -tags hugot ./cmd/platform` for the NER variant, " +
+		"Rebuild with `go build -tags hugot ./cmd/anonde` for the NER variant, " +
 		"or use ANALYZER_BACKEND=patterns / ollama instead.")
 	return nil // unreachable; log.Fatalf calls os.Exit
 }
@@ -31,7 +31,7 @@ func DefaultAnalyzerEngineWithHugot(_, _ string, _ bool) *analyzer.AnalyzerEngin
 // HugotNERConfig-taking variant. Same rationale as DefaultAnalyzerEngineWithHugot.
 func DefaultAnalyzerEngineWithHugotConfig(_ recognizers.HugotNERConfig) *analyzer.AnalyzerEngine {
 	log.Fatalf("hugot backend not available: this binary was built without -tags hugot. " +
-		"Rebuild with `go build -tags hugot ./cmd/platform` for the NER variant, " +
+		"Rebuild with `go build -tags hugot ./cmd/anonde` for the NER variant, " +
 		"or use ANALYZER_BACKEND=patterns / ollama instead.")
 	return nil
 }

@@ -1,5 +1,5 @@
 # fly.ner.toml — same Fly app as fly.toml, but builds and deploys the
-# NER variant of the image (Dockerfile.platform-ner). Use this config
+# NER variant of the image (Dockerfile.anonde-ner). Use this config
 # whenever you want to deploy the hugot-enabled backend over the existing
 # anonde-platform app.
 #
@@ -40,7 +40,7 @@ app = "anonde-platform"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile.platform-ner"
+  dockerfile = "Dockerfile.anonde-ner"
 
 [env]
   WARMUP_ON_START = "1"

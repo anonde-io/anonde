@@ -7,7 +7,7 @@ app = "anonde-platform"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile.platform"
+  dockerfile = "Dockerfile.anonde"
 
 [http_service]
   internal_port = 8080

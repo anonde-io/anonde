@@ -1,10 +1,10 @@
-// Package content owns the I/O-layer concerns of the platform: content
+// Package content owns the I/O-layer concerns of the anonde server: content
 // format parsing (text / json / ndjson / logs / pdf / auto), JSON
 // recursion through string leaves, line-oriented log handling, ANSI
 // stripping, UTF-8 sanitisation. Everything in here is pure and has no
 // dependency on anonde's analyzer or anonymizer.
 //
-// The package was extracted out of internal/platform during the
+// The package was extracted out of internal/api during the
 // internal/{api,core,content,store} split — both core (Service) and
 // any future caller can use it without pulling transport, storage, or
 // the analyzer.

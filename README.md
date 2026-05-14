@@ -92,17 +92,17 @@ Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER
 With Go:
 
 ```bash
-ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/platform/
+ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/anonde/
 ```
 
 With Docker (patterns-only image, ~12 MB):
 
 ```bash
-docker build -f Dockerfile.platform -t anonde-platform .
-docker run --rm -p 8081:8080 anonde-platform
+docker build -f Dockerfile.anonde -t anonde:patterns .
+docker run --rm -p 8081:8080 anonde:patterns
 ```
 
-The NER variant (GLiNER + libonnxruntime baked in, ~470 MB) builds the same way from `Dockerfile.platform-ner`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars, image internals, and Fly.io configs.
+The NER variant (GLiNER + libonnxruntime baked in, ~470 MB) builds the same way from `Dockerfile.anonde-ner`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars, image internals, and Fly.io configs.
 
 Hit the running server:
 

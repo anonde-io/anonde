@@ -17,7 +17,7 @@ GOBIN ?= $(shell go env GOPATH)/bin
 export PATH := $(GOBIN):$(PATH)
 
 # Single-source values for Docker smoke runs.
-IMAGE      := anonde-platform-smoke
+IMAGE      := anonde-smoke
 CONTAINER  := anonde-smoke
 PORT       := 8081
 
@@ -44,7 +44,7 @@ tools: ## Install/refresh protoc-gen-* plugins used by buf generate
 .PHONY: proto
 proto: ## Regenerate proto Go code (run after editing proto/)
 	buf generate
-	@echo "regenerated gen/ — don't forget go test ./internal/platform/..."
+	@echo "regenerated gen/ — don't forget go test ./internal/..."
 
 .PHONY: proto-lint
 proto-lint: ## buf lint
@@ -71,9 +71,9 @@ build-ner: ## Build with -tags hugot (GLiNER + libonnxruntime required)
 test: ## Run the whole test suite
 	go test ./...
 
-.PHONY: test-platform
-test-platform: ## Run only the platform package tests (verbose)
-	go test -v ./internal/platform/...
+.PHONY: test-api
+test-api: ## Run only the api package tests (verbose)
+	go test -v ./internal/api/...
 
 .PHONY: vet
 vet: ## go vet ./...
@@ -86,22 +86,22 @@ tidy: ## go mod tidy
 ##@ Local run (no Docker)
 
 .PHONY: run
-run: ## Run the platform on :$(PORT) (patterns backend, no NER)
-	ANALYZER_BACKEND=patterns PLATFORM_ADDR=:$(PORT) go run ./cmd/platform/
+run: ## Run the anonde server on :$(PORT) (patterns backend, no NER)
+	ANALYZER_BACKEND=patterns PLATFORM_ADDR=:$(PORT) go run ./cmd/anonde/
 
 .PHONY: run-ner
-run-ner: ## Run the platform on :$(PORT) with GLiNER NER (needs libonnxruntime)
-	ANALYZER_BACKEND=gliner PLATFORM_ADDR=:$(PORT) go run -tags hugot ./cmd/platform/
+run-ner: ## Run the anonde server on :$(PORT) with GLiNER NER (needs libonnxruntime)
+	ANALYZER_BACKEND=gliner PLATFORM_ADDR=:$(PORT) go run -tags hugot ./cmd/anonde/
 
 ##@ Docker
 
 .PHONY: docker-build
 docker-build: ## Build the patterns-only image ($(IMAGE):patterns)
-	docker build -f Dockerfile.platform -t $(IMAGE):patterns .
+	docker build -f Dockerfile.anonde -t $(IMAGE):patterns .
 
 .PHONY: docker-build-ner
 docker-build-ner: ## Build the NER image (~470 MB, $(IMAGE):ner)
-	docker build -f Dockerfile.platform-ner -t $(IMAGE):ner .
+	docker build -f Dockerfile.anonde-ner -t $(IMAGE):ner .
 
 .PHONY: docker-run
 docker-run: docker-build ## Build + start the patterns container on :$(PORT)

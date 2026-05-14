@@ -1,15 +1,15 @@
 # Deployment
 
-anonde ships two Docker variants of the same `cmd/platform` HTTP service. Pick per workload.
+anonde ships two Docker variants of the same `cmd/anonde` HTTP service. Pick per workload.
 
 | File | What it ships | Image size | When to use |
 |---|---|---:|---|
-| `Dockerfile.platform` | Pure Go binary, no NER, no CGO | ~12 MB | patterns-only deployments; max throughput |
-| `Dockerfile.platform-ner` | Same binary + libonnxruntime + baked GLiNER model | ~470 MB | production: detects PERSON/ORG/etc. via GLiNER |
+| `Dockerfile.anonde` | Pure Go binary, no NER, no CGO | ~12 MB | patterns-only deployments; max throughput |
+| `Dockerfile.anonde-ner` | Same binary + libonnxruntime + baked GLiNER model | ~470 MB | production: detects PERSON/ORG/etc. via GLiNER |
 
 ## Fly.io
 
-Two configs target the same app `anonde-platform` in `iad`:
+Two configs target the same app `anonde:patterns` in `iad`:
 
 ```bash
 fly deploy --config fly.toml       # patterns-only build, ~12 MB image
@@ -37,7 +37,7 @@ In-memory vault and store are cleared on each redeploy, so a token issued under 
 
 ## Env vars
 
-### NER variant (defaults wired in `Dockerfile.platform-ner`)
+### NER variant (defaults wired in `Dockerfile.anonde-ner`)
 
 ```bash
 ANALYZER_BACKEND=gliner
@@ -58,7 +58,7 @@ ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 
 ## CI
 
-`.github/workflows/bench.yml` runs on every push to `main` and every PR whose changes touch `analyzer/**`, `bench/**`, `cmd/platform/**`, or the build chain:
+`.github/workflows/bench.yml` runs on every push to `main` and every PR whose changes touch `analyzer/**`, `bench/**`, `cmd/anonde/**`, or the build chain:
 
 1. Builds the default (no-CGO) target.
 2. Builds the `-tags hugot` target with CGO.

@@ -8,7 +8,7 @@ import (
 
 // Minimal in-test Vault/Store impls so core's tests don't pull in the
 // store package (which would create import cycles during the rolling
-// platform→{api,core,store} split). Production code uses
+// internal/platform→{api,core,store,policy,content} split). Production code uses
 // internal/store/memory.go; these stubs only need to be correct enough
 // to drive Service end-to-end.
 

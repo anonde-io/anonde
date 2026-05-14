@@ -5,15 +5,15 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/platform ./cmd/platform
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/anonde ./cmd/anonde
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=build /out/platform /platform
+COPY --from=build /out/anonde /anonde
 # Patterns-only by default — distroless has no writable cache and we don't
 # want a ~250 MB model download at boot. Override with
 #   docker run -e ANALYZER_BACKEND=hugot -v <models>:/cache <image>
 # to enable in-process ONNX NER.
 ENV ANALYZER_BACKEND=patterns
 EXPOSE 8080
-ENTRYPOINT ["/platform"]
+ENTRYPOINT ["/anonde"]
 

@@ -1,4 +1,4 @@
-// Package core owns the platform's business logic: the Service type
+// Package core owns anonde server's business logic: the Service type
 // that orchestrates analyze → tokenize → vault → reveal, the internal
 // request/response DTOs the transport layers convert proto messages
 // to/from, and the Vault/Store/PolicyAuthorizer interfaces that wire
@@ -8,7 +8,7 @@
 // HTTP server) and no dependency on a specific Store/Vault impl. The
 // store package depends on core for the interface definitions and
 // shared data types; the api package depends on core for Service and
-// the DTOs. cmd/platform wires them all together.
+// the DTOs. cmd/anonde wires them all together.
 package core
 
 import "github.com/anonde-io/anonde/analyzer"
@@ -111,7 +111,7 @@ type SynthesizeResponse struct {
 	Findings []analyzer.RecognizerResult `json:"findings"`
 }
 
-// VersionInfo is populated by the binary entrypoint (cmd/platform) and
+// VersionInfo is populated by the binary entrypoint (cmd/anonde) and
 // served back by GetVersion. The service layer doesn't introspect the
 // analyzer because the backend selection lives at main wiring time.
 type VersionInfo struct {

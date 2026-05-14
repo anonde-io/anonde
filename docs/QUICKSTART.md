@@ -8,7 +8,7 @@ has to specify it.
 ## 1. Start the server
 
 ```bash
-ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/platform/
+ANALYZER_BACKEND=patterns PLATFORM_ADDR=:8081 go run ./cmd/anonde/
 ```
 
 - `ANALYZER_BACKEND=patterns` — pattern recognizers only, no NER model
@@ -87,7 +87,7 @@ Response `anonymized_content`:
 
 You hold a few tokens from the ingest response and want the originals.
 Detokenize requires `actor` + `purpose` for audit. The default policy in
-`cmd/platform/main.go` (`StaticPolicy`) allows everything; in production
+`cmd/anonde/main.go` (`StaticPolicy`) allows everything; in production
 you'd swap in your own `PolicyAuthorizer`.
 
 ```bash
@@ -201,15 +201,15 @@ Two Dockerfiles ship with the repo, pick per workload:
 
 | Image | Built from | Size | Backend | Use when |
 |---|---|---|---|---|
-| `anonde-platform` | `Dockerfile.platform` | ~12 MB | patterns-only | German clinical text, structured English fields (Patient:, MRN), no narrative names |
-| `anonde-platform-ner` | `Dockerfile.platform-ner` | ~275 MB | hugot ONNX NER + patterns | English narrative needs proper PERSON detection; willing to pay 30× image size for ~90% name recall |
+| `anonde:patterns` | `Dockerfile.anonde` | ~12 MB | patterns-only | German clinical text, structured English fields (Patient:, MRN), no narrative names |
+| `anonde:ner` | `Dockerfile.anonde-ner` | ~275 MB | hugot ONNX NER + patterns | English narrative needs proper PERSON detection; willing to pay 30× image size for ~90% name recall |
 
 ```bash
 # default (patterns-only)
-docker build -f Dockerfile.platform -t anonde-platform .
+docker build -f Dockerfile.anonde -t anonde:patterns .
 
 # NER variant (model baked in at build time)
-docker build -f Dockerfile.platform-ner -t anonde-platform-ner .
+docker build -f Dockerfile.anonde-ner -t anonde:ner .
 ```
 
 On Fly, the cleanest way to flip the same app between the two variants
@@ -232,7 +232,7 @@ fly logs -a anonde-platform | grep "analyzer backend:"
 
 The NER image runs offline once built — the ONNX model is baked into
 `/models` during build (see the `DOWNLOAD_MODELS_ONLY=1` bootstrap in
-`cmd/platform/main.go`). No HuggingFace Hub calls at runtime.
+`cmd/anonde/main.go`). No HuggingFace Hub calls at runtime.
 
 First request after an NER deploy is slow (5–30 s) because hugot loads
 the ONNX session into memory on first inference. The health check has

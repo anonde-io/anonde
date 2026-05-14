@@ -49,7 +49,7 @@ func NewService(
 }
 
 // SetVersionInfo records the build metadata GetVersion returns. Called
-// by cmd/platform after backend selection — the service has no other
+// by cmd/anonde after backend selection — the service has no other
 // way to know which backend wraps its analyzer.
 func (s *Service) SetVersionInfo(info VersionInfo) {
 	s.versionInfo = info

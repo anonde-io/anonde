@@ -1,11 +1,11 @@
-name: anonde-local-platform
+name: anonde-local
 
 services:
-  platform:
+  anonde:
     build:
       context: .
-      dockerfile: Dockerfile.platform
-    image: anonde/platform:local
+      dockerfile: Dockerfile.anonde
+    image: anonde:local
     ports:
       - "${PLATFORM_PORT:-8082}:8080"
     environment:

@@ -21,10 +21,10 @@ import (
 )
 
 func main() {
-	addr := platformAddr()
+	addr := listenAddr()
 	analyzerEngine, backendName, modelName := analyzerFromEnv()
 
-	// One-shot bootstrap used by Dockerfile.platform-ner: initialise the
+	// One-shot bootstrap used by Dockerfile.anonde-ner: initialise the
 	// active analyzer, run one trivial inference call to force the NER
 	// backend to download / cache its model into HUGOT_MODELS_DIR, then
 	// exit cleanly. The runtime image then ships with the model on disk
@@ -73,7 +73,7 @@ func main() {
 		Protocols:         api.NewServerProtocols(),
 	}
 
-	log.Printf("platform server listening on %s (max_request_bytes=%d backend=%s model=%s)",
+	log.Printf("anonde server listening on %s (max_request_bytes=%d backend=%s model=%s)",
 		addr, maxBytes, backendName, modelName)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
@@ -123,7 +123,7 @@ func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
 
 // downloadModelsAndExit triggers a single inference call so the configured
 // backend's underlying NER model is fetched into its cache directory, then
-// exits. Used at Docker build time (see Dockerfile.platform-ner) to bake
+// exits. Used at Docker build time (see Dockerfile.anonde-ner) to bake
 // the model into the runtime image — the runtime then has no cold-start
 // download and needs no outbound network access.
 //
@@ -144,7 +144,7 @@ func downloadModelsAndExit(engine *analyzer.AnalyzerEngine) {
 	os.Exit(0)
 }
 
-func platformAddr() string {
+func listenAddr() string {
 	if addr := strings.TrimSpace(os.ExpandEnv(os.Getenv("PLATFORM_ADDR"))); addr != "" {
 		return addr
 	}
@@ -157,7 +157,7 @@ func platformAddr() string {
 // analyzerFromEnv selects the NER backend.
 //
 // Default: patterns (no NER, no model download, no external service).
-// This is the fast / safe default and what Dockerfile.platform ships. The
+// This is the fast / safe default and what Dockerfile.anonde ships. The
 // German recognizer kernel covers most clinical PII without NER.
 //
 // Opt-ins:

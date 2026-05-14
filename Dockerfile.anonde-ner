@@ -1,17 +1,17 @@
-# Dockerfile.platform-ner — anonde platform with the GLiNER NER backend
+# Dockerfile.anonde-ner — anonde server with the GLiNER NER backend
 # baked in. Larger image (~470 MB) but self-contained: no model download
 # at startup, no outbound network needed, deterministic cold start.
 #
 # For lighter deployments serving only structured German clinical text
-# (Patient: …, MRN, etc.), use Dockerfile.platform instead — that builds
+# (Patient: …, MRN, etc.), use Dockerfile.anonde instead — that builds
 # the patterns-only binary at ~12 MB.
 #
 # Build:
-#   docker build -f Dockerfile.platform-ner -t anonde-platform-ner .
+#   docker build -f Dockerfile.anonde-ner -t anonde-ner .
 # Deploy to fly:
-#   fly deploy -a anonde-platform --dockerfile Dockerfile.platform-ner
+#   fly deploy -a anonde-platform --dockerfile Dockerfile.anonde-ner
 #
-# Why this image is heavier than Dockerfile.platform:
+# Why this image is heavier than Dockerfile.anonde:
 #   - CGO_ENABLED=1 is required because the GLiNER recognizer uses
 #     yalue/onnxruntime_go, which is a CGO binding to libonnxruntime. The
 #     gomlx/onnx-gomlx pure-Go ONNX path was tried but cannot lower
@@ -75,7 +75,7 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 \
-    go build -tags hugot -o /out/platform ./cmd/platform
+    go build -tags hugot -o /out/anonde ./cmd/anonde
 
 # --- bake the GLiNER model into the image ---------------------------------
 # Run the binary in DOWNLOAD_MODELS_ONLY=1 mode: it constructs the
@@ -90,7 +90,7 @@ ENV GLINER_MODELS_DIR=/models \
     ANALYZER_BACKEND=gliner \
     ORT_SO_PATH=/out/lib/libonnxruntime.so.1 \
     DOWNLOAD_MODELS_ONLY=1
-RUN /out/platform
+RUN /out/anonde
 
 # --- runtime --------------------------------------------------------------
 # distroless/cc includes glibc + libgcc + libstdc++ — the minimum that
@@ -102,7 +102,7 @@ RUN /out/platform
 # variant of the distroless image, leaving an amd64 binary in an arm64
 # runtime → fails at startup with rosetta/ld-linux errors.
 FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12
-COPY --from=build /out/platform /platform
+COPY --from=build /out/anonde /anonde
 COPY --from=build /out/lib/libonnxruntime.so.1 /usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 COPY --from=build /models /models
 
@@ -118,4 +118,4 @@ ENV ANALYZER_BACKEND=gliner \
     ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 
 EXPOSE 8080
-ENTRYPOINT ["/platform"]
+ENTRYPOINT ["/anonde"]
