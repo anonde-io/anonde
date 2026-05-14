@@ -1,88 +1,30 @@
-package platform
+package core
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
 	"github.com/anonde-io/anonde/analyzer"
-	"github.com/anonde-io/anonde/internal/content"
 	"github.com/anonde-io/anonde/anonymizer"
 	"github.com/anonde-io/anonde/anonymizer/operators"
+	"github.com/anonde-io/anonde/internal/content"
 )
-
-// PolicyAuthorizer gates deanonymization access.
-type PolicyAuthorizer interface {
-	AllowDetokenize(ctx context.Context, req DetokenizeRequest) error
-}
-
-// Vault stores token -> cleartext mappings locally.
-type Vault interface {
-	Put(ctx context.Context, tenantID string, entry VaultEntry) error
-	Get(ctx context.Context, tenantID, token string) (VaultEntry, error)
-	// Delete removes a token mapping. Missing tokens are NOT an error —
-	// callers (e.g. DeleteAnonymization) iterate over what the store
-	// says and must tolerate races / partial state.
-	Delete(ctx context.Context, tenantID, token string) error
-}
-
-// Store persists anonymizations (anonymized content + per-doc token
-// offsets) keyed by (tenant_id, id).
-type Store interface {
-	Put(ctx context.Context, record StoreRecord) error
-	Get(ctx context.Context, tenantID, id string) (StoreRecord, error)
-	// Delete removes a stored anonymization. Returns existed=true iff
-	// the record was present before the call so callers can report a
-	// meaningful "did anything happen" signal while keeping the
-	// operation itself idempotent.
-	Delete(ctx context.Context, tenantID, id string) (existed bool, err error)
-}
-
-// VaultEntry stores one token mapping.
-type VaultEntry struct {
-	Token      string
-	EntityType string
-	Cleartext  string
-}
-
-// VersionInfo is populated by the binary entrypoint (cmd/platform) and
-// served back by GetVersion. The service layer doesn't introspect the
-// analyzer because the backend selection lives at main wiring time.
-type VersionInfo struct {
-	AnalyzerBackend string
-	Model           string
-	BuildSHA        string
-	GoVersion       string
-	APIVersion      string
-}
-
-// DeleteResult reports what DeleteAnonymization actually did. The RPC
-// itself is idempotent OK, but callers may want to distinguish
-// "nothing was here" from "we cleaned up N tokens" for metrics / audit
-// purposes.
-type DeleteResult struct {
-	Deleted       bool
-	TokensDeleted int
-}
 
 // Service coordinates recognition, tokenization and controlled reveal.
 type Service struct {
-	analyzer       *analyzer.AnalyzerEngine
-	anonymize      *anonymizer.AnonymizerEngine
-	vault          Vault
-	store          Store
-	policy         PolicyAuthorizer
-	defaultScore   float64
-	defaultLang    string
+	analyzer         *analyzer.AnalyzerEngine
+	anonymize        *anonymizer.AnonymizerEngine
+	vault            Vault
+	store            Store
+	policy           PolicyAuthorizer
+	defaultScore     float64
+	defaultLang      string
 	tokenSeqMu       sync.Mutex
 	tokenSeqByTenant map[string]int
-	versionInfo    VersionInfo
+	versionInfo      VersionInfo
 }
 
 var ErrPolicyDenied = errors.New("policy denied")
@@ -95,13 +37,13 @@ func NewService(
 	policy PolicyAuthorizer,
 ) *Service {
 	return &Service{
-		analyzer:       analyzerEngine,
-		anonymize:      anonymizerEngine,
-		vault:          vault,
-		store:          store,
-		policy:         policy,
-		defaultScore:   0.3,
-		defaultLang:    "en",
+		analyzer:         analyzerEngine,
+		anonymize:        anonymizerEngine,
+		vault:            vault,
+		store:            store,
+		policy:           policy,
+		defaultScore:     0.3,
+		defaultLang:      "en",
 		tokenSeqByTenant: map[string]int{},
 	}
 }
@@ -450,36 +392,6 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	}, nil
 }
 
-// newAnonymizationID returns a Stripe-style identifier:
-// `anon_<16 hex chars>` (64 bits of entropy from crypto/rand). Used
-// when the caller omits an explicit id at ingest time. Non-secret —
-// the ID is a routing key, not an authorization token.
-func newAnonymizationID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand.Read only fails when the system entropy pool is
-		// unavailable, which doesn't happen on Linux/macOS in normal
-		// operation. Panicking surfaces the rare failure rather than
-		// minting a predictable id.
-		panic("mint anonymization id: " + err.Error())
-	}
-	return "anon_" + hex.EncodeToString(b[:])
-}
-
-// mintToken returns a fresh token for (tenant, entity), using a per-tenant
-// counter held by the service. Tokens are always referenced via the doc's
-// StoreRecord on reveal, so persistence of the counter isn't required.
-//
-// Cross-document token reuse for the same cleartext is intentionally NOT
-// supported here — see TODO.md ("Tenant-scoped token reuse").
-func (s *Service) mintToken(tenantID, entityType string) string {
-	s.tokenSeqMu.Lock()
-	idx := s.tokenSeqByTenant[tenantID]
-	s.tokenSeqByTenant[tenantID] = idx + 1
-	s.tokenSeqMu.Unlock()
-	return buildToken(tenantID, entityType, idx)
-}
-
 func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*DetokenizeResponse, error) {
 	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" {
 		return nil, fmt.Errorf("tenant_id, id, actor and purpose are required")
@@ -612,53 +524,4 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		DeanonymizedContent: out,
 		Resolved:            detok.Resolved,
 	}, nil
-}
-
-// buildTokenReplacer returns a function that replaces every known token in
-// the input with its cleartext in a single pass. Tokens are sorted
-// longest-first so a longer token is never shadowed by a shorter prefix.
-func buildTokenReplacer(orderedTokens []string, resolved map[string]string) (func(string) string, error) {
-	if len(orderedTokens) == 0 {
-		return func(s string) string { return s }, nil
-	}
-	sorted := make([]string, len(orderedTokens))
-	copy(sorted, orderedTokens)
-	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i]) > len(sorted[j]) })
-	parts := make([]string, 0, len(sorted))
-	for _, t := range sorted {
-		parts = append(parts, regexp.QuoteMeta(t))
-	}
-	re, err := regexp.Compile(strings.Join(parts, "|"))
-	if err != nil {
-		return nil, fmt.Errorf("compile token replacer: %w", err)
-	}
-	return func(s string) string {
-		return re.ReplaceAllStringFunc(s, func(match string) string {
-			if v, ok := resolved[match]; ok {
-				return v
-			}
-			return match
-		})
-	}, nil
-}
-
-func buildToken(tenantID, entityType string, idx int) string {
-	normalizedTenant := strings.ToUpper(strings.ReplaceAll(tenantID, "-", "_"))
-	return fmt.Sprintf("<%s_%s_%06d>", entityType, normalizedTenant, idx+1)
-}
-
-type tokenOperator struct {
-	byCleartext map[string]string
-}
-
-func (o *tokenOperator) Name() string {
-	return "tokenize"
-}
-
-func (o *tokenOperator) Anonymize(text string, _ string) (string, error) {
-	token, ok := o.byCleartext[text]
-	if !ok {
-		return "", fmt.Errorf("no token mapped for %q", text)
-	}
-	return token, nil
 }

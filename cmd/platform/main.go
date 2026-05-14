@@ -14,6 +14,7 @@ import (
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/internal/core"
 	"github.com/anonde-io/anonde/internal/platform"
 )
 
@@ -45,14 +46,14 @@ func main() {
 	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
 	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", platform.DefaultMaxRequestBytes)
 
-	svc := platform.NewService(
+	svc := core.NewService(
 		analyzerEngine,
 		anonde.DefaultAnonymizerEngine(),
 		platform.NewMemoryVaultWithTTL(vaultTTL),
 		platform.NewMemoryStoreWithTTL(storeTTL),
 		&platform.StaticPolicy{},
 	)
-	svc.SetVersionInfo(platform.VersionInfo{
+	svc.SetVersionInfo(core.VersionInfo{
 		AnalyzerBackend: backendName,
 		Model:           modelName,
 		BuildSHA:        buildSHA(),

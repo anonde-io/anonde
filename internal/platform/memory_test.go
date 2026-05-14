@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/anonde-io/anonde/internal/content"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 func TestMemoryVault_TTLExpiry(t *testing.T) {
 	vault := NewMemoryVaultWithTTL(20 * time.Millisecond)
-	err := vault.Put(context.Background(), "acme", VaultEntry{
+	err := vault.Put(context.Background(), "acme", core.VaultEntry{
 		Token:      "<EMAIL_ACME_1>",
 		EntityType: "EMAIL_ADDRESS",
 		Cleartext:  "john@example.com",
@@ -31,7 +32,7 @@ func TestMemoryVault_TTLExpiry(t *testing.T) {
 
 func TestMemoryStore_TTLExpiry(t *testing.T) {
 	store := NewMemoryStoreWithTTL(20 * time.Millisecond)
-	err := store.Put(context.Background(), StoreRecord{
+	err := store.Put(context.Background(), core.StoreRecord{
 		TenantID:          "acme",
 		ID:             "doc-1",
 		ContentFormat:     content.FormatText,
@@ -53,7 +54,7 @@ func TestMemoryStore_TTLExpiry(t *testing.T) {
 
 func TestMemoryVault_NoExpiryWhenTTLDisabled(t *testing.T) {
 	vault := NewMemoryVaultWithTTL(0)
-	err := vault.Put(context.Background(), "acme", VaultEntry{
+	err := vault.Put(context.Background(), "acme", core.VaultEntry{
 		Token:      "<PERSON_ACME_1>",
 		EntityType: "PERSON",
 		Cleartext:  "John Doe",

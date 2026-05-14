@@ -10,13 +10,14 @@ import (
 
 	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
 	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // newConnectTestEnv spins up an httptest server backed by the same
 // service the unit tests use, and returns a Connect client pointed at
 // it. Used to verify the proto-handler wiring end-to-end without
 // having to hand-write JSON bodies for every test.
-func newConnectTestEnv(t *testing.T) (platformv1connect.PlatformServiceClient, *Service) {
+func newConnectTestEnv(t *testing.T) (platformv1connect.PlatformServiceClient, *core.Service) {
 	t.Helper()
 	svc := newTestService()
 	api := NewHTTPServer(svc)
@@ -38,7 +39,7 @@ func TestConnect_HealthCheck(t *testing.T) {
 
 func TestConnect_GetVersion_ReturnsStampedInfo(t *testing.T) {
 	client, svc := newConnectTestEnv(t)
-	svc.SetVersionInfo(VersionInfo{
+	svc.SetVersionInfo(core.VersionInfo{
 		AnalyzerBackend: "patterns",
 		Model:           "",
 		BuildSHA:        "deadbeef",

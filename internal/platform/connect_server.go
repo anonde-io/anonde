@@ -8,6 +8,7 @@ import (
 
 	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
 	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // ConnectServer adapts Service to the generated Connect handler
@@ -16,12 +17,12 @@ import (
 // server impl; this file is just the connect.Request / connect.Response
 // wrapper boilerplate plus the connect-specific error mapping.
 type ConnectServer struct {
-	svc *Service
+	svc *core.Service
 }
 
 var _ platformv1connect.PlatformServiceHandler = (*ConnectServer)(nil)
 
-func NewConnectServer(svc *Service) *ConnectServer {
+func NewConnectServer(svc *core.Service) *ConnectServer {
 	return &ConnectServer{svc: svc}
 }
 
@@ -85,7 +86,7 @@ func connectErrFor(err error, fallback connect.Code) *connect.Error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrPolicyDenied) {
+	if errors.Is(err, core.ErrPolicyDenied) {
 		return connect.NewError(connect.CodePermissionDenied, err)
 	}
 	return connect.NewError(fallback, err)

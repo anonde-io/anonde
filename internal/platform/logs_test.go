@@ -9,10 +9,21 @@ import (
 
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/internal/content"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
-func newTestService() *Service {
-	return NewService(
+// allowAllPolicy is a test-only PolicyAuthorizer that permits every
+// detokenize. Mirrors the same-named helper in internal/core/service_test.go;
+// duplicated here so each test package stays self-contained while the
+// split is in flight.
+type allowAllPolicy struct{}
+
+func (allowAllPolicy) AllowDetokenize(context.Context, core.DetokenizeRequest) error {
+	return nil
+}
+
+func newTestService() *core.Service {
+	return core.NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
 		NewMemoryVault(),
@@ -81,7 +92,7 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 	in := `{"user":"John Doe","email":"john@example.com"}` + "\n" +
 		`{"user":"Jane Roe","email":"jane@example.com"}` + "\n"
 
-	ing, err := svc.Ingest(context.Background(), IngestRequest{
+	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
 		TenantID:      "acme",
 		ID:         "ndjson-1",
 		ContentFormat: "ndjson",
@@ -97,7 +108,7 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 		t.Fatalf("expected line structure preserved, got %q", ing.AnonymizedContent)
 	}
 
-	rev, err := svc.Reveal(context.Background(), RevealRequest{
+	rev, err := svc.Reveal(context.Background(), core.RevealRequest{
 		TenantID:      "acme",
 		ID:         "ndjson-1",
 		Actor:         "tester",
@@ -119,7 +130,7 @@ func TestIngestReveal_NDJSON_RoundTrip(t *testing.T) {
 func TestIngest_NDJSON_RejectsNonJSONLine(t *testing.T) {
 	svc := newTestService()
 	in := `{"a":1}` + "\nnot json\n"
-	_, err := svc.Ingest(context.Background(), IngestRequest{
+	_, err := svc.Ingest(context.Background(), core.IngestRequest{
 		TenantID:      "acme",
 		ID:         "ndjson-bad",
 		ContentFormat: "ndjson",
@@ -141,7 +152,7 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 		`{"level":"info","email":"bob@example.com"}` + "\n" +
 		"plain message charlie@example.com\n"
 
-	ing, err := svc.Ingest(context.Background(), IngestRequest{
+	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
 		TenantID:      "acme",
 		ID:         "logs-1",
 		ContentFormat: "logs",
@@ -162,7 +173,7 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 		t.Fatalf("expected 3 newlines preserved, got %q", ing.AnonymizedContent)
 	}
 
-	rev, err := svc.Reveal(context.Background(), RevealRequest{
+	rev, err := svc.Reveal(context.Background(), core.RevealRequest{
 		TenantID:      "acme",
 		ID:         "logs-1",
 		Actor:         "tester",
@@ -199,7 +210,7 @@ func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
 	// 0.25 and only clears the threshold via a context-keyword boost; using
 	// the structural anchor here keeps the test stable regardless of the
 	// surrounding text.
-	ing, err := svc.Ingest(context.Background(), IngestRequest{
+	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
 		TenantID:      "acme",
 		ID:         "ner-off",
 		ContentFormat: "text",
@@ -223,7 +234,7 @@ func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
 
 func TestIngest_EntitiesAllowlist_OnlyEmail(t *testing.T) {
 	svc := newTestService()
-	ing, err := svc.Ingest(context.Background(), IngestRequest{
+	ing, err := svc.Ingest(context.Background(), core.IngestRequest{
 		TenantID:      "acme",
 		ID:         "ents-1",
 		ContentFormat: "text",
@@ -251,33 +262,9 @@ func TestIngest_EntitiesAllowlist_OnlyEmail(t *testing.T) {
 // TODO.md). Tokens are minted per-doc via a per-tenant counter; the same
 // cleartext in two docs gets two distinct tokens.
 
-// ---------------------------------------------------------------------------
-// Single-pass reveal replacer: long token must not be shadowed by short one
-// ---------------------------------------------------------------------------
-
-func TestBuildTokenReplacer_PrefersLongerMatch(t *testing.T) {
-	t.Parallel()
-	tokens := []string{
-		"<EMAIL_ADDRESS_ACME_000001>",
-		"<EMAIL_ADDRESS_ACME_000001_X>", // longer, must win on overlap
-	}
-	resolved := map[string]string{
-		"<EMAIL_ADDRESS_ACME_000001>":   "alice@example.com",
-		"<EMAIL_ADDRESS_ACME_000001_X>": "alice-extended@example.com",
-	}
-	replace, err := buildTokenReplacer(tokens, resolved)
-	if err != nil {
-		t.Fatalf("build replacer: %v", err)
-	}
-	in := "see <EMAIL_ADDRESS_ACME_000001_X> and <EMAIL_ADDRESS_ACME_000001>"
-	out := replace(in)
-	if !strings.Contains(out, "alice-extended@example.com") {
-		t.Fatalf("expected longer token resolved, got %q", out)
-	}
-	if !strings.Contains(out, "alice@example.com") {
-		t.Fatalf("expected shorter token resolved, got %q", out)
-	}
-}
+// Replacer ordering: TestBuildTokenReplacer_PrefersLongerMatch now
+// lives in internal/core/tokens_test.go (it tests an internal core
+// helper).
 
 // ---------------------------------------------------------------------------
 // HTTP body size limit

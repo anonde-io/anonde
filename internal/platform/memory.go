@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // MemoryVault is an in-process token → cleartext store. Not persistent across restarts.
@@ -28,7 +30,7 @@ func NewMemoryVaultWithTTL(ttl time.Duration) *MemoryVault {
 	}
 }
 
-func (v *MemoryVault) Put(_ context.Context, tenantID string, entry VaultEntry) error {
+func (v *MemoryVault) Put(_ context.Context, tenantID string, entry core.VaultEntry) error {
 	v.mu.Lock()
 	v.m[tenantID+":"+entry.Token] = vaultEntry{
 		Value:     entry,
@@ -39,16 +41,16 @@ func (v *MemoryVault) Put(_ context.Context, tenantID string, entry VaultEntry) 
 	return nil
 }
 
-func (v *MemoryVault) Get(_ context.Context, tenantID, token string) (VaultEntry, error) {
+func (v *MemoryVault) Get(_ context.Context, tenantID, token string) (core.VaultEntry, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	entry, ok := v.m[tenantID+":"+token]
 	if !ok {
-		return VaultEntry{}, fmt.Errorf("token %q not found for tenant %q", token, tenantID)
+		return core.VaultEntry{}, fmt.Errorf("token %q not found for tenant %q", token, tenantID)
 	}
 	if entry.expiredAt(time.Now()) {
 		delete(v.m, tenantID+":"+token)
-		return VaultEntry{}, fmt.Errorf("token %q not found for tenant %q", token, tenantID)
+		return core.VaultEntry{}, fmt.Errorf("token %q not found for tenant %q", token, tenantID)
 	}
 	return entry.Value, nil
 }
@@ -81,7 +83,7 @@ func NewMemoryStoreWithTTL(ttl time.Duration) *MemoryStore {
 	}
 }
 
-func (s *MemoryStore) Put(_ context.Context, record StoreRecord) error {
+func (s *MemoryStore) Put(_ context.Context, record core.StoreRecord) error {
 	s.mu.Lock()
 	s.m[record.TenantID+":"+record.ID] = storeEntry{
 		Value:     record,
@@ -92,16 +94,16 @@ func (s *MemoryStore) Put(_ context.Context, record StoreRecord) error {
 	return nil
 }
 
-func (s *MemoryStore) Get(_ context.Context, tenantID, id string) (StoreRecord, error) {
+func (s *MemoryStore) Get(_ context.Context, tenantID, id string) (core.StoreRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.m[tenantID+":"+id]
 	if !ok {
-		return StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
+		return core.StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
 	}
 	if rec.expiredAt(time.Now()) {
 		delete(s.m, tenantID+":"+id)
-		return StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
+		return core.StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
 	}
 	return rec.Value, nil
 }
@@ -123,7 +125,7 @@ func (s *MemoryStore) Delete(_ context.Context, tenantID, id string) (bool, erro
 }
 
 type vaultEntry struct {
-	Value     VaultEntry
+	Value     core.VaultEntry
 	ExpiresAt time.Time
 }
 
@@ -148,7 +150,7 @@ func (v *MemoryVault) sweepExpiredIfDueLocked() {
 }
 
 type storeEntry struct {
-	Value     StoreRecord
+	Value     core.StoreRecord
 	ExpiresAt time.Time
 }
 

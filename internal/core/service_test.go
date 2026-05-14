@@ -1,4 +1,4 @@
-package platform
+package core
 
 import (
 	"context"
@@ -20,8 +20,8 @@ func TestReveal_NoTokensReturnsInputContent(t *testing.T) {
 	svc := NewService(
 		nil,
 		nil,
-		NewMemoryVault(),
-		NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 
@@ -60,8 +60,8 @@ func TestIngestReveal_JSONContent(t *testing.T) {
 	svc := NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		NewMemoryVault(),
-		NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 
@@ -98,8 +98,8 @@ func TestIngestReveal_JSONFixtureRoundTrip(t *testing.T) {
 	svc := NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		NewMemoryVault(),
-		NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 
@@ -154,8 +154,8 @@ func TestIngest_AutoDetectsJSON(t *testing.T) {
 	svc := NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		NewMemoryVault(),
-		NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 
@@ -181,8 +181,8 @@ func TestIngest_AutoDetectsText(t *testing.T) {
 	svc := NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		NewMemoryVault(),
-		NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 
@@ -208,8 +208,8 @@ func TestIngestReveal_AutoWithMixedTextAndJSONSnippet(t *testing.T) {
 	svc := NewService(
 		anonde.DefaultAnalyzerEngine(),
 		anonde.DefaultAnonymizerEngine(),
-		NewMemoryVault(),
-		NewMemoryStore(),
+		newTestVault(),
+		newTestStore(),
 		allowAllPolicy{},
 	)
 

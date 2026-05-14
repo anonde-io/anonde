@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/internal/core"
 	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
 )
 
@@ -16,8 +17,8 @@ import (
 // Service stays unaware of proto — it owns business logic against the
 // internal IngestRequest / DetokenizeRequest / … types.
 
-func executeCreate(ctx context.Context, svc *Service, msg *platformv1.CreateAnonymizationRequest) (*platformv1.CreateAnonymizationResponse, error) {
-	req := IngestRequest{
+func executeCreate(ctx context.Context, svc *core.Service, msg *platformv1.CreateAnonymizationRequest) (*platformv1.CreateAnonymizationResponse, error) {
+	req := core.IngestRequest{
 		TenantID:      msg.GetTenantId(),
 		ID:            msg.GetId(),
 		Content:       msg.GetContent(),
@@ -39,8 +40,8 @@ func executeCreate(ctx context.Context, svc *Service, msg *platformv1.CreateAnon
 	}, nil
 }
 
-func executeDetokenize(ctx context.Context, svc *Service, msg *platformv1.DetokenizeTokensRequest) (*platformv1.DetokenizeTokensResponse, error) {
-	resp, err := svc.Detokenize(ctx, DetokenizeRequest{
+func executeDetokenize(ctx context.Context, svc *core.Service, msg *platformv1.DetokenizeTokensRequest) (*platformv1.DetokenizeTokensResponse, error) {
+	resp, err := svc.Detokenize(ctx, core.DetokenizeRequest{
 		TenantID: msg.GetTenantId(),
 		ID:       msg.GetId(),
 		Actor:    msg.GetActor(),
@@ -57,8 +58,8 @@ func executeDetokenize(ctx context.Context, svc *Service, msg *platformv1.Detoke
 	}, nil
 }
 
-func executeReveal(ctx context.Context, svc *Service, msg *platformv1.RevealContentRequest) (*platformv1.RevealContentResponse, error) {
-	resp, err := svc.Reveal(ctx, RevealRequest{
+func executeReveal(ctx context.Context, svc *core.Service, msg *platformv1.RevealContentRequest) (*platformv1.RevealContentResponse, error) {
+	resp, err := svc.Reveal(ctx, core.RevealRequest{
 		TenantID:      msg.GetTenantId(),
 		ID:            msg.GetId(),
 		Actor:         msg.GetActor(),
@@ -77,8 +78,8 @@ func executeReveal(ctx context.Context, svc *Service, msg *platformv1.RevealCont
 	}, nil
 }
 
-func executeSynthesize(ctx context.Context, svc *Service, msg *platformv1.SynthesizeContentRequest) (*platformv1.SynthesizeContentResponse, error) {
-	req := SynthesizeRequest{
+func executeSynthesize(ctx context.Context, svc *core.Service, msg *platformv1.SynthesizeContentRequest) (*platformv1.SynthesizeContentResponse, error) {
+	req := core.SynthesizeRequest{
 		Content:       msg.GetContent(),
 		ContentFormat: msg.GetContentFormat(),
 		Consistent:    msg.GetConsistent(),
@@ -96,7 +97,7 @@ func executeSynthesize(ctx context.Context, svc *Service, msg *platformv1.Synthe
 	}, nil
 }
 
-func executeDelete(ctx context.Context, svc *Service, msg *platformv1.DeleteAnonymizationRequest) (*platformv1.DeleteAnonymizationResponse, error) {
+func executeDelete(ctx context.Context, svc *core.Service, msg *platformv1.DeleteAnonymizationRequest) (*platformv1.DeleteAnonymizationResponse, error) {
 	result, err := svc.DeleteAnonymization(ctx, msg.GetTenantId(), msg.GetId())
 	if err != nil {
 		return nil, err
@@ -107,7 +108,7 @@ func executeDelete(ctx context.Context, svc *Service, msg *platformv1.DeleteAnon
 	}, nil
 }
 
-func executeGetVersion(ctx context.Context, svc *Service) (*platformv1.GetVersionResponse, error) {
+func executeGetVersion(ctx context.Context, svc *core.Service) (*platformv1.GetVersionResponse, error) {
 	info, err := svc.GetVersion(ctx)
 	if err != nil {
 		return nil, err
@@ -169,7 +170,7 @@ func findingsToProto(in []analyzer.RecognizerResult) []*platformv1.Finding {
 	return out
 }
 
-func tokensToProto(in []TokenRef) []*platformv1.TokenRef {
+func tokensToProto(in []core.TokenRef) []*platformv1.TokenRef {
 	if len(in) == 0 {
 		return nil
 	}

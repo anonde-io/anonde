@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // GRPCServer satisfies the generated PlatformServiceServer interface so
@@ -26,10 +27,10 @@ import (
 // anonymization is missing.
 type GRPCServer struct {
 	platformv1.UnimplementedPlatformServiceServer
-	svc *Service
+	svc *core.Service
 }
 
-func NewGRPCServer(svc *Service) *GRPCServer {
+func NewGRPCServer(svc *core.Service) *GRPCServer {
 	return &GRPCServer{svc: svc}
 }
 
@@ -96,7 +97,7 @@ func grpcErrFor(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrPolicyDenied) {
+	if errors.Is(err, core.ErrPolicyDenied) {
 		return status.Error(codes.PermissionDenied, err.Error())
 	}
 	if strings.Contains(err.Error(), "not found") {

@@ -1,11 +1,21 @@
-package platform
+// Package core owns the platform's business logic: the Service type
+// that orchestrates analyze → tokenize → vault → reveal, the internal
+// request/response DTOs the transport layers convert proto messages
+// to/from, and the Vault/Store/PolicyAuthorizer interfaces that wire
+// in pluggable storage and authz backends.
+//
+// core has no dependency on the api layer (Connect, gRPC, gateway,
+// HTTP server) and no dependency on a specific Store/Vault impl. The
+// store package depends on core for the interface definitions and
+// shared data types; the api package depends on core for Service and
+// the DTOs. cmd/platform wires them all together.
+package core
 
 import "github.com/anonde-io/anonde/analyzer"
 
-// IngestRequest creates a new anonymization. The internal Go type
-// keeps the short verb name; the public proto / RPC equivalent is
-// CreateAnonymizationRequest. ID is optional — if empty, the service
-// mints one (prefixed `anon_`) and returns it in IngestResponse.
+// IngestRequest creates a new anonymization. ID is optional — if
+// empty, the service mints one (prefixed `anon_`) and returns it in
+// IngestResponse.
 type IngestRequest struct {
 	TenantID      string `json:"tenant_id"`
 	ID            string `json:"id,omitempty"`
@@ -43,6 +53,13 @@ type StoreRecord struct {
 	ContentFormat     string     `json:"content_format,omitempty"`
 	AnonymizedContent string     `json:"anonymized_content"`
 	Tokens            []TokenRef `json:"tokens"`
+}
+
+// VaultEntry stores one token mapping.
+type VaultEntry struct {
+	Token      string
+	EntityType string
+	Cleartext  string
 }
 
 type DetokenizeRequest struct {
@@ -92,4 +109,24 @@ type SynthesizeRequest struct {
 type SynthesizeResponse struct {
 	Content  string                      `json:"content"`
 	Findings []analyzer.RecognizerResult `json:"findings"`
+}
+
+// VersionInfo is populated by the binary entrypoint (cmd/platform) and
+// served back by GetVersion. The service layer doesn't introspect the
+// analyzer because the backend selection lives at main wiring time.
+type VersionInfo struct {
+	AnalyzerBackend string
+	Model           string
+	BuildSHA        string
+	GoVersion       string
+	APIVersion      string
+}
+
+// DeleteResult reports what DeleteAnonymization actually did. The RPC
+// itself is idempotent OK, but callers may want to distinguish
+// "nothing was here" from "we cleaned up N tokens" for metrics / audit
+// purposes.
+type DeleteResult struct {
+	Deleted       bool
+	TokensDeleted int
 }

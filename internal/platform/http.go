@@ -14,6 +14,7 @@ import (
 
 	platformv1 "github.com/anonde-io/anonde/gen/anonde/platform/v1"
 	"github.com/anonde-io/anonde/gen/anonde/platform/v1/platformv1connect"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // DefaultMaxRequestBytes caps a single Connect request body. Configurable
@@ -39,13 +40,13 @@ const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
 // identical across surfaces; only error mapping differs (gRPC codes
 // vs connect.Code) and that's handled in proto_logic.go's siblings.
 type HTTPServer struct {
-	svc             *Service
+	svc             *core.Service
 	connectServer   *ConnectServer
 	grpcServer      *GRPCServer
 	maxRequestBytes int64
 }
 
-func NewHTTPServer(svc *Service) *HTTPServer {
+func NewHTTPServer(svc *core.Service) *HTTPServer {
 	return &HTTPServer{
 		svc:             svc,
 		connectServer:   NewConnectServer(svc),

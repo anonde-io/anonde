@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // REST gateway smoke tests. The Connect tests already cover the proto
@@ -16,7 +18,7 @@ import (
 // flow back as the right HTTP statuses, and tenant_id can travel via
 // body (POSTs) or query param (DELETE) while we're pre-auth.
 
-func newRESTTestEnv(t *testing.T) (*httptest.Server, *Service) {
+func newRESTTestEnv(t *testing.T) (*httptest.Server, *core.Service) {
 	t.Helper()
 	svc := newTestService()
 	api := NewHTTPServer(svc)
@@ -130,7 +132,7 @@ func TestREST_RevealAfterDelete_Maps404(t *testing.T) {
 
 func TestREST_GetVersion(t *testing.T) {
 	srv, svc := newRESTTestEnv(t)
-	svc.SetVersionInfo(VersionInfo{
+	svc.SetVersionInfo(core.VersionInfo{
 		AnalyzerBackend: "patterns",
 		BuildSHA:        "abc123",
 		APIVersion:      "v1",
