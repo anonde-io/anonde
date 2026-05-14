@@ -15,10 +15,10 @@ allowed-tools: Read, Bash, Edit, Write, Grep, Glob
 |---|---|
 | **Public URL** | `https://anonde-platform.fly.dev` |
 | **Fly app** | `anonde-platform` in `iad` |
-| **Image** | `Dockerfile.platform-ner` — `distroless/cc-debian12` base, ~470 MB, CGO=1, libonnxruntime 1.26.0 at `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`, GLiNER model baked into `/models/` |
+| **Image** | `Dockerfile.anonde-ner` — `distroless/cc-debian12` base, ~470 MB, CGO=1, libonnxruntime 1.26.0 at `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`, GLiNER model baked into `/models/` |
 | **Backend** | `ANALYZER_BACKEND=gliner`, model `knowledgator/gliner-pii-base-v1.0`, ONNX `onnx/model_quint8.onnx`, threshold `0.40` |
 | **Build tag** | `-tags hugot` (historical name — enables both Hugot AND GLiNER recognizers) |
-| **Default build** | `Dockerfile.platform` — pure Go, no CGO, patterns-only (~12 MB) |
+| **Default build** | `Dockerfile.anonde` — pure Go, no CGO, patterns-only (~12 MB) |
 | **Fly config (NER)** | `fly.ner.toml` |
 | **Fly config (patterns)** | `fly.toml` |
 
@@ -33,8 +33,8 @@ allowed-tools: Read, Bash, Edit, Write, Grep, Glob
 | GLiNER labels + label→canonical | `gliner_config.go::DefaultPIILabels` / `DefaultLabelToEntity` |
 | Conflict resolver (NER preference) | `analyzer/result.go::shouldReplace` — see `pii-engineer` for the rationale |
 | Swallowed-error canary log | `analyzer/analyzer.go` (~line 215) — see `pii-engineer` for why this is load-bearing |
-| Adjacent-merge in anonymizer | `anonymizer/anonymizer.go::MergeAdjacentSameType` (exported because the platform service pre-merges) |
-| Platform HTTP service | `cmd/platform/main.go` + `internal/platform/{service,http,memory}.go` |
+| Adjacent-merge in anonymizer | `anonymizer/anonymizer.go::MergeAdjacentSameType` (exported because core.Service pre-merges) |
+| HTTP transport | `cmd/anonde/main.go` + `internal/api/{http,connect_server,grpc_server,proto_logic}.go` + `internal/core/{service,types}.go` + `internal/store/memory.go` |
 | Bench harness root | `bench/` — Makefile + corpora/runners/probes/scoring/microbench/ |
 | Bench Go runner | `bench/runners/anonde.go` |
 | Python sidecars | `bench/runners/{gliner_sidecar,presidio,openai_pf}.py` |
@@ -52,7 +52,7 @@ These are the silent-fallback-class bugs we've hit on THIS codebase. Concept-lev
 4. **Python sidecar name collision** → file is `bench/runners/gliner_sidecar.py` NOT `gliner.py`, to avoid shadowing the installed `gliner` package.
 5. **distroless base mismatch** → use `distroless/cc-debian12` (has glibc) for the NER image; `distroless/static-debian12` lacks the dynamic loader.
 6. **Conflict resolver NER preference set** → `nerPreferredEntities` in `analyzer/result.go`. Modifying this set will visibly shift leak rate on the bench.
-7. **Anonymizer "no token mapped" error** → fixed by pre-merging in `internal/platform/service.go` via `anonymizer.MergeAdjacentSameType`.
+7. **Anonymizer "no token mapped" error** → fixed by pre-merging in `internal/core/service.go` via `anonymizer.MergeAdjacentSameType`.
 
 ## Bench numbers — 2026-05-13 snapshot
 
@@ -127,8 +127,8 @@ go build ./... && go build -tags hugot ./...
 go test ./analyzer/... ./anonymizer/... ./internal/...
 
 # 2. Local Docker smoke (slower on Apple Silicon via Rosetta)
-docker build -f Dockerfile.platform-ner -t anonde-platform-ner:test .
-docker run --rm -d --name anonde-test -e WARMUP_ON_START=1 -p 18080:8080 anonde-platform-ner:test
+docker build -f Dockerfile.anonde-ner -t anonde-ner:test .
+docker run --rm -d --name anonde-test -e WARMUP_ON_START=1 -p 18080:8080 anonde-ner:test
 sleep 8 && curl -sS http://localhost:18080/healthz
 docker rm -f anonde-test
 
@@ -139,7 +139,7 @@ fly deploy --config fly.ner.toml -a anonde-platform
 curl -sS https://anonde-platform.fly.dev/healthz
 
 # 5. End-to-end smoke
-curl -sS -X POST https://anonde-platform.fly.dev/v1/ingest \
+curl -sS -X POST https://anonde-platform.fly.dev/v1/anonymizations \
   -H "Content-Type: application/json" \
   -d '{"tenant_id":"smoke","doc_id":"t1","content":"Patient Herr Müller, geboren 14.03.1962, Hauptstr. 8, 10115 Berlin, Tel 030-12345678","language":"de"}'
 

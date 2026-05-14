@@ -7,31 +7,14 @@ anonde ships two Docker variants of the same `cmd/anonde` HTTP service. Pick per
 | `Dockerfile.anonde` | Pure Go binary, no NER, no CGO | ~12 MB | patterns-only deployments; max throughput |
 | `Dockerfile.anonde-ner` | Same binary + libonnxruntime + baked GLiNER model | ~470 MB | production: detects PERSON/ORG/etc. via GLiNER |
 
-## Fly.io
-
-Two configs target the same app `anonde:patterns` in `iad`:
-
-```bash
-fly deploy --config fly.toml       # patterns-only build, ~12 MB image
-fly deploy --config fly.ner.toml   # NER build, ~470 MB image
-```
-
-The second deploy fully replaces the first. Both serve traffic on `https://anonde-platform.fly.dev`. Verify which is live:
-
-```bash
-fly logs -a anonde-platform | grep "analyzer backend:"
-# → "analyzer backend: patterns-only (no NER)"  OR
-# → "analyzer backend: gliner (model=...)"
-```
-
 ## NER image internals
 
 - Uses `gcr.io/distroless/cc-debian12` (needs glibc for libonnxruntime).
 - Downloads `libonnxruntime.so.1.26.0` from Microsoft's release tarball at build time and copies it to `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`.
 - Bakes the GLiNER ONNX + tokenizer into `/models/` so first-request startup needs no outbound network.
-- Warms the recognizer at process start via `WARMUP_ON_START=1` (set in `fly.ner.toml`) so the first user request doesn't pay the model-init cost.
+- Warms the recognizer at process start via `WARMUP_ON_START=1` so the first user request doesn't pay the model-init cost.
 
-First request after a cold NER deploy is slow (5–30 s) because the ONNX session loads into memory on first inference. The health check has a 15 s grace period in `fly.ner.toml` for this reason. Subsequent calls are ~10–100 ms each.
+First request after a cold NER deploy is slow (5–30 s) because the ONNX session loads into memory on first inference. Subsequent calls are ~10–100 ms each.
 
 In-memory vault and store are cleared on each redeploy, so a token issued under one variant cannot be revealed after switching to the other.
 

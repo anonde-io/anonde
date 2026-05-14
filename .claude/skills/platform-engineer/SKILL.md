@@ -118,7 +118,7 @@ Mitigation: pre-load the heavy stuff at process start, BEFORE the HTTP listener 
 
 ```go
 if os.Getenv("WARMUP_ON_START") == "1" {
-    timeout := durationFromEnv("PLATFORM_WARMUP_TIMEOUT", 5*time.Minute)
+    timeout := durationFromEnv("ANONDE_WARMUP_TIMEOUT", 5*time.Minute)
     ctx, cancel := context.WithTimeout(context.Background(), timeout)
     defer cancel()
     if _, err := engine.Analyze(ctx, "warmup probe", cfg); err != nil {

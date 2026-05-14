@@ -151,7 +151,7 @@ For Go-based PII pipelines with in-process ONNX NER:
 
 Bake the model into the image (don't lazy-download at first request). Bake `libonnxruntime.so` from Microsoft's signed GitHub release tarball at build time. Set `ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1` explicitly so the dlopen doesn't depend on `LD_LIBRARY_PATH` discovery.
 
-**Don't introduce a CGO dep in the patterns-only / default build path.** That breaks `Dockerfile.platform` (the static variant). Use Go build tags to keep the CGO-using recognizers behind an opt-in (e.g. `-tags hugot` or `-tags ner`).
+**Don't introduce a CGO dep in the patterns-only / default build path.** That breaks `Dockerfile.anonde` (the static variant). Use Go build tags to keep the CGO-using recognizers behind an opt-in (e.g. `-tags hugot` or `-tags ner`).
 
 ## Recognizer patterns
 

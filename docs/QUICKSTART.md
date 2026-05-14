@@ -212,34 +212,15 @@ docker build -f Dockerfile.anonde -t anonde:patterns .
 docker build -f Dockerfile.anonde-ner -t anonde:ner .
 ```
 
-On Fly, the cleanest way to flip the same app between the two variants
-is to use a per-variant config file. Two configs ship with the repo,
-both targeting the same app `anonde-platform`:
-
-```bash
-fly deploy --config fly.toml       # patterns-only build, ~12 MB image
-fly deploy --config fly.ner.toml   # NER build, ~275 MB image
-```
-
-The second deploy fully replaces the first. Both serve traffic on
-`https://anonde-platform.fly.dev`. Verify which is live:
-
-```bash
-fly logs -a anonde-platform | grep "analyzer backend:"
-# → "analyzer backend: patterns-only (no NER)"  OR
-# → "analyzer backend: hugot (model=...)"
-```
-
 The NER image runs offline once built — the ONNX model is baked into
 `/models` during build (see the `DOWNLOAD_MODELS_ONLY=1` bootstrap in
 `cmd/anonde/main.go`). No HuggingFace Hub calls at runtime.
 
-First request after an NER deploy is slow (5–30 s) because hugot loads
-the ONNX session into memory on first inference. The health check has
-a 15 s grace period in `fly.ner.toml` for this reason. Subsequent
-calls are ~10–100 ms each.
+First request after a cold NER container is slow (5–30 s) because
+hugot loads the ONNX session into memory on first inference.
+Subsequent calls are ~10–100 ms each.
 
-In-memory vault and store are cleared on each redeploy, so a token
+In-memory vault and store are cleared on each restart, so a token
 issued under one variant cannot be revealed after switching to the
 other.
 
