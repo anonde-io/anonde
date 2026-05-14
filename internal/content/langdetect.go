@@ -1,14 +1,15 @@
-package platform
+package content
 
 import (
 	"strings"
 	"unicode"
 )
 
-// detectLanguage guesses the language of `text` between "de" and "en"
+// DetectLanguage guesses the language of `text` between "de" and "en"
 // using a stopword + German-specific-rune heuristic. Returns "" when
 // the signal is too weak (a short identifier-only string with no
-// function words and no umlauts). Caller falls back to defaultLang.
+// function words and no umlauts). Caller falls back to a default
+// language.
 //
 // Why a heuristic and not a model: anonde runs in-process, often as a
 // sidecar — we don't want to ship a language-detection model or pay
@@ -69,7 +70,7 @@ var enStopwords = map[string]struct{}{
 	"can": {}, "may": {}, "might": {}, "must": {}, "if": {},
 }
 
-func detectLanguage(text string) string {
+func DetectLanguage(text string) string {
 	if text == "" {
 		return ""
 	}

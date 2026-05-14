@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/internal/content"
 	"github.com/anonde-io/anonde/anonymizer"
 	"github.com/anonde-io/anonde/anonymizer/operators"
 )
@@ -164,22 +165,22 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 	if req.Content == "" {
 		return nil, fmt.Errorf("content is required")
 	}
-	format := normalizeContentFormat(req.ContentFormat)
+	format := content.NormalizeFormat(req.ContentFormat)
 	if format == "" {
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
-	if format == contentFormatAuto {
-		format = resolveAutoContentFormat(req.Content)
+	if format == content.FormatAuto {
+		format = content.ResolveAutoFormat(req.Content)
 	}
 
-	analyzableContent, err := extractAnalyzableText(req.Content, format)
+	analyzableContent, err := content.ExtractAnalyzable(req.Content, format)
 	if err != nil {
 		return nil, err
 	}
 
 	resolvedLang := req.Language
 	if resolvedLang == "" {
-		resolvedLang = detectLanguage(analyzableContent)
+		resolvedLang = content.DetectLanguage(analyzableContent)
 	}
 	if resolvedLang == "" {
 		resolvedLang = s.defaultLang
@@ -203,7 +204,7 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 	allFindings := make([]analyzer.RecognizerResult, 0, 8)
 
 	synText := func(input string) (string, error) {
-		input = sanitizeUTF8(stripANSI(input))
+		input = content.SanitizeUTF8(content.StripANSI(input))
 		if strings.TrimSpace(input) == "" {
 			return input, nil
 		}
@@ -223,19 +224,19 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 	}
 	jsonLeafFn := func(value string) (string, error) { return synText(value) }
 	jsonDocFn := func(value string) (string, error) {
-		return transformJSONStringLeaves(value, jsonLeafFn)
+		return content.TransformJSONStringLeaves(value, jsonLeafFn)
 	}
 
 	var synthesized string
 	switch format {
-	case contentFormatText, contentFormatPDF:
+	case content.FormatText, content.FormatPDF:
 		synthesized, err = synText(analyzableContent)
-	case contentFormatJSON:
-		synthesized, err = transformJSONStringLeaves(analyzableContent, jsonLeafFn)
-	case contentFormatNDJSON:
-		synthesized, err = transformLines(analyzableContent, true, jsonDocFn, synText)
-	case contentFormatLogs:
-		synthesized, err = transformLines(analyzableContent, false, jsonDocFn, synText)
+	case content.FormatJSON:
+		synthesized, err = content.TransformJSONStringLeaves(analyzableContent, jsonLeafFn)
+	case content.FormatNDJSON:
+		synthesized, err = content.TransformLines(analyzableContent, true, jsonDocFn, synText)
+	case content.FormatLogs:
+		synthesized, err = content.TransformLines(analyzableContent, false, jsonDocFn, synText)
 	default:
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
@@ -261,15 +262,15 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	if id == "" {
 		id = newAnonymizationID()
 	}
-	format := normalizeContentFormat(req.ContentFormat)
+	format := content.NormalizeFormat(req.ContentFormat)
 	if format == "" {
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
-	if format == contentFormatAuto {
-		format = resolveAutoContentFormat(req.Content)
+	if format == content.FormatAuto {
+		format = content.ResolveAutoFormat(req.Content)
 	}
 
-	analyzableContent, err := extractAnalyzableText(req.Content, format)
+	analyzableContent, err := content.ExtractAnalyzable(req.Content, format)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +290,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	// stopword-free input).
 	resolvedLang := req.Language
 	if resolvedLang == "" {
-		resolvedLang = detectLanguage(analyzableContent)
+		resolvedLang = content.DetectLanguage(analyzableContent)
 	}
 	if resolvedLang == "" {
 		resolvedLang = s.defaultLang
@@ -310,7 +311,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		// recognizers and ANSI escapes stripped. For text/json/pdf paths the
 		// caller hasn't done this; for ndjson/logs the line splitter has —
 		// idempotent calls are cheap.
-		input = sanitizeUTF8(stripANSI(input))
+		input = content.SanitizeUTF8(content.StripANSI(input))
 		if strings.TrimSpace(input) == "" {
 			return input, nil, nil
 		}
@@ -386,7 +387,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		return out, nil
 	}
 	jsonDocFn := func(value string) (string, error) {
-		return transformJSONStringLeaves(value, jsonLeafFn)
+		return content.TransformJSONStringLeaves(value, jsonLeafFn)
 	}
 	textFn := func(value string) (string, error) {
 		out, localFindings, err := anonymizeText(value)
@@ -399,27 +400,27 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 
 	anonymizedContent := analyzableContent
 	switch format {
-	case contentFormatText, contentFormatPDF:
+	case content.FormatText, content.FormatPDF:
 		out, localFindings, err := anonymizeText(analyzableContent)
 		if err != nil {
 			return nil, err
 		}
 		anonymizedContent = out
 		findings = append(findings, localFindings...)
-	case contentFormatJSON:
-		out, err := transformJSONStringLeaves(analyzableContent, jsonLeafFn)
+	case content.FormatJSON:
+		out, err := content.TransformJSONStringLeaves(analyzableContent, jsonLeafFn)
 		if err != nil {
 			return nil, err
 		}
 		anonymizedContent = out
-	case contentFormatNDJSON:
-		out, err := transformLines(analyzableContent, true, jsonDocFn, textFn)
+	case content.FormatNDJSON:
+		out, err := content.TransformLines(analyzableContent, true, jsonDocFn, textFn)
 		if err != nil {
 			return nil, err
 		}
 		anonymizedContent = out
-	case contentFormatLogs:
-		out, err := transformLines(analyzableContent, false, jsonDocFn, textFn)
+	case content.FormatLogs:
+		out, err := content.TransformLines(analyzableContent, false, jsonDocFn, textFn)
 		if err != nil {
 			return nil, err
 		}
@@ -560,15 +561,15 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		return nil, err
 	}
 
-	requestedFormat := normalizeContentFormat(req.ContentFormat)
+	requestedFormat := content.NormalizeFormat(req.ContentFormat)
 	if requestedFormat == "" {
 		requestedFormat = record.ContentFormat
 	}
-	if requestedFormat == contentFormatAuto {
-		requestedFormat = resolveAutoContentFormat(req.Content)
+	if requestedFormat == content.FormatAuto {
+		requestedFormat = content.ResolveAutoFormat(req.Content)
 	}
 	if requestedFormat == "" {
-		requestedFormat = contentFormatText
+		requestedFormat = content.FormatText
 	}
 
 	replacer, err := buildTokenReplacer(orderedTokens, detok.Resolved)
@@ -578,25 +579,25 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 
 	out := req.Content
 	switch requestedFormat {
-	case contentFormatText, contentFormatPDF:
+	case content.FormatText, content.FormatPDF:
 		out = replacer(req.Content)
-	case contentFormatJSON:
-		jsonOutput, err := transformJSONStringLeaves(req.Content, func(v string) (string, error) {
+	case content.FormatJSON:
+		jsonOutput, err := content.TransformJSONStringLeaves(req.Content, func(v string) (string, error) {
 			return replacer(v), nil
 		})
 		if err != nil {
 			return nil, err
 		}
 		out = jsonOutput
-	case contentFormatNDJSON, contentFormatLogs:
-		forceJSON := requestedFormat == contentFormatNDJSON
+	case content.FormatNDJSON, content.FormatLogs:
+		forceJSON := requestedFormat == content.FormatNDJSON
 		jsonFn := func(v string) (string, error) {
-			return transformJSONStringLeaves(v, func(s string) (string, error) {
+			return content.TransformJSONStringLeaves(v, func(s string) (string, error) {
 				return replacer(s), nil
 			})
 		}
 		textFn := func(v string) (string, error) { return replacer(v), nil }
-		lineOut, err := transformLines(req.Content, forceJSON, jsonFn, textFn)
+		lineOut, err := content.TransformLines(req.Content, forceJSON, jsonFn, textFn)
 		if err != nil {
 			return nil, err
 		}

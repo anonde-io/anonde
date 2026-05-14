@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/internal/content"
 )
 
 func newTestService() *Service {
@@ -27,16 +28,16 @@ func newTestService() *Service {
 func TestNormalizeContentFormat_NewFormats(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"ndjson":     contentFormatNDJSON,
-		"NDJSON":     contentFormatNDJSON,
-		"jsonl":      contentFormatNDJSON,
-		"json-lines": contentFormatNDJSON,
-		"logs":       contentFormatLogs,
-		"log":        contentFormatLogs,
+		"ndjson":     content.FormatNDJSON,
+		"NDJSON":     content.FormatNDJSON,
+		"jsonl":      content.FormatNDJSON,
+		"json-lines": content.FormatNDJSON,
+		"logs":       content.FormatLogs,
+		"log":        content.FormatLogs,
 	}
 	for in, want := range cases {
-		if got := normalizeContentFormat(in); got != want {
-			t.Errorf("normalizeContentFormat(%q) = %q, want %q", in, got, want)
+		if got := content.NormalizeFormat(in); got != want {
+			t.Errorf("content.NormalizeFormat(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -44,7 +45,7 @@ func TestNormalizeContentFormat_NewFormats(t *testing.T) {
 func TestResolveAutoContentFormat_NDJSON(t *testing.T) {
 	t.Parallel()
 	in := `{"a":1}` + "\n" + `{"b":2}` + "\n"
-	if got := resolveAutoContentFormat(in); got != contentFormatNDJSON {
+	if got := content.ResolveAutoFormat(in); got != content.FormatNDJSON {
 		t.Errorf("expected ndjson, got %q", got)
 	}
 }
@@ -52,7 +53,7 @@ func TestResolveAutoContentFormat_NDJSON(t *testing.T) {
 func TestStripANSI_RemovesEscapes(t *testing.T) {
 	t.Parallel()
 	in := "\x1b[31mERROR\x1b[0m something happened"
-	got := stripANSI(in)
+	got := content.StripANSI(in)
 	if got != "ERROR something happened" {
 		t.Errorf("expected escapes removed, got %q", got)
 	}
@@ -62,7 +63,7 @@ func TestSanitizeUTF8_ReplacesInvalid(t *testing.T) {
 	t.Parallel()
 	// "abc" + invalid byte 0xff + "def"
 	in := "abc\xffdef"
-	got := sanitizeUTF8(in)
+	got := content.SanitizeUTF8(in)
 	if !strings.Contains(got, "abc") || !strings.Contains(got, "def") {
 		t.Errorf("expected valid surrounding text preserved, got %q", got)
 	}

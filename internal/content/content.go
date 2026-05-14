@@ -1,4 +1,14 @@
-package platform
+// Package content owns the I/O-layer concerns of the platform: content
+// format parsing (text / json / ndjson / logs / pdf / auto), JSON
+// recursion through string leaves, line-oriented log handling, ANSI
+// stripping, UTF-8 sanitisation. Everything in here is pure and has no
+// dependency on anonde's analyzer or anonymizer.
+//
+// The package was extracted out of internal/platform during the
+// internal/{api,core,content,store} split — both core (Service) and
+// any future caller can use it without pulling transport, storage, or
+// the analyzer.
+package content
 
 import (
 	"bytes"
@@ -13,47 +23,56 @@ import (
 	pdf "github.com/ledongthuc/pdf"
 )
 
+// Content format identifiers, used as the wire value of
+// AnalyzerRequest.ContentFormat and to drive the per-format branches
+// in Service.Ingest / Service.Reveal / Service.Synthesize.
 const (
-	contentFormatText   = "text"
-	contentFormatJSON   = "json"
-	contentFormatPDF    = "pdf"
-	contentFormatAuto   = "auto"
-	contentFormatNDJSON = "ndjson"
-	contentFormatLogs   = "logs"
+	FormatText   = "text"
+	FormatJSON   = "json"
+	FormatPDF    = "pdf"
+	FormatAuto   = "auto"
+	FormatNDJSON = "ndjson"
+	FormatLogs   = "logs"
 )
 
 // ansiEscapeRegexp matches CSI / OSC / ESC sequences emitted by terminals.
 // Server logs piped from journals or Docker frequently include these.
 var ansiEscapeRegexp = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)
 
-func normalizeContentFormat(v string) string {
+// NormalizeFormat maps an inbound content_format string to one of the
+// FormatX constants. Returns "" for unknown formats. Accepts a handful
+// of common aliases (jsonl/json-lines for ndjson, log for logs).
+func NormalizeFormat(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", contentFormatText:
-		return contentFormatText
-	case contentFormatJSON:
-		return contentFormatJSON
-	case contentFormatPDF:
-		return contentFormatPDF
-	case contentFormatAuto:
-		return contentFormatAuto
-	case contentFormatNDJSON, "jsonl", "json-lines":
-		return contentFormatNDJSON
-	case contentFormatLogs, "log":
-		return contentFormatLogs
+	case "", FormatText:
+		return FormatText
+	case FormatJSON:
+		return FormatJSON
+	case FormatPDF:
+		return FormatPDF
+	case FormatAuto:
+		return FormatAuto
+	case FormatNDJSON, "jsonl", "json-lines":
+		return FormatNDJSON
+	case FormatLogs, "log":
+		return FormatLogs
 	default:
 		return ""
 	}
 }
 
-func resolveAutoContentFormat(content string) string {
+// ResolveAutoFormat inspects the content and picks one of FormatJSON,
+// FormatNDJSON, or FormatText. Called when the request asks for
+// FormatAuto.
+func ResolveAutoFormat(content string) string {
 	var doc any
 	if err := json.Unmarshal([]byte(content), &doc); err == nil {
-		return contentFormatJSON
+		return FormatJSON
 	}
 	if isNDJSON(content) {
-		return contentFormatNDJSON
+		return FormatNDJSON
 	}
-	return contentFormatText
+	return FormatText
 }
 
 // isNDJSON returns true when content has at least two non-empty lines and every
@@ -75,30 +94,33 @@ func isNDJSON(content string) bool {
 	return nonEmpty >= 2
 }
 
-// stripANSI removes ANSI escape sequences. Safe to call on any input — leaves
-// printable text untouched.
-func stripANSI(s string) string {
+// StripANSI removes ANSI escape sequences. Safe to call on any input —
+// leaves printable text untouched.
+func StripANSI(s string) string {
 	if !strings.ContainsRune(s, 0x1b) {
 		return s
 	}
 	return ansiEscapeRegexp.ReplaceAllString(s, "")
 }
 
-// sanitizeUTF8 replaces invalid UTF-8 byte sequences with the Unicode
-// replacement character. The pattern engine and prose NER both assume valid
-// UTF-8 input.
-func sanitizeUTF8(s string) string {
+// SanitizeUTF8 replaces invalid UTF-8 byte sequences with the Unicode
+// replacement character. The pattern engine and prose NER both assume
+// valid UTF-8 input.
+func SanitizeUTF8(s string) string {
 	if utf8.ValidString(s) {
 		return s
 	}
 	return strings.ToValidUTF8(s, "�")
 }
 
-func extractAnalyzableText(content, format string) (string, error) {
+// ExtractAnalyzable returns the plain-text representation the analyzer
+// can run over. Text / JSON / NDJSON / logs are pass-through; PDFs are
+// base64-decoded and rendered to text page by page.
+func ExtractAnalyzable(content, format string) (string, error) {
 	switch format {
-	case contentFormatText, contentFormatJSON, contentFormatNDJSON, contentFormatLogs:
+	case FormatText, FormatJSON, FormatNDJSON, FormatLogs:
 		return content, nil
-	case contentFormatPDF:
+	case FormatPDF:
 		raw, err := base64.StdEncoding.DecodeString(content)
 		if err != nil {
 			return "", fmt.Errorf("decode base64 pdf content: %w", err)
@@ -130,7 +152,10 @@ func extractAnalyzableText(content, format string) (string, error) {
 	}
 }
 
-func transformJSONStringLeaves(content string, fn func(string) (string, error)) (string, error) {
+// TransformJSONStringLeaves walks a JSON document and applies fn to every
+// string leaf, returning the document re-serialised. Object keys,
+// numbers, booleans, and null pass through unchanged.
+func TransformJSONStringLeaves(content string, fn func(string) (string, error)) (string, error) {
 	var doc any
 	if err := json.Unmarshal([]byte(content), &doc); err != nil {
 		return "", fmt.Errorf("parse json content: %w", err)
@@ -177,14 +202,15 @@ func transformJSONValue(v any, fn func(string) (string, error)) (any, error) {
 	}
 }
 
-// transformLines splits content on \n, applies fn to each line, and reassembles
-// preserving line terminators. Each line is independently sanitized (ANSI strip
-// + valid UTF-8). Empty lines pass through untouched.
+// TransformLines splits content on \n, applies fn to each line, and
+// reassembles preserving line terminators. Each line is independently
+// sanitised (ANSI strip + valid UTF-8). Empty lines pass through
+// untouched.
 //
-// The forceJSON flag controls whether each non-empty line MUST parse as JSON
-// (NDJSON behavior); when false, lines are auto-classified per line as
-// JSON-or-text (logs behavior).
-func transformLines(content string, forceJSON bool, jsonFn, textFn func(string) (string, error)) (string, error) {
+// The forceJSON flag controls whether each non-empty line MUST parse
+// as JSON (NDJSON behavior); when false, lines are auto-classified
+// per line as JSON-or-text (logs behavior).
+func TransformLines(content string, forceJSON bool, jsonFn, textFn func(string) (string, error)) (string, error) {
 	if content == "" {
 		return content, nil
 	}
@@ -204,7 +230,7 @@ func transformLines(content string, forceJSON bool, jsonFn, textFn func(string) 
 			out.WriteString(nl)
 			continue
 		}
-		cleaned := sanitizeUTF8(stripANSI(line))
+		cleaned := SanitizeUTF8(StripANSI(line))
 		var (
 			processed string
 			err       error

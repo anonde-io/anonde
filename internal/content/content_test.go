@@ -1,4 +1,4 @@
-package platform
+package content
 
 import (
 	"encoding/base64"
@@ -35,16 +35,16 @@ func TestNormalizeContentFormat(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"", contentFormatText},
-		{"text", contentFormatText},
-		{"TEXT", contentFormatText},
-		{"  Text  ", contentFormatText},
-		{"json", contentFormatJSON},
-		{"JSON", contentFormatJSON},
-		{"pdf", contentFormatPDF},
-		{"PDF", contentFormatPDF},
-		{"auto", contentFormatAuto},
-		{"AUTO", contentFormatAuto},
+		{"", FormatText},
+		{"text", FormatText},
+		{"TEXT", FormatText},
+		{"  Text  ", FormatText},
+		{"json", FormatJSON},
+		{"JSON", FormatJSON},
+		{"pdf", FormatPDF},
+		{"PDF", FormatPDF},
+		{"auto", FormatAuto},
+		{"AUTO", FormatAuto},
 		{"xml", ""},
 		{"binary", ""},
 	}
@@ -52,9 +52,9 @@ func TestNormalizeContentFormat(t *testing.T) {
 		tc := tc
 		t.Run(tc.input, func(t *testing.T) {
 			t.Parallel()
-			got := normalizeContentFormat(tc.input)
+			got := NormalizeFormat(tc.input)
 			if got != tc.want {
-				t.Errorf("normalizeContentFormat(%q) = %q, want %q", tc.input, got, tc.want)
+				t.Errorf("NormalizeFormat(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}
@@ -72,8 +72,8 @@ func TestResolveAutoContentFormat_JSON(t *testing.T) {
 		`"just a string"`,
 	}
 	for _, in := range inputs {
-		if got := resolveAutoContentFormat(in); got != contentFormatJSON {
-			t.Errorf("resolveAutoContentFormat(%q) = %q, want %q", in, got, contentFormatJSON)
+		if got := ResolveAutoFormat(in); got != FormatJSON {
+			t.Errorf("ResolveAutoFormat(%q) = %q, want %q", in, got, FormatJSON)
 		}
 	}
 }
@@ -87,8 +87,8 @@ func TestResolveAutoContentFormat_Text(t *testing.T) {
 		"{broken json",
 	}
 	for _, in := range inputs {
-		if got := resolveAutoContentFormat(in); got != contentFormatText {
-			t.Errorf("resolveAutoContentFormat(%q) = %q, want %q", in, got, contentFormatText)
+		if got := ResolveAutoFormat(in); got != FormatText {
+			t.Errorf("ResolveAutoFormat(%q) = %q, want %q", in, got, FormatText)
 		}
 	}
 }
@@ -100,7 +100,7 @@ func TestResolveAutoContentFormat_Text(t *testing.T) {
 func TestExtractAnalyzableText_Text(t *testing.T) {
 	t.Parallel()
 	const input = "hello world"
-	got, err := extractAnalyzableText(input, contentFormatText)
+	got, err := ExtractAnalyzable(input, FormatText)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestExtractAnalyzableText_Text(t *testing.T) {
 func TestExtractAnalyzableText_JSON(t *testing.T) {
 	t.Parallel()
 	const input = `{"name":"Alice"}`
-	got, err := extractAnalyzableText(input, contentFormatJSON)
+	got, err := ExtractAnalyzable(input, FormatJSON)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestExtractAnalyzableText_JSON(t *testing.T) {
 
 func TestExtractAnalyzableText_UnknownFormat(t *testing.T) {
 	t.Parallel()
-	_, err := extractAnalyzableText("anything", "xml")
+	_, err := ExtractAnalyzable("anything", "xml")
 	if err == nil {
 		t.Fatal("expected error for unknown format, got nil")
 	}
@@ -134,7 +134,7 @@ func TestExtractAnalyzableText_UnknownFormat(t *testing.T) {
 
 func TestExtractAnalyzableText_PDF_InvalidBase64(t *testing.T) {
 	t.Parallel()
-	_, err := extractAnalyzableText("not-valid-base64!!!", contentFormatPDF)
+	_, err := ExtractAnalyzable("not-valid-base64!!!", FormatPDF)
 	if err == nil {
 		t.Fatal("expected error for invalid base64, got nil")
 	}
@@ -143,7 +143,7 @@ func TestExtractAnalyzableText_PDF_InvalidBase64(t *testing.T) {
 func TestExtractAnalyzableText_PDF_NotAPDF(t *testing.T) {
 	t.Parallel()
 	garbage := base64.StdEncoding.EncodeToString([]byte("this is not a pdf"))
-	_, err := extractAnalyzableText(garbage, contentFormatPDF)
+	_, err := ExtractAnalyzable(garbage, FormatPDF)
 	if err == nil {
 		t.Fatal("expected error for non-PDF bytes, got nil")
 	}
@@ -155,7 +155,7 @@ func TestExtractAnalyzableText_PDF_NotAPDF(t *testing.T) {
 
 func TestExtractAnalyzableText_PDF_ExtractsText(t *testing.T) {
 	t.Parallel()
-	text, err := extractAnalyzableText(pdfFixtureB64(t), contentFormatPDF)
+	text, err := ExtractAnalyzable(pdfFixtureB64(t), FormatPDF)
 	if err != nil {
 		t.Fatalf("extractAnalyzableText: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestExtractAnalyzableText_PDF_MultiPage(t *testing.T) {
 	twoPagePDF := buildTwoPagePDF(t)
 	b64 := base64.StdEncoding.EncodeToString(twoPagePDF)
 
-	text, err := extractAnalyzableText(b64, contentFormatPDF)
+	text, err := ExtractAnalyzable(b64, FormatPDF)
 	if err != nil {
 		t.Fatalf("extractAnalyzableText: %v", err)
 	}
@@ -264,7 +264,7 @@ func padZero(n, width int) string {
 func TestTransformJSONStringLeaves_FlatObject(t *testing.T) {
 	t.Parallel()
 	input := `{"name":"Alice","city":"New York"}`
-	got, err := transformJSONStringLeaves(input, func(s string) (string, error) {
+	got, err := TransformJSONStringLeaves(input, func(s string) (string, error) {
 		return strings.ToUpper(s), nil
 	})
 	if err != nil {
@@ -278,7 +278,7 @@ func TestTransformJSONStringLeaves_FlatObject(t *testing.T) {
 func TestTransformJSONStringLeaves_NestedObject(t *testing.T) {
 	t.Parallel()
 	input := `{"person":{"name":"Bob","age":30}}`
-	got, err := transformJSONStringLeaves(input, func(s string) (string, error) {
+	got, err := TransformJSONStringLeaves(input, func(s string) (string, error) {
 		return "[" + s + "]", nil
 	})
 	if err != nil {
@@ -296,7 +296,7 @@ func TestTransformJSONStringLeaves_NestedObject(t *testing.T) {
 func TestTransformJSONStringLeaves_Array(t *testing.T) {
 	t.Parallel()
 	input := `["alpha","beta","gamma"]`
-	got, err := transformJSONStringLeaves(input, func(s string) (string, error) {
+	got, err := TransformJSONStringLeaves(input, func(s string) (string, error) {
 		return s + "!", nil
 	})
 	if err != nil {
@@ -311,7 +311,7 @@ func TestTransformJSONStringLeaves_Array(t *testing.T) {
 
 func TestTransformJSONStringLeaves_InvalidJSON(t *testing.T) {
 	t.Parallel()
-	_, err := transformJSONStringLeaves("{broken", func(s string) (string, error) {
+	_, err := TransformJSONStringLeaves("{broken", func(s string) (string, error) {
 		return s, nil
 	})
 	if err == nil {

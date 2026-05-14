@@ -1,4 +1,4 @@
-package platform
+package content
 
 import "testing"
 
@@ -59,9 +59,9 @@ func TestDetectLanguage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := detectLanguage(tc.text)
+			got := DetectLanguage(tc.text)
 			if got != tc.want {
-				t.Fatalf("detectLanguage(%q) = %q, want %q", tc.text, got, tc.want)
+				t.Fatalf("DetectLanguage(%q) = %q, want %q", tc.text, got, tc.want)
 			}
 		})
 	}

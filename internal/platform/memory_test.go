@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/anonde-io/anonde/internal/content"
 )
 
 func TestMemoryVault_TTLExpiry(t *testing.T) {
@@ -32,7 +34,7 @@ func TestMemoryStore_TTLExpiry(t *testing.T) {
 	err := store.Put(context.Background(), StoreRecord{
 		TenantID:          "acme",
 		ID:             "doc-1",
-		ContentFormat:     contentFormatText,
+		ContentFormat:     content.FormatText,
 		AnonymizedContent: "<EMAIL_ACME_1>",
 	})
 	if err != nil {
