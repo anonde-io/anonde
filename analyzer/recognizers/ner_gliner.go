@@ -205,6 +205,12 @@ type GLiNERRecognizer struct {
 	// prompt tokens from text tokens by their char offset.
 	promptString     string
 	promptCharLength int
+
+	// promptIDs caches the tokenised prompt prefix (post strip-specials).
+	// The prompt is constant for the recognizer's lifetime; encoding it
+	// per chunk was ~5-10 ms of wasted work × N chunks per long doc.
+	// Computed in init() once tokenizer + prompt string are ready.
+	promptIDs []int
 }
 
 // NewGLiNERRecognizer constructs a recognizer with the given config. A
@@ -361,6 +367,38 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		sb.WriteByte(' ')
 		r.promptString = sb.String()
 		r.promptCharLength = len(r.promptString)
+
+		// Cache the prompt's tokenisation under the same With() options
+		// runChunk uses (AddSpecialTokens=false). Done here because:
+		//   * the prompt is constant per recognizer — re-encoding it per
+		//     chunk was a measurable cost on long-doc multi-chunk runs
+		//     (~5-10 ms × N chunks per Analyze on pmc_de-shaped inputs).
+		//   * doing it inside r.mu-guarded runChunk is fine, but the
+		//     init() once-only flow is the right home for constant-data
+		//     computation.
+		// Strip-specials defensively in case the tokenizer's post-
+		// processor template injects [CLS]/[SEP] even when
+		// AddSpecialTokens=false is set (observed on some HF setups).
+		if err := tok.With(api.EncodeOptions{AddSpecialTokens: false, IncludeSpans: false}); err != nil {
+			r.initErr = fmt.Errorf("gliner: configure tokenizer for prompt encode: %w", err)
+			return
+		}
+		r.promptIDs = stripBoundarySpecials(
+			tok.Encode(r.promptString),
+			gliner_clsID(tok),
+			gliner_sepID(tok),
+		)
+		// Restore the runtime-default options. runChunk re-sets
+		// AddSpecialTokens=false locally under r.mu and restores on
+		// defer; this baseline matches what init() previously left.
+		if err := tok.With(api.EncodeOptions{
+			AddSpecialTokens:         true,
+			IncludeSpans:             true,
+			IncludeSpecialTokensMask: true,
+		}); err != nil {
+			r.initErr = fmt.Errorf("gliner: restore tokenizer options after prompt encode: %w", err)
+			return
+		}
 
 		// --- onnxruntime environment ------------------------------
 		if err := initOrtEnvironment(r.cfg.SharedLibraryPath); err != nil {
@@ -645,11 +683,8 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		})
 	}()
 
-	promptIDs := r.tokenizer.Encode(r.promptString)
-	// Drop any trailing [SEP]/[CLS] that snuck through (shouldn't with
-	// AddSpecialTokens=false, but defensive — DeBERTa templates can
-	// inject them).
-	promptIDs = stripBoundarySpecials(promptIDs, gliner_clsID(r.tokenizer), gliner_sepID(r.tokenizer))
+	// Prompt is constant across all chunks; init() pre-encoded it.
+	promptIDs := r.promptIDs
 
 	// Per-word tokenisation, preserving the word index for each subword.
 	// The first subword of each word emits a 1-based mask value; all
