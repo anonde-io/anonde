@@ -77,6 +77,7 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 
 	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/anonymizer"
 )
 
 // Hard-coded model parameters. The Python sidecar uses identical
@@ -662,6 +663,18 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 			})
 		}
 	}
+
+	// Merge adjacent same-type spans at the NER level. The anonymizer
+	// runs the same pass downstream before tokenisation (see
+	// anonymizer.MergeAdjacentSameType call site), so production
+	// redaction is unaffected — but the bench scores per-cell JSONLs
+	// emitted directly by the recognizer, and fragmented spans like
+	// ["Maria", "Lopez"] tank strict-F1 vs ["Maria Lopez"]. Doing the
+	// merge here brings the bench numbers in line with what production
+	// actually emits. The merge is conservative (ASCII-whitespace gap,
+	// identical entity type) and idempotent, so the downstream
+	// anonymizer call is a safe no-op.
+	results = anonymizer.MergeAdjacentSameType(results, text)
 	return results, nil
 }
 
