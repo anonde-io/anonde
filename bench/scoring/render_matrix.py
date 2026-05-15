@@ -157,11 +157,35 @@ def _leak_rate(gold, pred):
     return leaked, len(gold)
 
 
-def _evaluate(gold_docs, pred_docs, gmap, pmap, canon_set):
+def _weighted_leak_rate(gold, pred, severity: dict):
+    """Same overlap-based leak detection as `_leak_rate`, but each
+    gold span contributes its `severity[type]` to both numerator
+    (when leaked) and denominator (always). Missing types default to
+    1.0; weight 0 drops the span from the metric entirely.
+
+    Returns (leaked_weight, total_weight) as floats so the upstream
+    sum across all docs accumulates cleanly.
+    """
+    if not gold:
+        return 0.0, 0.0
+    leaked_w = 0.0
+    total_w = 0.0
+    for g in gold:
+        w = float(severity.get(g.type, 1.0))
+        if w <= 0:
+            continue
+        total_w += w
+        if not any(_overlap(p, g) for p in pred):
+            leaked_w += w
+    return leaked_w, total_w
+
+
+def _evaluate(gold_docs, pred_docs, gmap, pmap, canon_set, severity):
     strict = defaultdict(lambda: [0, 0, 0])
     partial = defaultdict(lambda: [0, 0, 0])
     typeonly = defaultdict(lambda: [0, 0, 0])
     leaked, total_gold = 0, 0
+    leaked_w, total_gold_w = 0.0, 0.0
     durations = []
     for doc_id, gdoc in gold_docs.items():
         g = _gold_spans(gdoc, gmap, canon_set)
@@ -175,11 +199,15 @@ def _evaluate(gold_docs, pred_docs, gmap, pmap, canon_set):
             typeonly[t][0] += tp; typeonly[t][1] += fp; typeonly[t][2] += fn
         lk, tot = _leak_rate(g, p)
         leaked += lk; total_gold += tot
+        lkw, totw = _weighted_leak_rate(g, p, severity)
+        leaked_w += lkw; total_gold_w += totw
         if "duration_ms" in pdoc:
             durations.append(float(pdoc["duration_ms"]))
     return {
         "strict": dict(strict), "partial": dict(partial), "type_only": dict(typeonly),
-        "leaked": leaked, "total_gold": total_gold, "durations": durations,
+        "leaked": leaked, "total_gold": total_gold,
+        "leaked_weighted": leaked_w, "total_gold_weighted": total_gold_w,
+        "durations": durations,
     }
 
 
@@ -401,6 +429,57 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
+    # ---- Severity-weighted leak rate --------------------------------
+    # A leaked SSN is not equivalent to a leaked city. Weighted leak
+    # multiplies each gold span by its severity weight (label_map.yaml
+    # `severity:` section) before computing the ratio. Direct
+    # identifiers (PERSON, PHONE, EMAIL, ADDRESS, dates) weigh 5;
+    # high-stakes IDs (SSN/MRN/IBAN) weigh 10; quasi-identifiers
+    # (LOCATION, ORG, PROFESSION, generic URL/AGE) weigh 1.
+    #
+    # Why this column exists: compliance teams already think in tiers,
+    # and the raw leak rate flattens that signal. A bench that scores
+    # tools only on raw recall rewards "catch everything that's easy"
+    # over "catch the things that matter." This row weights toward the
+    # things that matter.
+    sev = label_map.get("severity") or {}
+    if sev:
+        out.append("## Severity-weighted leak rate · lower is better\n")
+        out.append("Raw leak rate weights every span equally; severity-weighted leak "
+                   "multiplies each by its compliance impact tier — direct identifiers "
+                   "(PERSON, EMAIL, PHONE, ADDRESS, DOB) = 5, high-stakes IDs "
+                   "(SSN/MRN/IBAN) = 10, quasi-identifiers (LOCATION, ORG, PROFESSION) "
+                   "= 1. Defaults in `label_map.yaml::severity` — override per use case.\n")
+        out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+        out.append("|---|" + "---:|" * len(engines))
+        for c in corpora:
+            scorable_cell = next((rows[(c, e)] for e in engines
+                                  if (c, e) in rows and rows[(c, e)]["total_gold_weighted"] > 0), None)
+            if scorable_cell is None:
+                out.append(f"| `{c}` |" + " – |" * len(engines))
+                continue
+            cells = [f"| `{c}` |"]
+            best_rate = float("inf")
+            rates: list[float | None] = []
+            for e in engines:
+                cell = rows.get((c, e))
+                if cell is None or cell["total_gold_weighted"] == 0:
+                    rates.append(None)
+                else:
+                    r = cell["leaked_weighted"] / cell["total_gold_weighted"]
+                    rates.append(r)
+                    best_rate = min(best_rate, r)
+            for r in rates:
+                if r is None:
+                    cells.append("– |")
+                    continue
+                txt = f"{r:.1%}"
+                if abs(r - best_rate) < 1e-9:
+                    txt = f"**{txt}** 🥇"
+                cells.append(f"{txt} |")
+            out.append(" ".join(cells))
+        out.append("")
+
     # ---- Latency grid (mixed units, p50 + p95) ----------------------
     # Two columns per engine — p50 for steady-state UX, p95 for the
     # tail. Mean + p99 are in results_matrix.csv. We bias to p95 over
@@ -604,6 +683,11 @@ def _render(rows, label_map, corpora, engines):
 - **Leak rate** = the fraction of gold PHI spans no predicted span overlaps. The single most
   important number for a PII redactor: each leaked span is a real piece of PHI we'd have
   missed in production.
+- **Severity-weighted leak rate** = the same metric, but each leaked span contributes its
+  compliance-impact weight (defaults: 10 for IDs / IBAN, 5 for PERSON / contact / DOB / street,
+  1 for LOCATION / ORG / PROFESSION / generic URL, 0 to drop entirely). Use this when
+  comparing tools for a procurement / compliance decision — flat leak rate over-rewards
+  catching the easy quasi-identifiers and under-counts missing the hard ones.
 - **Type-agnostic F1** = harmonic mean of precision and recall using overlap matching; ignores
   the entity-type label. Useful as a tie-breaker when leak rates are close.
 - **Strict F1** = exact start, end, and type match against gold. The CoNLL-style metric every
@@ -651,6 +735,7 @@ def main() -> int:
     canonical = list(label_map.get("canonical", []))
     canon_set = set(canonical) | {"OTHER"}
     gmap = label_map.get("gold", {}) or {}
+    severity = label_map.get("severity", {}) or {}
 
     root = Path(args.corpora_root)
     rows: dict[tuple[str, str], dict] = {}
@@ -666,7 +751,7 @@ def main() -> int:
                 continue
             pmap = _pmap_for(e, label_map)
             preds = _load_jsonl(pred_path)
-            rows[(c, e)] = _evaluate(gold, preds, gmap, pmap, canon_set)
+            rows[(c, e)] = _evaluate(gold, preds, gmap, pmap, canon_set, severity)
 
     Path(args.out).write_text(_render(rows, label_map, corpora, engines), encoding="utf-8")
     print(f"wrote {args.out}", file=sys.stderr)

@@ -17,6 +17,35 @@ canonical:
   - ADDRESS
   - PROFESSION
 
+# Per-entity severity weights for the **severity-weighted leak rate**.
+# A leaked SSN is not equivalent to a leaked city name; compliance
+# teams already think in tiers. Defaults follow a 1 / 5 / 10 scale:
+#
+#   10 — irrecoverable harm if leaked: account/financial/medical IDs.
+#    5 — direct identifier: name, contact info, street-level address,
+#        date-of-birth-ish dates.
+#    1 — quasi-identifier or contextual: city-level location, org,
+#        general date, age band, profession, generic URL.
+#    0 — drop from the weighted leak metric entirely (informational).
+#
+# The raw (unweighted) leak rate still reports alongside; the weighted
+# rate is an additional column, not a replacement. Override by
+# editing this section — the renderer reads it at run time.
+severity:
+  PERSON: 5
+  LOCATION: 1
+  ORGANIZATION: 1
+  DATE: 5            # DOB-class dates dominate; if your corpus is appointment-dates, lower to 1
+  AGE: 1
+  PHONE: 5
+  EMAIL: 5
+  URL: 1
+  ID: 10
+  IBAN: 10
+  ADDRESS: 5
+  PROFESSION: 1
+  OTHER: 0           # chemicals, drug mentions etc — not PHI
+
 # Gold-side label mapping. Covers GraSCCo (GeMTeX DeID layer) plus the
 # standard NER vocabularies used by CoNLL-2003, GermEval-14, WNUT-17,
 # WikiAnn, and the synthetic corpora.
