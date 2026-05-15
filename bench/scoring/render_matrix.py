@@ -462,6 +462,70 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
+    # ---- Strict F1 by entity type (per-canonical breakdown) --------
+    # Reviewers comparing anonde to academic NER baselines need to see
+    # per-entity numbers, not just micro-averages. Previously this only
+    # lived in results_matrix.csv; promoting to the matrix report makes
+    # the bench citable without anyone having to grep the CSV. One
+    # table per canonical entity type that has any gold in the corpora;
+    # entity types with no gold (e.g. PROFESSION on EN-only corpora)
+    # are skipped entirely.
+    out.append("## Strict F1 · by entity type\n")
+    out.append("Per-entity-type breakdown of strict F1. `–` in a cell means no "
+               "gold of that type was annotated in that corpus; not that the "
+               "engine missed it. Full TP/FP/FN counts are in "
+               "`results_matrix.csv`.\n")
+    for ent in canonical:
+        # Skip entity types with no gold across the entire matrix.
+        any_gold = False
+        for c in corpora:
+            for e in engines:
+                cell = rows.get((c, e))
+                if cell is None:
+                    continue
+                tp, _, fn = cell["strict"].get(ent, [0, 0, 0])
+                if (tp + fn) > 0:
+                    any_gold = True
+                    break
+            if any_gold:
+                break
+        if not any_gold:
+            continue
+        out.append(f"### {ent}\n")
+        out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+        out.append("|---|" + "---:|" * len(engines))
+        for c in corpora:
+            # Only emit a corpus row when at least one engine had gold
+            # of this type in this corpus.
+            row_has_gold = False
+            f1s: list[float | None] = []
+            for e in engines:
+                cell = rows.get((c, e))
+                if cell is None:
+                    f1s.append(None)
+                    continue
+                tp, fp, fn = cell["strict"].get(ent, [0, 0, 0])
+                if (tp + fn) == 0:
+                    f1s.append(None)
+                    continue
+                _, _, f = _prf(tp, fp, fn)
+                f1s.append(f)
+                row_has_gold = True
+            if not row_has_gold:
+                continue
+            cells = [f"| `{c}` |"]
+            best = max((f for f in f1s if f is not None and f > 0), default=None)
+            for f in f1s:
+                if f is None:
+                    cells.append("– |")
+                    continue
+                txt = f"{f:.3f}"
+                if best is not None and abs(f - best) < 1e-9 and f > 0:
+                    txt = f"**{txt}** 🥇"
+                cells.append(f"{txt} |")
+            out.append(" ".join(cells))
+        out.append("")
+
     # ---- Type-agnostic F1 (the "did we find the span at all" view) -
     out.append("## F1 reference · type-agnostic\n")
     out.append("Any predicted span overlapping a gold span counts as a hit, regardless of "
@@ -546,6 +610,9 @@ def _render(rows, label_map, corpora, engines):
   NER paper publishes; useful for direct academic comparison. Less useful as a redaction
   metric, since a span that's 11 chars vs gold's 5 still successfully tokenises (the
   cleartext is gone either way) — but every leaked span is one we'd have shipped in prod.
+- **Strict F1 by entity type** = the same metric broken out per canonical entity. `–` cells
+  mean no gold of that type was annotated in that corpus (e.g. WikiAnn has no DATE / AGE
+  spans), not that the engine missed it.
 - **`–` cells** = engine not run on that corpus. Reasons: language mismatch (Presidio is EN
   only), per-doc cost too high (openai-pf at 80sec/doc on CPU), or corpus requires manual
   DUA registration (`ggponc_de`).
