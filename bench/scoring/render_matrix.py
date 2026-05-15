@@ -363,6 +363,36 @@ def _render(rows, label_map, corpora, engines):
             "Add a corpus with `entities: [...]` in its `corpus.jsonl` to enable F1 + leak-rate metrics.\n"
         )
 
+    # ---- Engine profiles --------------------------------------------
+    # Anonde-patterns and anonde-gliner are NOT two competing tools —
+    # they're two deployment profiles of the same toolkit. Patterns is
+    # the no-ML / no-CGO / 12 MB image baseline; gliner is the +470 MB
+    # ML-backed production stack. Surfacing this up front so a reader
+    # interprets the leak-rate tables as "compare across rows" not
+    # "anonde-patterns ought to beat anonde-gliner".
+    out.append("## Engine profiles\n")
+    out.append("Engines below are not all competitors. `anonde-patterns` and "
+               "`anonde-gliner` are two deployment tiers of the same anonde "
+               "binary; compare *across the row* for the trade-off, not against "
+               "each other for "
+               "a winner.\n")
+    out.append("| Engine | Profile | Image | CGO | Cold start | Best fit |")
+    out.append("|---|---|---|---|---|---|")
+    out.append("| `anonde-patterns` | regex / no-ML baseline (anonde tier 1) | "
+               "~12 MB | not required | <1 s | structured slot-gen text (forms, "
+               "logs, finance/legal docs) — wins F1 on PHONE, EMAIL, DATE, "
+               "PROFESSION when the regex shape is tight |")
+    out.append("| `anonde-gliner` | GLiNER PII + patterns (anonde tier 2, "
+               "**production**) | ~470 MB | required | 5-30 s warmup | natural "
+               "text + multilingual PHI; wins leak rate on most gold corpora |")
+    out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) | "
+               "~1 GB | not required | 3-10 s | well-formed English "
+               "(strong on EN newswire-shaped text where spaCy was trained) |")
+    out.append("| `gliner-py` | GLiNER via PyTorch + safetensors (FP32) | "
+               "~3 GB | not required | 10-30 s | reference implementation; "
+               "parity check vs anonde-gliner's INT8 ONNX path |")
+    out.append("")
+
     # ---- per-corpus verdict cards -----------------------------------
     out.append("## Per-corpus verdict\n")
     out.append("`🟢/🟡/🟠/🔴/💀` flags the production engine's leak severity on each corpus. "
