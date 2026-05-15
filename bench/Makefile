@@ -272,8 +272,8 @@ matrix: $(addprefix corpus-,$(ALL_CORPORA)) render
 matrix-de: $(addprefix corpus-,$(DE_CORPORA))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
-	  --corpus $(DE_CORPORA) \
-	  --engine $(ENGINES) \
+	  --corpus "$(DE_CORPORA)" \
+	  --engine "$(ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
@@ -281,8 +281,8 @@ matrix-de: $(addprefix corpus-,$(DE_CORPORA))
 matrix-en: $(addprefix corpus-,$(EN_CORPORA))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
-	  --corpus $(EN_CORPORA) \
-	  --engine $(ENGINES) \
+	  --corpus "$(EN_CORPORA)" \
+	  --engine "$(ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
@@ -290,8 +290,8 @@ matrix-en: $(addprefix corpus-,$(EN_CORPORA))
 matrix-es: $(addprefix corpus-,$(ES_CORPORA))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
-	  --corpus $(ES_CORPORA) \
-	  --engine $(ENGINES) \
+	  --corpus "$(ES_CORPORA)" \
+	  --engine "$(ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
@@ -300,8 +300,8 @@ matrix-es: $(addprefix corpus-,$(ES_CORPORA))
 render:
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
-	  --corpus $(ALL_CORPORA) \
-	  --engine $(ENGINES) \
+	  --corpus "$(ALL_CORPORA)" \
+	  --engine "$(ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
