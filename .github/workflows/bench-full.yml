@@ -161,11 +161,24 @@ jobs:
           path: ~/.cache/anonde/models
           key: anonde-models-gliner-pii-base-v1.0
 
+      # Cache key includes the recognizer + bench-runner source as well
+      # as the corpus loader, because the cached path contains BOTH the
+      # gold corpus.jsonl AND the per-cell prediction JSONLs. Restoring
+      # stale predictions after a recognizer change would silently make
+      # the bench report meaningless. Glob `analyzer/recognizers/*.go`
+      # catches both the GLiNER recognizer + its config; test files are
+      # harmless to include (rarely change in ways that affect output).
+      # The bench/runners/anonde.go path covers changes to the bench
+      # runner itself.
+      #
+      # Bumping the cache key by editing any of these files forces a
+      # full rebuild of the corpus's gold + every cell. The HF + spaCy +
+      # libonnxruntime caches are unaffected (separate keys).
       - name: Cache corpus data
         uses: actions/cache@v4
         with:
           path: bench/corpora/${{ matrix.corpus }}/data
-          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus)) }}-maxdocs${{ env.MAX_DOCS }}
+          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go') }}-maxdocs${{ env.MAX_DOCS }}
 
       - name: Verify hugot build (the bench needs it)
         run: |
