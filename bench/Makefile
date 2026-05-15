@@ -47,9 +47,6 @@ HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
 NER_SCORE_FLOOR  ?= 0
-# OpenAI Privacy Filter — first run pulls ~2.8 GB safetensors from HF Hub.
-# Point at a pre-downloaded snapshot dir to skip the download.
-OPENAI_PF_MODEL  ?= openai/privacy-filter
 
 # Per-language corpus partitions. ggponc_de is OMITTED from the matrix
 # because its corpus requires manual registration + extraction (see
@@ -68,19 +65,21 @@ EN_CORPORA := ai4privacy_en conll2003_en wnut_17
 ES_CORPORA := pharmaconer_es
 ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA)
 
-# The five engines the matrix scores. Each row's name is what compare.py
+# The four engines the matrix scores. Each row's name is what compare.py
 # routes through the label_map (so prefixes matter — see compare.py).
-ENGINES := anonde-patterns anonde-gliner presidio gliner-py openai-pf
-# anonde-hugot is dropped from the auto-matrix because its XLM-R PII model
-# is ~25,000x slower than patterns and the openmed cell already proved it
-# strictly underperforms anonde-gliner (F1 0.473 vs 0.529 on GraSCCo).
-# openai-pf is in the ENGINES list (so render_matrix.py picks up its
-# existing openmed/pmc_de cells) but excluded from the corpus-* auto deps
-# because at ~80 sec/doc on CPU it makes large corpora untractable (160+
-# min for synth_clinical alone). To bench it on a new corpus:
-#   make bench/corpora/<NAME>/data/anonde_openai-pf.jsonl
-# Run hugot manually similarly:
+ENGINES := anonde-patterns anonde-gliner presidio gliner-py
+# anonde-hugot and openai-pf are dropped from the auto-matrix:
+#   * hugot's XLM-R PII model is ~25 000× slower than patterns and the
+#     openmed cell proved it strictly underperforms anonde-gliner
+#     (F1 0.473 vs 0.529 on GraSCCo).
+#   * openai-pf at ~80 sec/doc on CPU makes large corpora untractable
+#     (160+ min for synth_clinical alone); the historical cells it
+#     produced (98 % leak on German clinical) showed the model has no
+#     advantage over GLiNER PII on this matrix.
+# Both are still reachable as one-off targets if anyone wants to bench
+# them manually:
 #   make -C bench/corpora/<NAME> all ANONDE_BACKEND=hugot
+#   $(PYTHON) bench/runners/openai_pf.py --in <gold> --out <preds>.jsonl
 
 MATRIX_REPORT := $(HERE)REPORT_MATRIX.md
 MATRIX_CSV    := $(HERE)results_matrix.csv
@@ -211,37 +210,12 @@ $(CORPORA_DIR)/$(1)/data/anonde_gliner-py.jsonl: | data-$(1)
 	  echo "[matrix] WARN: gliner-py cell for $(1) failed — render will show as missing"
 endef
 
-# openai-pf cell: OpenAI Privacy Filter — 128-expert MoE token classifier
-# released April 2026. Included as the "best in market" baseline from a
-# major commercial vendor. English-trained; weak on German clinical text
-# in earlier benches (98% leak on GraSCCo) — kept in the matrix for the
-# multilingual comparison story. First run downloads ~2.8 GB safetensors
-# into ~/.cache/huggingface; override the path with OPENAI_PF_MODEL_PATH.
-# Cell tolerates failure: a `|| true` on the runner exit lets render_matrix
-# show the row as missing rather than aborting the whole matrix.
-define CELL_openai_pf
-# NOT .PHONY: cache existing per-cell outputs so partial matrices don't re-run.
-# data-$(1) is .PHONY which triggers make's "if newer than target" check,
-# but the data target itself is a no-op if data/corpus.jsonl exists, so the
-# cell's output mtime usually wins → cell skipped. Force a re-run by
-# `rm bench/corpora/<c>/data/anonde_<engine>.jsonl` before `make matrix`.
-$(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl: | data-$(1)
-	@echo "[matrix] $(1) x openai-pf"
-	$(PYTHON) $(ROOT)/bench/runners/openai_pf.py \
-	  --in  $(CORPORA_DIR)/$(1)/data/corpus.jsonl \
-	  --out $(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl \
-	  --model "$(OPENAI_PF_MODEL)" \
-	  --engine-label openai-pf || \
-	  echo "[matrix] WARN: openai-pf cell for $(1) failed — render will show as missing"
-endef
-
 # Expand per-corpus, per-engine. Presidio only runs on English corpora —
 # the spaCy/en_core_web_lg model is English-only.
 $(foreach c,$(ALL_CORPORA),\
   $(foreach e,anonde-patterns anonde-gliner,\
     $(eval $(call CELL_anonde,$(c),$(e))))\
-  $(eval $(call CELL_gliner_py,$(c)))\
-  $(eval $(call CELL_openai_pf,$(c))))
+  $(eval $(call CELL_gliner_py,$(c))))
 
 $(foreach c,$(EN_CORPORA),\
   $(eval $(call CELL_presidio,$(c))))
