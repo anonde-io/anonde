@@ -1,0 +1,230 @@
+name: bench-history
+
+# Snapshot the bench REPORT_MATRIX whenever a release tag is pushed.
+#
+# This workflow runs the same matrix subset as the main bench CI
+# (openmed + synth_clinical × 3 engines) and, on success, commits the
+# rendered REPORT to bench/history/v<tag>.md so the repo carries a
+# permanent timeline of bench results across releases.
+#
+# Why a separate workflow:
+#   * Tag pushes deserve a full, deterministic re-run rather than
+#     reusing whatever bench/REPORT_MATRIX.md was last rendered on
+#     main — a tag is a semantic "this is what shipped" anchor.
+#   * The commit-back step needs `contents: write`; we don't want
+#     every push to main to carry that permission.
+#
+# Reading the resulting history:
+#   ls bench/history/                   # one file per shipped version
+#   git diff bench/history/v0.2.0.md bench/history/v0.3.0.md
+#
+# The workflow is dormant until the first tag is pushed (`git tag v0.1.0
+# && git push --tags`).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual dispatch lets you snapshot off-cycle without tagging — useful
+  # for one-off "what did the bench look like on this commit?" capture.
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Filename label (default: short-sha). Will be saved as bench/history/<label>.md.'
+        required: false
+        default: ''
+
+concurrency:
+  group: bench-history-${{ github.ref }}
+  # Don't cancel a running tag job — losing the snapshot for a shipped
+  # release is worse than running it twice.
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ORT_VERSION: "1.26.0"
+      ORT_LIB_DIR: ${{ github.workspace }}/.tokenlib
+      ORT_LIB: ${{ github.workspace }}/.tokenlib/libonnxruntime.so
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # We're about to commit back; need write-credentialed checkout.
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Fetch enough history to push a sensible commit.
+          fetch-depth: 0
+
+      - name: Compute snapshot label
+        id: label
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            LABEL="${{ github.ref_name }}"
+          elif [[ -n "${{ inputs.label }}" ]]; then
+            LABEL="${{ inputs.label }}"
+          else
+            LABEL="snapshot-$(git rev-parse --short HEAD)"
+          fi
+          # Sanitize: only [A-Za-z0-9._-].
+          LABEL=$(echo "$LABEL" | tr -c 'A-Za-z0-9._-' '_')
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+          echo "Snapshot label: $LABEL"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: bench/requirements.txt
+
+      - name: Cache libonnxruntime
+        id: ort-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ORT_LIB_DIR }}
+          key: libonnxruntime-${{ env.ORT_VERSION }}-linux-x64
+
+      - name: Download libonnxruntime
+        if: steps.ort-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$ORT_LIB_DIR"
+          curl -fsSL \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
+            -o /tmp/ort.tgz
+          tar -xzf /tmp/ort.tgz -C /tmp
+          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" \
+             "$ORT_LIB_DIR/libonnxruntime.so"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r bench/requirements.txt
+
+      - name: Cache HuggingFace model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-gliner-pii-base-v1.0
+
+      - name: Cache anonde model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/anonde/models
+          key: anonde-models-gliner-pii-base-v1.0
+
+      - name: Run bench matrix (openmed + synth_clinical × 3 engines)
+        env:
+          ORT_LIB: ${{ env.ORT_LIB }}
+        run: |
+          set -euo pipefail
+          make -C bench corpus-openmed PYTHON=python3
+          make -C bench corpus-synth_clinical PYTHON=python3
+
+      - name: Render REPORT_MATRIX
+        run: |
+          python bench/scoring/render_matrix.py \
+            --corpora-root bench/corpora \
+            --corpus openmed --corpus synth_clinical \
+            --engine anonde-patterns --engine anonde-gliner --engine gliner-py \
+            --label-map bench/scoring/label_map.yaml \
+            --out bench/REPORT_MATRIX.md \
+            --csv bench/results_matrix.csv
+
+      # Sanity check — same canary as the main bench workflow. If GLiNER
+      # silently fell back to patterns, don't pollute the history with
+      # mis-labelled numbers.
+      - name: Guard rail — GLiNER actually fired
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          failures = []
+          for corpus in ("openmed", "synth_clinical"):
+              path = f"bench/corpora/{corpus}/data/anonde_anonde-gliner.jsonl"
+              ner_like = 0
+              with open(path) as fh:
+                  for line in fh:
+                      d = json.loads(line)
+                      for f in d.get("findings", []):
+                          s = f.get("score", 0)
+                          if abs(s * 20 - round(s * 20)) > 1e-6:
+                              ner_like += 1
+              if ner_like == 0:
+                  failures.append(f"{corpus}: 0 NER-attributable findings — GLiNER silently fell back to patterns")
+              else:
+                  print(f"  {corpus}: {ner_like} NER-attributable findings — OK")
+          if failures:
+              print("\nGuard rail FAILED:")
+              for f in failures:
+                  print("  " + f)
+              sys.exit(1)
+          PYEOF
+
+      # The actual snapshot step: copy the freshly-rendered report into
+      # bench/history/<label>.md and commit it on main. We do NOT push
+      # back to the tag — tags are immutable in spirit and history files
+      # live on main alongside the codebase that produced them.
+      - name: Commit snapshot to main
+        run: |
+          set -euo pipefail
+          mkdir -p bench/history
+          LABEL='${{ steps.label.outputs.label }}'
+          DEST="bench/history/${LABEL}.md"
+
+          # Prepend a header so a reader can tell at a glance what they're
+          # looking at.
+          {
+            echo "<!--"
+            echo "  Snapshot of bench/REPORT_MATRIX.md captured by the"
+            echo "  bench-history workflow."
+            echo ""
+            echo "  Label:    ${LABEL}"
+            echo "  Commit:   ${{ github.sha }}"
+            echo "  Ref:      ${{ github.ref }}"
+            echo "  Run:      ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "  Run when: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "-->"
+            echo ""
+            cat bench/REPORT_MATRIX.md
+          } > "$DEST"
+
+          git config user.name  "bench-history[bot]"
+          git config user.email "bench-history[bot]@users.noreply.github.com"
+
+          # Commit on a fresh branch off main, then push. We avoid
+          # checking out main directly because tag builds start in
+          # detached-HEAD; getting back to main and rebasing the commit
+          # adds complexity for no benefit.
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          git add "$DEST"
+          if git diff --staged --quiet; then
+            echo "no changes to commit (snapshot is identical to existing file)"
+          else
+            git commit -m "bench: snapshot REPORT_MATRIX for ${LABEL}"
+            git push origin main
+          fi
+
+      - name: Upload as artifact too
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-history-${{ steps.label.outputs.label }}
+          path: |
+            bench/REPORT_MATRIX.md
+            bench/results_matrix.csv
+            bench/history/${{ steps.label.outputs.label }}.md
+          retention-days: 90
