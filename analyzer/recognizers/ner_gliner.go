@@ -90,6 +90,16 @@ const (
 	gliner_sepToken = "<<SEP>>"
 
 	defaultGLiNERThreshold = 0.40
+
+	// defaultPersonThreshold is the per-class threshold applied to PERSON
+	// labels. The model emits broader-name spans (e.g. "Jane Doe") with
+	// noticeably lower confidence than the leading single-token name
+	// ("Jane"); at the global threshold (0.40) only the narrow span
+	// survives and the surname leaks to the LLM. 0.25 is the empirical
+	// floor that recovers all repro fixtures in TestGLiNER_PersonBreadth
+	// without introducing new false positives — going lower (0.10) starts
+	// flagging "it", "Contact", "." as PERSON in the same probes.
+	defaultPersonThreshold = 0.25
 	defaultGLiNERMaxWidth  = 12
 	defaultGLiNERMaxTokens = 384
 
@@ -840,10 +850,29 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		return nil, fmt.Errorf("model returned %d classes, expected %d (labels)", numClasses, len(r.labels))
 	}
 
-	// --- 9. Decode: sigmoid > threshold, greedy non-overlap. ---------
-	threshold := r.threshold
-	// Pre-sigmoid threshold lets us reject without per-class exp().
-	logitThresh := math.Log(threshold/(1-threshold)) - 1e-9
+	// --- 9. Decode: sigmoid > per-class threshold, greedy non-overlap. ---
+	//
+	// PERSON labels get a more permissive threshold (defaultPersonThreshold)
+	// than the global one. The GLiNER PII model is consistently more
+	// confident about the *first* word of a name than the *full* span:
+	// for "Contact Jane Doe about it." it emits "Jane" with logit ≈ 0.46
+	// and "Jane Doe" with logit ≈ 0.26. At the production threshold (0.40)
+	// only "Jane" survives, and the surname ships unmasked to the LLM —
+	// a critical PII leak. Lowering the PERSON-only threshold to 0.25
+	// recovers the broader candidate, and the wider-span sort tie-break
+	// below picks it over the narrower one. Other classes keep the
+	// stricter threshold so PERSON ≠ recall regression for everything else.
+	perClassThresh := make([]float64, numClasses)
+	perClassLogit := make([]float64, numClasses)
+	for c := 0; c < numClasses; c++ {
+		t := r.threshold
+		if c < len(r.labels) && r.labelToEntity[r.labels[c]] == "PERSON" && t > defaultPersonThreshold {
+			t = defaultPersonThreshold
+		}
+		perClassThresh[c] = t
+		// Pre-sigmoid threshold lets us reject without per-class exp().
+		perClassLogit[c] = math.Log(t/(1-t)) - 1e-9
+	}
 
 	type spanCand struct {
 		s, w, c int
@@ -864,11 +893,11 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 			base := (s*KDim + w) * numClasses
 			for c := 0; c < numClasses; c++ {
 				logit := float64(flatLogits[base+c])
-				if logit < logitThresh {
+				if logit < perClassLogit[c] {
 					continue
 				}
 				score := 1.0 / (1.0 + math.Exp(-logit))
-				if score < threshold {
+				if score < perClassThresh[c] {
 					continue
 				}
 				cands = append(cands, spanCand{s, w, c, score})
@@ -879,8 +908,33 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		return nil, nil
 	}
 
-	// Greedy: sort by score desc, then start asc for stability.
+	// Greedy: sort by score desc, then start asc for stability, with one
+	// exception. For PERSON candidates, prefer the wider span when both
+	// are above threshold and they overlap. Without this, GLiNER's
+	// decoder discards "Jane Doe" (score 0.55) in favour of "Jane"
+	// (score 0.65) because the higher-scored narrow span is considered
+	// first and the wider span is dropped as overlapping — which means
+	// the surname ships unmasked to the LLM, a critical PII leak.
+	//
+	// Why PERSON only: production redaction wants "Jane Doe" over
+	// "Jane" — the broader span subsumes the narrower with no
+	// correctness loss for the redactor, and shipping a leaked surname
+	// downstream is worse than emitting a marginally over-broad span.
+	// Other entity types (LOCATION composites like "Greater New York",
+	// ORG composites like "Pepsi Bottling Group") are less consistent
+	// in the bench; extending the rule there requires evidence the
+	// leak-rate impact justifies the FP risk.
+	isPerson := func(c int) bool {
+		if c < 0 || c >= len(r.labels) {
+			return false
+		}
+		return r.labelToEntity[r.labels[c]] == "PERSON"
+	}
 	sort.Slice(cands, func(i, j int) bool {
+		// Within PERSON candidates (both i and j PERSON), broader first.
+		if isPerson(cands[i].c) && isPerson(cands[j].c) && cands[i].w != cands[j].w {
+			return cands[i].w > cands[j].w
+		}
 		if cands[i].score != cands[j].score {
 			return cands[i].score > cands[j].score
 		}
