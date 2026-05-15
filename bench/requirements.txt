@@ -10,6 +10,14 @@
 #   pip install presidio-analyzer spacy
 #   python -m spacy download en_core_web_lg
 
+# HuggingFace Datasets — used by every corpus loader that streams gold
+# from HF (conll2003_en/de, germeval_14, wnut_17, wikiann_de,
+# pharmaconer_es, ai4privacy_en). Without this, those loaders all exit
+# 2 with "missing dep: pip install datasets" and the matrix cells fail
+# at the data-fetch step. Not pinned: dataset access is auto-converted
+# parquet refs which are stable across recent versions.
+datasets
+
 # GLiNER Python package — used by bench/runners/gliner_sidecar.py.
 # Pinned: bench numbers shift with gliner version.
 gliner==0.2.26
