@@ -108,6 +108,21 @@ const (
 	// MaxTokens=384 on typical German clinical text (~4 chars/token).
 	defaultGLiNERChunkChars   = 1200
 	defaultGLiNERChunkOverlap = 200
+
+	// defaultGLiNERMaxChunks caps how many sliding-window chunks a single
+	// Analyze() call will inference through. At the default chunk size of
+	// 1200 bytes this corresponds to ~80 KB of NER coverage per doc;
+	// inputs larger than that fall back to pattern-only coverage for the
+	// tail (pattern recognizers still run on the full text, so structured
+	// PII — emails, phones, IDs — is never silently dropped). 64 chunks
+	// at ~150-600 ms per chunk caps p95 wall-clock at ~10-40 sec, an
+	// order of magnitude under the previous unbounded behaviour where
+	// pmc_de docs hit 50 sec.
+	//
+	// Override via GLiNERConfig.MaxChunks. Setting it to 0 keeps the
+	// default; setting a negative value disables the cap entirely (only
+	// useful for offline batch jobs that don't have SLO concerns).
+	defaultGLiNERMaxChunks = 64
 )
 
 // glinerWordRegex mirrors GLiNER's WhitespaceTokenSplitter:
@@ -518,6 +533,28 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 		chunkOverlap = defaultGLiNERChunkOverlap
 	}
 	chunks := chunkForNER(text, chunkChars, chunkOverlap)
+
+	// Cap chunk count to bound worst-case latency. Inputs longer than
+	// the cap retain pattern-recognizer coverage (the pattern path runs
+	// on the full text, not chunked) — only NER coverage for the tail
+	// is dropped. This is the right trade-off vs the previous unbounded
+	// behaviour where one 200 KB clinical document blocked the
+	// recognizer for ~50 sec (see pmc_de bench tail).
+	maxChunks := r.cfg.MaxChunks
+	if maxChunks == 0 {
+		maxChunks = defaultGLiNERMaxChunks
+	}
+	if maxChunks > 0 && len(chunks) > maxChunks {
+		droppedChunks := len(chunks) - maxChunks
+		droppedBytes := 0
+		for _, c := range chunks[maxChunks:] {
+			droppedBytes += len(c.Text)
+		}
+		log.Printf("gliner: doc exceeds max_chunks=%d (text_bytes=%d total_chunks=%d); "+
+			"dropping last %d chunks (%d bytes uncovered by NER, patterns still run on full doc)",
+			maxChunks, len(text), len(chunks), droppedChunks, droppedBytes)
+		chunks = chunks[:maxChunks]
+	}
 
 	cands := make([]hugotCand, 0, len(chunks)*8)
 	for _, chunk := range chunks {

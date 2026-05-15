@@ -77,6 +77,14 @@ type GLiNERConfig struct {
 	// uses an internal default.
 	ChunkOverlap int
 
+	// MaxChunks caps the number of sliding-window chunks one Analyze()
+	// call inferences through. Documents that exceed the cap get
+	// partial NER coverage (the first MaxChunks chunks); pattern
+	// recognizers still run on the full text so structured PII is
+	// preserved end-to-end. Default 64 (~80 KB of text at the default
+	// ChunkChars). Set to a negative value to disable the cap.
+	MaxChunks int
+
 	// SharedLibraryPath optionally overrides the onnxruntime shared
 	// library location. Empty uses defaults (libonnxruntime.dylib
 	// on macOS, libonnxruntime.so on Linux).
