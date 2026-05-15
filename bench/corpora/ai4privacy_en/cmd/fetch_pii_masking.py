@@ -125,12 +125,28 @@ def reconstruct_text(tokens: list[str]) -> str:
 
 def iter_examples(split: str, max_n: int | None) -> Iterable[dict]:
     try:
-        from datasets import load_dataset
+        from datasets import load_dataset, get_dataset_split_names
     except ImportError as exc:
         print(f"datasets not installed: {exc}", file=sys.stderr)
         sys.exit(2)
 
-    ds = load_dataset("ai4privacy/pii-masking-200k", split=split)
+    # ai4privacy/pii-masking-200k used to ship a `validation` split; as
+    # of 2026-05 only `train` is available on the auto-parquet ref. We
+    # try the requested split first, then fall back to the first split
+    # that does exist — keeping older invocations (`--split validation`)
+    # working without forcing the caller to know the upstream layout.
+    available = get_dataset_split_names("ai4privacy/pii-masking-200k")
+    effective = split
+    if split not in available:
+        if not available:
+            print(f"no splits available for ai4privacy/pii-masking-200k",
+                  file=sys.stderr)
+            sys.exit(2)
+        effective = available[0]
+        print(f"split {split!r} not found in {available!r}; "
+              f"falling back to {effective!r}", file=sys.stderr)
+
+    ds = load_dataset("ai4privacy/pii-masking-200k", split=effective)
     n = 0
     for i, row in enumerate(ds):
         if max_n is not None and n >= max_n:
