@@ -677,6 +677,40 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
+    # ---- Caveats / training-data biases ----------------------------
+    # Some corpora are training-data-adjacent to the NLP backends we
+    # bench. Calling that out keeps the matrix honest: a high score
+    # on a corpus the engine was trained on is not the same as a
+    # high score on a held-out one.
+    out.append("## Caveats — training-data overlap\n")
+    out.append("""\
+A "win" on a corpus an engine was trained on (or trained near) is
+weaker evidence than a win on a held-out one. Known overlaps in this
+matrix:
+
+- **`conll2003_en` × `presidio`** — Presidio's NER backend is spaCy's
+  `en_core_web_lg`, trained on OntoNotes 5.0 with annotation
+  guidelines derived from CoNLL-2003. The CoNLL-2003 EN test split is
+  essentially home turf; Presidio's strict-F1 numbers here should be
+  read as a *ceiling* on the model's accuracy, not as portable
+  evidence that Presidio outperforms on EN PHI more broadly.
+- **`germeval_14` / `wikiann_de` × `presidio`** — Same pattern in
+  reverse: spaCy's `de_core_news_lg` is trained partly on TIGER and
+  GermEval data. A high Presidio score here similarly reflects
+  training-data adjacency.
+- **`conll2003_en` / `wnut_17` × `anonde-gliner`** — anonde-gliner
+  uses the INT8-quantised ONNX (`model_quint8.onnx`, ~196 MB) while
+  `gliner-py` loads the FP32 safetensors via PyTorch. Both load the
+  same upstream model; quantization appears to bite on noisy English
+  NER even though it's invisible on clean German clinical text. See
+  `TODO.md` for the planned FP32 ONNX comparison cell.
+
+Held-out corpora with no known overlap for any of the four engines
+listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
+`finance_de`, `legal_de`, `adversarial_de`, `ai4privacy_en`,
+`pharmaconer_es`. Numbers there transfer most cleanly.
+""")
+
     # ---- Glossary ---------------------------------------------------
     out.append("## What does this mean?\n")
     out.append("""\
