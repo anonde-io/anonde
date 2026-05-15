@@ -51,15 +51,22 @@ NER_SCORE_FLOOR  ?= 0
 # Point at a pre-downloaded snapshot dir to skip the download.
 OPENAI_PF_MODEL  ?= openai/privacy-filter
 
-# Per-language corpus partitions. ai4privacy_en is the only English cell;
-# everything else is German. ggponc_de is OMITTED from the matrix because
-# its corpus requires manual registration + extraction (see
+# Per-language corpus partitions. ggponc_de is OMITTED from the matrix
+# because its corpus requires manual registration + extraction (see
 # bench/corpora/ggponc_de/README.md). Run it manually via
 # `make -C bench/corpora/ggponc_de all` once the raw archive is in
 # bench/corpora/ggponc_de/data/raw/.
-DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de wikiann_de
-EN_CORPORA := ai4privacy_en
-ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA)
+#
+# conll2003_de is wired in but its loader exits with code 2 in CI: the
+# original LDC corpus is gated and no public HF mirror hosts the gold
+# spans at time of writing. The loader is forward-compatible — when/if
+# a mirror appears, the bench picks it up automatically (no Makefile
+# changes needed).
+DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de \
+              wikiann_de germeval_14 conll2003_de adversarial_de
+EN_CORPORA := ai4privacy_en conll2003_en wnut_17
+ES_CORPORA := pharmaconer_es
+ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA)
 
 # The five engines the matrix scores. Each row's name is what compare.py
 # routes through the label_map (so prefixes matter — see compare.py).
@@ -92,11 +99,13 @@ help:
 	@echo "  make matrix             run every engine x every corpus, render REPORT_MATRIX.md"
 	@echo "  make matrix-de          German subset only"
 	@echo "  make matrix-en          English subset only"
+	@echo "  make matrix-es          Spanish subset only"
 	@echo "  make corpus-<NAME>      run every engine on a single corpus (NAME e.g. openmed)"
 	@echo "  make clean              remove generated data + reports + the matrix outputs"
 	@echo ""
-	@echo "Corpora (German): $(DE_CORPORA)"
+	@echo "Corpora (German):  $(DE_CORPORA)"
 	@echo "Corpora (English): $(EN_CORPORA)"
+	@echo "Corpora (Spanish): $(ES_CORPORA)"
 	@echo "Engines: $(ENGINES)"
 	@echo ""
 	@echo "Per-corpus targets also reachable directly:"
@@ -126,7 +135,7 @@ $(if $(filter anonde-gliner,$(1)),gliner,\
 endef
 
 define LANG_FOR_CORPUS
-$(if $(filter $(1),$(EN_CORPORA)),en,de)
+$(if $(filter $(1),$(EN_CORPORA)),en,$(if $(filter $(1),$(ES_CORPORA)),es,de))
 endef
 
 define FOLD_FOR_CORPUS
@@ -249,6 +258,14 @@ $(addprefix corpus-,$(EN_CORPORA)): corpus-%: \
     $(CORPORA_DIR)/%/data/anonde_gliner-py.jsonl \
     $(CORPORA_DIR)/%/data/anonde_presidio.jsonl
 
+# Spanish corpora: Presidio's default model is English-only, so we skip
+# Presidio for ES. PharmaCoNER is also a precision probe (no PHI gold),
+# so the bench cell measures false-positive count, not leak rate.
+$(addprefix corpus-,$(ES_CORPORA)): corpus-%: \
+    $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
+    $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
+    $(CORPORA_DIR)/%/data/anonde_gliner-py.jsonl
+
 # Materialise the full matrix, then render the combined report.
 matrix: $(addprefix corpus-,$(ALL_CORPORA)) render
 
@@ -265,6 +282,15 @@ matrix-en: $(addprefix corpus-,$(EN_CORPORA))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
 	  --corpus $(EN_CORPORA) \
+	  --engine $(ENGINES) \
+	  --label-map $(HERE)scoring/label_map.yaml \
+	  --out $(MATRIX_REPORT) \
+	  --csv $(MATRIX_CSV)
+
+matrix-es: $(addprefix corpus-,$(ES_CORPORA))
+	$(PYTHON) $(HERE)scoring/render_matrix.py \
+	  --corpora-root $(CORPORA_DIR) \
+	  --corpus $(ES_CORPORA) \
 	  --engine $(ENGINES) \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \

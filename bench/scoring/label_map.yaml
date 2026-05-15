@@ -17,8 +17,32 @@ canonical:
   - ADDRESS
   - PROFESSION
 
-# GraSCCo PHI labels (GeMTeX DeID layer 'kind' values).
+# Gold-side label mapping. Covers GraSCCo (GeMTeX DeID layer) plus the
+# standard NER vocabularies used by CoNLL-2003, GermEval-14, WNUT-17,
+# WikiAnn, and the synthetic corpora.
 gold:
+  # Canonical identity entries — the new academic corpora emit canonical
+  # type names directly (PERSON/LOCATION/ORGANIZATION) so the gold side
+  # is a no-op pass-through. We list them explicitly so `_normalize` finds
+  # them in the map instead of routing through OTHER.
+  PERSON: PERSON
+  LOCATION: LOCATION
+  ORGANIZATION: ORGANIZATION
+  DATE: DATE
+  AGE: AGE
+  PHONE: PHONE
+  EMAIL: EMAIL
+  URL: URL
+  ID: ID
+  IBAN: IBAN
+  ADDRESS: ADDRESS
+  PROFESSION: PROFESSION
+  # PharmaCoNER (chemical / drug) — not PHI; drop from scoring so
+  # anonde's correct non-flag of chemical strings doesn't count as a
+  # false negative. Falls precision-probe-only.
+  OTHER: ~
+
+  # GraSCCo PHI labels (GeMTeX DeID layer 'kind' values).
   NAME_PATIENT: PERSON
   NAME_DOCTOR: PERSON
   NAME_RELATIVE: PERSON
