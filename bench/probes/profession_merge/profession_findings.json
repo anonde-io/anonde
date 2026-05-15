@@ -1,0 +1,38 @@
+{
+  "legal_de": {
+    "corpus": "legal_de",
+    "total_gold_profession": 49,
+    "total_pred_profession": 73,
+    "strict_matches": 48,
+    "fn_merge_induced": 0,
+    "fn_real": 1,
+    "fp_merge_induced": 0,
+    "fp_other": 25,
+    "examples": [
+      {
+        "doc_id": "leg-de-anwaltsschreiben-0007",
+        "corpus": "legal_de",
+        "verdict": "real-miss",
+        "gold": [
+          {
+            "start": 356,
+            "end": 367,
+            "text": "Unternehmer"
+          }
+        ],
+        "prediction": null
+      }
+    ]
+  },
+  "finance_de": {
+    "corpus": "finance_de",
+    "total_gold_profession": 27,
+    "total_pred_profession": 38,
+    "strict_matches": 27,
+    "fn_merge_induced": 0,
+    "fn_real": 0,
+    "fp_merge_induced": 0,
+    "fp_other": 11,
+    "examples": []
+  }
+}
