@@ -1,0 +1,304 @@
+name: bench-full
+
+# Full anonde bench matrix — every engine × every corpus.
+#
+# Distinct from .github/workflows/bench.yml (per-push regression
+# catcher, openmed + synth_clinical × 3 engines, ~10-15 min) and from
+# bench-history.yml (release-tag snapshot, same subset + commit-back).
+# This workflow runs the WHOLE matrix and produces the headline numbers
+# anyone benchmarking anonde against the field wants to see.
+#
+# Triggers:
+#   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY — safely
+#     before any weekday traffic so it doesn't compete for runners).
+#   * Manual workflow_dispatch — kick off on demand from the Actions tab.
+#
+# Wall-clock target: under 90 min on the free-tier ubuntu-latest runner
+# (timeout 120 min for safety). Cells the bench matrix excludes by
+# design — openai-pf at ~80 sec/doc, anonde-hugot at ~25 000× slower
+# than patterns — are NOT included. To bench those, run locally:
+#   make bench/corpora/<NAME>/data/anonde_openai-pf.jsonl
+#
+# Outputs:
+#   * bench/REPORT_MATRIX.md + bench/results_matrix.csv as artifacts
+#     (90-day retention since these are the headline numbers).
+#   * Headline rendered into the job summary so a PR / release reviewer
+#     can read the numbers without downloading anything.
+#
+# Cost: this workflow uses ~90 free-tier runner-minutes per run. Weekly
+# = ~360 min/month. Well within the 2000 min/month free quota for
+# private repos and unlimited for public.
+
+on:
+  schedule:
+    # Sundays 06:00 UTC. cron uses UTC always; daylight-saving doesn't
+    # apply. If a Sunday is a holiday and runners are busy, the run
+    # just queues — there's no "must happen exactly Sunday" requirement.
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Optional artifact-label override (default: dispatch-<short-sha>)'
+        required: false
+        default: ''
+
+# Do NOT cancel an in-progress full bench — losing 60 minutes of work
+# to a non-bench push is worse than running two in series.
+concurrency:
+  group: bench-full-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ORT_VERSION: "1.26.0"
+      ORT_LIB_DIR: ${{ github.workspace }}/.tokenlib
+      ORT_LIB: ${{ github.workspace }}/.tokenlib/libonnxruntime.so
+      # Spacy model name + cache dir. en_core_web_lg is ~750 MB; cache
+      # it across runs.
+      SPACY_MODEL: en_core_web_lg
+      SPACY_DATA_DIR: ${{ github.workspace }}/.spacy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: bench/requirements.txt
+
+      # libonnxruntime.so for the GLiNER backend's ORT session — same
+      # version + path convention as the per-push bench workflow.
+      - name: Cache libonnxruntime
+        id: ort-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ORT_LIB_DIR }}
+          key: libonnxruntime-${{ env.ORT_VERSION }}-linux-x64
+
+      - name: Download libonnxruntime
+        if: steps.ort-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$ORT_LIB_DIR"
+          curl -fsSL \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
+            -o /tmp/ort.tgz
+          tar -xzf /tmp/ort.tgz -C /tmp
+          cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" \
+             "$ORT_LIB_DIR/libonnxruntime.so"
+
+      # Base Python deps (gliner sidecar + corpus loaders + scoring).
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r bench/requirements.txt
+
+      # Presidio + spaCy + en_core_web_lg — the full-matrix extras.
+      # Kept out of bench/requirements.txt so the per-push workflow
+      # doesn't pay ~750 MB of spaCy weights on every run.
+      - name: Install Presidio + spaCy
+        run: |
+          set -euo pipefail
+          pip install presidio-analyzer spacy
+
+      # Cache the spaCy model dir keyed on the model name. The first
+      # run materialises it from spaCy's CDN (~750 MB); subsequent runs
+      # restore from cache in seconds.
+      - name: Cache spaCy model
+        id: spacy-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SPACY_DATA_DIR }}
+          key: spacy-${{ env.SPACY_MODEL }}-3.x
+
+      - name: Download spaCy model
+        if: steps.spacy-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$SPACY_DATA_DIR"
+          python -m spacy download "$SPACY_MODEL"
+          # Copy the installed model into our cache dir for next run.
+          python -c "
+          import shutil, spacy.util
+          src = spacy.util.get_package_path('$SPACY_MODEL')
+          shutil.copytree(src, '$SPACY_DATA_DIR/$SPACY_MODEL', dirs_exist_ok=True)
+          "
+
+      - name: Restore spaCy model from cache
+        if: steps.spacy-cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          # spaCy looks at the installed package; install from our
+          # cached dir.
+          pip install --no-deps "$SPACY_DATA_DIR/$SPACY_MODEL" || \
+            python -m spacy download "$SPACY_MODEL"
+
+      # GLiNER pulls model weights from HF Hub on first use. Cache by
+      # model id — same as the per-push workflow.
+      - name: Cache HuggingFace model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-cache-gliner-pii-base-v1.0
+
+      # The Go-native GLiNER recognizer uses hugot's downloader, which
+      # writes to ~/.cache/anonde/models/. Same model, different on-
+      # disk layout — cache both.
+      - name: Cache anonde model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/anonde/models
+          key: anonde-models-gliner-pii-base-v1.0
+
+      # Cache the per-corpus data/ trees keyed on each loader's source.
+      # Most corpora fetch from HF Datasets; caching the materialised
+      # corpus.jsonl saves the streaming + reservoir-sample step.
+      - name: Cache corpus.jsonl outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            bench/corpora/conll2003_en/data
+            bench/corpora/conll2003_de/data
+            bench/corpora/germeval_14/data
+            bench/corpora/wnut_17/data
+            bench/corpora/wikiann_de/data
+            bench/corpora/openmed/data
+            bench/corpora/pharmaconer_es/data
+            bench/corpora/ai4privacy_en/data
+          key: corpus-data-${{ hashFiles('bench/corpora/*/loader.py') }}
+
+      - name: Verify default + hugot builds
+        run: |
+          CGO_ENABLED=0 go build ./...
+          CGO_ENABLED=1 go build -tags hugot ./...
+
+      # Fetch every corpus's gold (no engine runs yet). Failures here
+      # are non-fatal — conll2003_de is gated and exits with code 2 by
+      # design; render_matrix treats missing gold as "skip this corpus".
+      - name: Fetch all corpora
+        run: |
+          set +e   # tolerate gated corpora (conll2003_de)
+          make -C bench data PYTHON=python3
+          # Always succeed at this step; corpus-level failures surface
+          # in the matrix rendering.
+          exit 0
+
+      # The full matrix. ORT_LIB is needed by anonde-gliner cells (the
+      # silent-fallback class of bugs the per-push bench guards against
+      # is the same here).
+      - name: Run full matrix
+        env:
+          ORT_LIB: ${{ env.ORT_LIB }}
+        run: |
+          set -euo pipefail
+          make -C bench matrix PYTHON=python3
+
+      # Guard rail — same canary as the per-push bench. Walk every
+      # corpus that has both gold AND an anonde-gliner cell, and assert
+      # we saw non-multiple-of-0.05 scores (sigmoid-shaped, i.e. NER
+      # output rather than pattern fallback).
+      - name: Guard rail — GLiNER actually fired (full sweep)
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys, os
+          from pathlib import Path
+
+          failures = []
+          checked = 0
+          root = Path("bench/corpora")
+          for corpus_dir in sorted(root.iterdir()):
+              gold = corpus_dir / "data" / "corpus.jsonl"
+              pred = corpus_dir / "data" / "anonde_anonde-gliner.jsonl"
+              if not gold.exists() or not pred.exists():
+                  continue
+              # Skip pure precision-probe corpora (no gold entities anyway).
+              has_gold = False
+              with gold.open() as fh:
+                  for line in fh:
+                      d = json.loads(line)
+                      if d.get("entities"):
+                          has_gold = True
+                          break
+              if not has_gold:
+                  print(f"  {corpus_dir.name}: precision-probe corpus, skip")
+                  continue
+              ner_like = 0
+              with pred.open() as fh:
+                  for line in fh:
+                      d = json.loads(line)
+                      for f in d.get("findings", []):
+                          s = f.get("score", 0)
+                          if abs(s * 20 - round(s * 20)) > 1e-6:
+                              ner_like += 1
+              checked += 1
+              if ner_like == 0:
+                  failures.append(
+                      f"{corpus_dir.name}: 0 NER-attributable findings "
+                      f"— GLiNER silently fell back to patterns"
+                  )
+              else:
+                  print(f"  {corpus_dir.name}: {ner_like} NER-attributable findings — OK")
+          if checked == 0:
+              print("Guard rail FAILED: no gold-bearing gliner cells were rendered")
+              sys.exit(1)
+          if failures:
+              print("\nGuard rail FAILED:")
+              for f in failures:
+                  print("  " + f)
+              sys.exit(1)
+          PYEOF
+
+      # Snapshot — for workflow_dispatch the user may have provided a
+      # label; for cron we use the date.
+      - name: Compute snapshot label
+        id: label
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.label }}" ]]; then
+            LABEL="${{ inputs.label }}"
+          elif [[ "${{ github.event_name }}" == "schedule" ]]; then
+            LABEL="weekly-$(date -u +%Y-%m-%d)"
+          else
+            LABEL="dispatch-$(git rev-parse --short HEAD)"
+          fi
+          LABEL=$(echo "$LABEL" | tr -c 'A-Za-z0-9._-' '_')
+          echo "label=$LABEL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bench artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-full-${{ steps.label.outputs.label }}
+          path: |
+            bench/REPORT_MATRIX.md
+            bench/results_matrix.csv
+            bench/corpora/*/data/anonde_*.jsonl
+          retention-days: 90
+
+      - name: Headline → job summary
+        if: always()
+        run: |
+          {
+            echo "## anonde bench — full matrix"
+            echo ""
+            echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
+            echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio (EN-only)_"
+            echo "_Corpora: every DE + EN + ES corpus in bench/Makefile_"
+            echo ""
+            if [ -f bench/REPORT_MATRIX.md ]; then
+              cat bench/REPORT_MATRIX.md
+            else
+              echo "_(REPORT_MATRIX.md not produced — see logs above)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
