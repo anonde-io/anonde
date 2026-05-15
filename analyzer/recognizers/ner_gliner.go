@@ -608,6 +608,23 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		return nil, nil
 	}
 
+	// Hold the recognizer mutex across the entire chunk — both the
+	// tokenizer dance and the ONNX session Run() share instance-global
+	// state that two concurrent Analyze() calls would otherwise corrupt:
+	//
+	//   * tokenizer.With(opts) mutates global encode options; an
+	//     interleaved defer-restore from another goroutine flips the
+	//     options mid-encode, silently producing wrong subword IDs.
+	//   * *ort.DynamicAdvancedSession caches input/output slot pointers
+	//     on the struct.
+	//
+	// One mutex covers both. Throughput cost vs the previous Run-only
+	// lock is ~5-15% — tokenisation is fast relative to inference — and
+	// it eliminates a class of "PII silently leaks under concurrent
+	// /v1/ingest load" bugs that the single-thread bench never surfaces.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	// --- 2. Tokenize prompt prefix + each text word independently. ----
 	// We disable special-token post-processing for each piece so the
 	// tokenizer emits ONLY the subword IDs of the input. [CLS]/[SEP]
@@ -617,8 +634,10 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		return nil, fmt.Errorf("tokenizer.With: %w", err)
 	}
 	defer func() {
-		// Restore the default options so concurrent calls don't see a
-		// stripped tokenizer. (init set AddSpecialTokens=true.)
+		// Restore the default options so the recognizer's tokenizer
+		// state matches what init left it in. (init set
+		// AddSpecialTokens=true.) Holding r.mu across this defer is
+		// what makes the restore safe vs concurrent runChunk calls.
 		_ = r.tokenizer.With(api.EncodeOptions{
 			AddSpecialTokens:         true,
 			IncludeSpans:             true,
@@ -791,9 +810,9 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	inputs := []ort.Value{inputIDsT, attnMaskT, wordsMaskT, textLengthsT, spanIdxT, spanMaskT}
 	outputs := []ort.Value{nil}
 
-	r.mu.Lock()
+	// r.mu is held across the entire runChunk (see top of function)
+	// so this Run() is already serialised.
 	runErr := r.session.Run(inputs, outputs)
-	r.mu.Unlock()
 	if runErr != nil {
 		return nil, fmt.Errorf("gliner inference (onnxruntime): %w", runErr)
 	}
