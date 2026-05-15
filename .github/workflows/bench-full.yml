@@ -126,15 +126,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r bench/requirements.txt
 
-      # Presidio + spaCy only on English corpora — they're the only
-      # ones that invoke the presidio cell. Other corpora skip the
-      # ~750 MB en_core_web_lg download.
-      - name: Install Presidio + spaCy (EN cells only)
-        if: contains(fromJSON('["ai4privacy_en","conll2003_en","wnut_17"]'), matrix.corpus)
+      # Presidio + spaCy. Now runs on every cell — Presidio is
+      # multilingual via the spaCy model picked per corpus. Each runner
+      # downloads only the model its corpus needs (en/de/es) to avoid
+      # the unnecessary ~750 MB download on a non-EN cell.
+      - name: Install Presidio + spaCy
         run: |
           set -euo pipefail
           pip install presidio-analyzer spacy
-          python -m spacy download "$SPACY_MODEL"
+
+      - name: Download spaCy model for this cell's language
+        run: |
+          set -euo pipefail
+          case "${{ matrix.corpus }}" in
+            ai4privacy_en|conll2003_en|wnut_17)
+              python -m spacy download en_core_web_lg ;;
+            pharmaconer_es)
+              python -m spacy download es_core_news_lg ;;
+            openmed|pmc_de|synth_clinical|wiki_de|finance_de|legal_de|wikiann_de|germeval_14|conll2003_de|adversarial_de)
+              python -m spacy download de_core_news_lg ;;
+            *)
+              echo "no spaCy model mapping for corpus '${{ matrix.corpus }}'; skipping" ;;
+          esac
 
       - name: Cache HuggingFace model cache
         uses: actions/cache@v4

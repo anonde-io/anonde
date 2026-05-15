@@ -173,7 +173,11 @@ $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	    $(call FOLD_FOR_CORPUS,$(1))
 endef
 
-# presidio cell: English only; on German corpora we skip.
+# presidio cell: multilingual. Picks the spaCy model per corpus language
+# (LANG_FOR_CORPUS macro). Each cell tolerates failure: if the matching
+# spaCy model isn't installed locally (e.g. de_core_news_lg on a
+# patterns-only dev box), the runner exits 2 and the renderer marks
+# the cell as missing rather than aborting the whole matrix.
 define CELL_presidio
 # NOT .PHONY: cache existing per-cell outputs so partial matrices don't re-run.
 # data-$(1) is .PHONY which triggers make's "if newer than target" check,
@@ -181,10 +185,11 @@ define CELL_presidio
 # cell's output mtime usually wins → cell skipped. Force a re-run by
 # `rm bench/corpora/<c>/data/anonde_<engine>.jsonl` before `make matrix`.
 $(CORPORA_DIR)/$(1)/data/anonde_presidio.jsonl: | data-$(1)
-	@echo "[matrix] $(1) x presidio"
+	@echo "[matrix] $(1) x presidio (lang=$(call LANG_FOR_CORPUS,$(1)))"
 	$(PYTHON) $(ROOT)/bench/runners/presidio.py \
 	  --in  $(CORPORA_DIR)/$(1)/data/corpus.jsonl \
-	  --out $(CORPORA_DIR)/$(1)/data/anonde_presidio.jsonl || \
+	  --out $(CORPORA_DIR)/$(1)/data/anonde_presidio.jsonl \
+	  --language $(call LANG_FOR_CORPUS,$(1)) || \
 	  echo "[matrix] WARN: presidio cell for $(1) failed — render will show as missing"
 endef
 
@@ -210,35 +215,26 @@ $(CORPORA_DIR)/$(1)/data/anonde_gliner-py.jsonl: | data-$(1)
 	  echo "[matrix] WARN: gliner-py cell for $(1) failed — render will show as missing"
 endef
 
-# Expand per-corpus, per-engine. Presidio only runs on English corpora —
-# the spaCy/en_core_web_lg model is English-only.
+# Expand per-corpus, per-engine. Presidio now runs on every language
+# the matrix supports — the runner picks the right spaCy model from
+# the corpus's LANG_FOR_CORPUS classification (en/de/es). If a model
+# isn't installed locally the cell is reported as missing rather than
+# crashing the build.
 $(foreach c,$(ALL_CORPORA),\
   $(foreach e,anonde-patterns anonde-gliner,\
     $(eval $(call CELL_anonde,$(c),$(e))))\
-  $(eval $(call CELL_gliner_py,$(c))))
-
-$(foreach c,$(EN_CORPORA),\
+  $(eval $(call CELL_gliner_py,$(c)))\
   $(eval $(call CELL_presidio,$(c))))
 
 # Per-corpus convenience target — run every engine for one corpus.
-$(addprefix corpus-,$(DE_CORPORA)): corpus-%: \
-    $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
-    $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
-    $(CORPORA_DIR)/%/data/anonde_gliner-py.jsonl
-
-$(addprefix corpus-,$(EN_CORPORA)): corpus-%: \
+# Presidio runs on every language now (en + de + es spaCy models); if a
+# given dev box doesn't have the matching model installed the cell
+# warn-and-skips rather than aborting the build.
+$(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
     $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
     $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
     $(CORPORA_DIR)/%/data/anonde_gliner-py.jsonl \
     $(CORPORA_DIR)/%/data/anonde_presidio.jsonl
-
-# Spanish corpora: Presidio's default model is English-only, so we skip
-# Presidio for ES. PharmaCoNER is also a precision probe (no PHI gold),
-# so the bench cell measures false-positive count, not leak rate.
-$(addprefix corpus-,$(ES_CORPORA)): corpus-%: \
-    $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
-    $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
-    $(CORPORA_DIR)/%/data/anonde_gliner-py.jsonl
 
 # Materialise the full matrix, then render the combined report.
 matrix: $(addprefix corpus-,$(ALL_CORPORA)) render
