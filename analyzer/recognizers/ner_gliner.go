@@ -100,6 +100,28 @@ const (
 	// without introducing new false positives — going lower (0.10) starts
 	// flagging "it", "Contact", "." as PERSON in the same probes.
 	defaultPersonThreshold = 0.25
+
+	// defaultOrgThreshold is the per-class threshold for ORGANIZATION
+	// labels. The 2026-05-15 bench-full matrix shows the same fingerprint
+	// PERSON had before its 0.25 fix: ORG strict F1 on wikiann_de is
+	// 0.176 for anonde-gliner vs 0.343 for gliner-py — the model has the
+	// signal, but our global 0.40 cuts it off. 0.30 is a conservative
+	// pick between PERSON's 0.25 and the global 0.40; tune later if false
+	// positives spike.
+	defaultOrgThreshold = 0.30
+
+	// defaultAgeThreshold is the per-class threshold for AGE labels.
+	// AGE strict F1 across most DE corpora is 0.023-0.529 for
+	// anonde-gliner vs 0.348-1.000 for gliner-py. Ages are typically
+	// short (3-4 chars), and the model is consistently lower-confidence
+	// on short spans, so the floor lives below ORG/ID at 0.20.
+	defaultAgeThreshold = 0.20
+
+	// defaultIdThreshold is the per-class threshold for ID labels
+	// (SSN / MRN / IBAN class). gliner-py wins by 15-30 pp on finance_de
+	// and legal_de, again pointing to a recall ceiling driven by the
+	// global threshold rather than a model gap. 0.30 mirrors ORG.
+	defaultIdThreshold = 0.30
 	defaultGLiNERMaxWidth  = 12
 	defaultGLiNERMaxTokens = 384
 
@@ -943,22 +965,35 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 
 	// --- 9. Decode: sigmoid > per-class threshold, greedy non-overlap. ---
 	//
-	// PERSON labels get a more permissive threshold (defaultPersonThreshold)
-	// than the global one. The GLiNER PII model is consistently more
-	// confident about the *first* word of a name than the *full* span:
-	// for "Contact Jane Doe about it." it emits "Jane" with logit ≈ 0.46
-	// and "Jane Doe" with logit ≈ 0.26. At the production threshold (0.40)
-	// only "Jane" survives, and the surname ships unmasked to the LLM —
-	// a critical PII leak. Lowering the PERSON-only threshold to 0.25
-	// recovers the broader candidate, and the wider-span sort tie-break
-	// below picks it over the narrower one. Other classes keep the
-	// stricter threshold so PERSON ≠ recall regression for everything else.
+	// Several entity types get a more permissive threshold than the
+	// global r.threshold. The GLiNER PII model is consistently more
+	// confident about narrower / leading-token spans than full spans:
+	//
+	//   * PERSON: "Jane" scores higher than "Jane Doe"; at threshold 0.40
+	//     only the narrow span survives and the surname leaks. 0.25
+	//     recovers full names — see defaultPersonThreshold.
+	//   * ORGANIZATION, AGE, ID: the 2026-05-15 bench matrix shows the
+	//     same fingerprint as pre-fix PERSON — anonde-gliner uniformly
+	//     under-recalls vs gliner-py while the model itself has the
+	//     signal. See the default*Threshold constants for per-type
+	//     rationale and source corpora.
+	//
+	// Unlisted entity types keep r.threshold so that lowering one class
+	// can never silently weaken another.
+	entityTypeThreshold := map[string]float64{
+		"PERSON":       defaultPersonThreshold,
+		"ORGANIZATION": defaultOrgThreshold,
+		"AGE":          defaultAgeThreshold,
+		"ID":           defaultIdThreshold,
+	}
 	perClassThresh := make([]float64, numClasses)
 	perClassLogit := make([]float64, numClasses)
 	for c := 0; c < numClasses; c++ {
 		t := r.threshold
-		if c < len(r.labels) && r.labelToEntity[r.labels[c]] == "PERSON" && t > defaultPersonThreshold {
-			t = defaultPersonThreshold
+		if c < len(r.labels) {
+			if override, ok := entityTypeThreshold[r.labelToEntity[r.labels[c]]]; ok && t > override {
+				t = override
+			}
 		}
 		perClassThresh[c] = t
 		// Pre-sigmoid threshold lets us reject without per-class exp().
