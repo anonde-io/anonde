@@ -9,18 +9,23 @@ Cells are discovered on disk under:
 
 For each (corpus, engine) pair we compute precision / recall / F1 in the
 three views compare.py uses (strict, partial, type-agnostic), plus
-leak-rate and latency. Then we emit a single REPORT_MATRIX.md with:
+leak-rate and latency. Then we emit a single simplified REPORT_MATRIX.md
+focused on the load-bearing tables:
 
-  * Headline: per-corpus "does production (anonde-gliner) win?" summary
-  * F1 grid per view
-  * Leak-rate grid
-  * Latency grid (median / mean / p99)
-  * Language coverage matrix (which cells produced data, which were
-    skipped because the engine doesn't speak that language)
-  * Top-3 disagreements per corpus (highest |F1(gliner) - F1(baseline)|)
+  * TL;DR headline
+  * Engine profiles (tier framing for anonde-patterns / anonde-gliner)
+  * Per-corpus verdict cards (leak severity flags)
+  * Leak rate grid (production metric)
+  * Severity-weighted leak rate (procurement metric)
+  * Latency p50 / p95 (operational metric)
+  * Strict F1 — overall micro-F1 only (per-entity breakdown in CSV)
+  * Cost reference (self-hosted vs managed)
+  * Caveats — training-data overlap
+  * Glossary
 
 The CSV writes one row per (corpus, engine, entity, view) so downstream
-analysis can pivot.
+analysis can pivot — including the per-entity-type strict-F1 breakdown
+that used to live in the report.
 """
 
 from __future__ import annotations
@@ -288,16 +293,20 @@ def _fmt_leak_bar(rate: float) -> str:
 def _render(rows, label_map, corpora, engines):
     """rows: dict[(corpus, engine)] = evaluate-result-or-None.
 
-    Layout:
+    Simplified layout (per-entity strict-F1 breakdown lives in
+    results_matrix.csv, not in this report):
+
       1. TL;DR (one-paragraph headline conclusion)
-      2. Verdict cards per corpus (the at-a-glance answer)
-      3. Leak rate table (the load-bearing metric)
-      4. Latency table (mixed units)
-      5. F1 reference (one type-agnostic table; strict/partial in CSV)
-      6. Cell coverage matrix
-      7. Glossary ("what does this mean")
+      2. Engine profiles (tier framing)
+      3. Per-corpus verdict (leak severity flags)
+      4. Leak rate (production metric)
+      5. Severity-weighted leak rate (procurement metric)
+      6. Latency p50 / p95 (operational metric)
+      7. Strict F1 — overall micro-F1 only (per-entity in CSV)
+      8. Cost reference (managed-service anchor; self-hosted framing)
+      9. Caveats — training-data overlap
+     10. Glossary
     """
-    canonical = list(label_map.get("canonical", []))
     out: list[str] = []
 
     # ---- compute headline stats first so the TL;DR can quote them ------
@@ -547,6 +556,9 @@ def _render(rows, label_map, corpora, engines):
                "label normalisation. The number every NER paper publishes; useful for direct "
                "comparison to academic baselines, less useful as a production metric "
                "(strict scoring penalises broader-or-narrower spans that still redact the PHI).\n")
+    out.append("> Per-entity-type strict F1 (PERSON, LOCATION, ORG, DATE, AGE, PHONE, "
+               "EMAIL, URL, ID, ADDRESS, PROFESSION, …) is in `results_matrix.csv` "
+               "— that's the right place to triage which entity types each engine struggles with.\n")
     out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
     out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
@@ -571,90 +583,6 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
-    # ---- Strict F1 by entity type (per-canonical breakdown) --------
-    # Reviewers comparing anonde to academic NER baselines need to see
-    # per-entity numbers, not just micro-averages. Previously this only
-    # lived in results_matrix.csv; promoting to the matrix report makes
-    # the bench citable without anyone having to grep the CSV. One
-    # table per canonical entity type that has any gold in the corpora;
-    # entity types with no gold (e.g. PROFESSION on EN-only corpora)
-    # are skipped entirely.
-    out.append("## Strict F1 · by entity type\n")
-    out.append("Per-entity-type breakdown of strict F1. `–` in a cell means no "
-               "gold of that type was annotated in that corpus; not that the "
-               "engine missed it. Full TP/FP/FN counts are in "
-               "`results_matrix.csv`.\n")
-    for ent in canonical:
-        # Skip entity types with no gold across the entire matrix.
-        any_gold = False
-        for c in corpora:
-            for e in engines:
-                cell = rows.get((c, e))
-                if cell is None:
-                    continue
-                tp, _, fn = cell["strict"].get(ent, [0, 0, 0])
-                if (tp + fn) > 0:
-                    any_gold = True
-                    break
-            if any_gold:
-                break
-        if not any_gold:
-            continue
-        out.append(f"### {ent}\n")
-        out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
-        out.append("|---|" + "---:|" * len(engines))
-        for c in corpora:
-            # Only emit a corpus row when at least one engine had gold
-            # of this type in this corpus.
-            row_has_gold = False
-            f1s: list[float | None] = []
-            for e in engines:
-                cell = rows.get((c, e))
-                if cell is None:
-                    f1s.append(None)
-                    continue
-                tp, fp, fn = cell["strict"].get(ent, [0, 0, 0])
-                if (tp + fn) == 0:
-                    f1s.append(None)
-                    continue
-                _, _, f = _prf(tp, fp, fn)
-                f1s.append(f)
-                row_has_gold = True
-            if not row_has_gold:
-                continue
-            cells = [f"| `{c}` |"]
-            best = max((f for f in f1s if f is not None and f > 0), default=None)
-            for f in f1s:
-                if f is None:
-                    cells.append("– |")
-                    continue
-                txt = f"{f:.3f}"
-                if best is not None and abs(f - best) < 1e-9 and f > 0:
-                    txt = f"**{txt}** 🥇"
-                cells.append(f"{txt} |")
-            out.append(" ".join(cells))
-        out.append("")
-
-    # ---- Type-agnostic F1 (the "did we find the span at all" view) -
-    out.append("## F1 reference · type-agnostic\n")
-    out.append("Any predicted span overlapping a gold span counts as a hit, regardless of "
-               "which entity-type label was assigned. The closest metric to 'did we cover "
-               "the PHI?' that's also boundary-aware. Partial-overlap F1 is in "
-               "`results_matrix.csv`.\n")
-    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
-    out.append("|---|" + "---:|" * len(engines))
-    for c in corpora:
-        cells = [f"| `{c}` |"]
-        for e in engines:
-            cell = rows.get((c, e))
-            if cell is None:
-                cells.append("– |")
-                continue
-            f = _f1_overall(cell["type_only"])
-            cells.append(f"{f:.3f} |" if f > 0 else "0.000 |")
-        out.append(" ".join(cells))
-    out.append("")
-
     # ---- Cost reference ---------------------------------------------
     # All engines we benchmark are self-hostable, so per-cell cost columns
     # would be $0 across the board — uninteresting. Instead we anchor the
@@ -668,12 +596,12 @@ def _render(rows, label_map, corpora, engines):
                "vendor pricing drifts, re-check before quoting):\n")
     out.append("| Engine | Hosting | $/M chars | Notes |")
     out.append("|---|---|---:|---|")
-    out.append("| `anonde-patterns` | self-host (~$5/mo Fly machine) | "
-               "~**$0.0005** | Patterns-only; fits on `shared-cpu-1x:256MB`. "
+    out.append("| `anonde-patterns` | self-host (small commodity VM) | "
+               "~**$0.0005** | Patterns-only; runs on ~256 MB RAM. "
                "Amortised cost dominated by infra base. |")
-    out.append("| `anonde-gliner` | self-host (~$5-15/mo Fly machine) | "
-               "~**$0.001** | GLiNER PII baked into image. `shared-cpu-1x:2048MB` "
-               "suffices; CPU-only. |")
+    out.append("| `anonde-gliner` | self-host (~2 GB RAM VM) | "
+               "~**$0.001** | GLiNER PII baked into image. ~2 GB RAM is enough; "
+               "CPU-only, runs on any commodity cloud VM. |")
     out.append("| `presidio` | self-host (open-source) | **$0** marginal | "
                "Microsoft Presidio. spaCy backend, English-focused. |")
     out.append("| `gliner-py` | self-host (open-source) | **$0** marginal | "
@@ -692,20 +620,6 @@ def _render(rows, label_map, corpora, engines):
                "characters** than the managed alternatives — and the data never leaves "
                "your network. The leak-rate and F1 numbers in the tables above are how "
                "you tell if the quality tradeoff is acceptable.\n")
-
-    # ---- Cell coverage ----------------------------------------------
-    out.append("## Cell coverage\n")
-    out.append("Which engines actually produced output for which corpora. "
-               "Empty cells mean the engine wasn't run (e.g. Presidio is English-only; "
-               "openai-pf is excluded from corpora that take >1h at 80sec/doc).\n")
-    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
-    out.append("|---|" + ":-:|" * len(engines))
-    for c in corpora:
-        cells = [f"| `{c}` |"]
-        for e in engines:
-            cells.append("✓ |" if rows.get((c, e)) is not None else "– |")
-        out.append(" ".join(cells))
-    out.append("")
 
     # ---- Caveats / training-data biases ----------------------------
     # Some corpora are training-data-adjacent to the NLP backends we
@@ -752,15 +666,11 @@ listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
   1 for LOCATION / ORG / PROFESSION / generic URL, 0 to drop entirely). Use this when
   comparing tools for a procurement / compliance decision — flat leak rate over-rewards
   catching the easy quasi-identifiers and under-counts missing the hard ones.
-- **Type-agnostic F1** = harmonic mean of precision and recall using overlap matching; ignores
-  the entity-type label. Useful as a tie-breaker when leak rates are close.
 - **Strict F1** = exact start, end, and type match against gold. The CoNLL-style metric every
   NER paper publishes; useful for direct academic comparison. Less useful as a redaction
   metric, since a span that's 11 chars vs gold's 5 still successfully tokenises (the
   cleartext is gone either way) — but every leaked span is one we'd have shipped in prod.
-- **Strict F1 by entity type** = the same metric broken out per canonical entity. `–` cells
-  mean no gold of that type was annotated in that corpus (e.g. WikiAnn has no DATE / AGE
-  spans), not that the engine missed it.
+  Per-entity-type strict F1 and partial / type-agnostic F1 views are in `results_matrix.csv`.
 - **`–` cells** = engine not run on that corpus. Reasons: language mismatch (Presidio is EN
   only), per-doc cost too high (openai-pf at 80sec/doc on CPU), or corpus requires manual
   DUA registration (`ggponc_de`).
