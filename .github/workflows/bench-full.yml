@@ -1,65 +1,90 @@
 name: bench-full
 
-# Full anonde bench matrix — every engine × every corpus.
+# Full anonde bench matrix — every engine × every corpus, parallelised.
+#
+# The serial version (commit cecc3ca) hit the 120-min timeout on
+# free-tier ubuntu-latest because ai4privacy_en × gliner-py and the
+# long-clinical corpora (pmc_de, wiki_de) dominated wall-clock. This
+# version uses GitHub Actions matrix strategy to fan out per-corpus:
+# each corpus runs on its own runner in parallel, and a final render
+# job stitches the results together.
 #
 # Distinct from .github/workflows/bench.yml (per-push regression
-# catcher, openmed + synth_clinical × 3 engines, ~10-15 min) and from
+# catcher, openmed + synth_clinical × 3 engines, ~10-15 min) and
 # bench-history.yml (release-tag snapshot, same subset + commit-back).
-# This workflow runs the WHOLE matrix and produces the headline numbers
-# anyone benchmarking anonde against the field wants to see.
 #
 # Triggers:
-#   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY — safely
-#     before any weekday traffic so it doesn't compete for runners).
-#   * Manual workflow_dispatch — kick off on demand from the Actions tab.
+#   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
+#   * Manual workflow_dispatch.
 #
-# Wall-clock target: under 90 min on the free-tier ubuntu-latest runner
-# (timeout 120 min for safety). Cells the bench matrix excludes by
-# design — openai-pf at ~80 sec/doc, anonde-hugot at ~25 000× slower
-# than patterns — are NOT included. To bench those, run locally:
-#   make bench/corpora/<NAME>/data/anonde_openai-pf.jsonl
+# Wall-clock target: under 40 min for the slowest cell (typically
+# ai4privacy_en), so the whole matrix completes in ~40 min wall-clock
+# regardless of total CPU-time.
 #
-# Outputs:
-#   * bench/REPORT_MATRIX.md + bench/results_matrix.csv as artifacts
-#     (90-day retention since these are the headline numbers).
-#   * Headline rendered into the job summary so a PR / release reviewer
-#     can read the numbers without downloading anything.
+# Corpora skipped from the CI matrix:
+#   * pmc_de / wiki_de — no gold spans (precision-probe only); F1 +
+#     leak rate are not measurable, so no CI value vs the runner cost.
+#   * conll2003_de — LDC-gated; loader exits 2 cleanly. Skipping the
+#     cell avoids a noisy "exit code 2" red mark in the matrix UI.
+#   * ggponc_de — requires manual DUA registration.
 #
-# Cost: this workflow uses ~90 free-tier runner-minutes per run. Weekly
-# = ~360 min/month. Well within the 2000 min/month free quota for
-# private repos and unlimited for public.
+# Cost: each cell ~5-30 min × 11 cells × 4 runs/month ≈ 1000 min/month.
+# Free-tier limit for public repos is unlimited; for private repos the
+# 2000 min/month free quota covers this.
 
 on:
   schedule:
-    # Sundays 06:00 UTC. cron uses UTC always; daylight-saving doesn't
-    # apply. If a Sunday is a holiday and runners are busy, the run
-    # just queues — there's no "must happen exactly Sunday" requirement.
     - cron: '0 6 * * 0'
   workflow_dispatch:
     inputs:
       label:
-        description: 'Optional artifact-label override (default: dispatch-<short-sha>)'
+        description: 'Optional artifact-label override (default: weekly-<date> or dispatch-<sha>)'
         required: false
         default: ''
 
-# Do NOT cancel an in-progress full bench — losing 60 minutes of work
-# to a non-bench push is worse than running two in series.
+# Do NOT cancel an in-progress full bench — losing a 40-min run to a
+# non-bench push is worse than running two in series.
 concurrency:
   group: bench-full-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  full-matrix:
+  # ---- Per-cell bench. One runner per corpus, in parallel. ----------
+  bench-cell:
+    name: cell · ${{ matrix.corpus }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
+    strategy:
+      # Don't abort sibling cells when one fails — partial results are
+      # still useful and the render job is tolerant of missing cells.
+      fail-fast: false
+      matrix:
+        corpus:
+          # German — gold-bearing only. pmc_de + wiki_de are
+          # precision-probe (no gold), excluded from CI matrix.
+          - openmed
+          - synth_clinical
+          - finance_de
+          - legal_de
+          - wikiann_de
+          - germeval_14
+          - adversarial_de
+          # English
+          - ai4privacy_en
+          - conll2003_en
+          - wnut_17
+          # Spanish
+          - pharmaconer_es
+
     env:
       ORT_VERSION: "1.26.0"
       ORT_LIB_DIR: ${{ github.workspace }}/.tokenlib
       ORT_LIB: ${{ github.workspace }}/.tokenlib/libonnxruntime.so
-      # Spacy model name + cache dir. en_core_web_lg is ~750 MB; cache
-      # it across runs.
+      # CI cap for ai4privacy_en (other corpora ignore this variable).
+      # 5000 docs is overkill for a regression bench; 1000 keeps the
+      # cell under 10 min while staying statistically representative.
+      MAX_DOCS: "1000"
       SPACY_MODEL: en_core_web_lg
-      SPACY_DATA_DIR: ${{ github.workspace }}/.spacy
 
     steps:
       - uses: actions/checkout@v4
@@ -77,8 +102,6 @@ jobs:
           cache: 'pip'
           cache-dependency-path: bench/requirements.txt
 
-      # libonnxruntime.so for the GLiNER backend's ORT session — same
-      # version + path convention as the per-push bench workflow.
       - name: Cache libonnxruntime
         id: ort-cache
         uses: actions/cache@v4
@@ -98,120 +121,120 @@ jobs:
           cp "/tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" \
              "$ORT_LIB_DIR/libonnxruntime.so"
 
-      # Base Python deps (gliner sidecar + corpus loaders + scoring).
-      - name: Install Python deps
+      - name: Install Python deps (bench base)
         run: |
           python -m pip install --upgrade pip
           pip install -r bench/requirements.txt
 
-      # Presidio + spaCy + en_core_web_lg — the full-matrix extras.
-      # Kept out of bench/requirements.txt so the per-push workflow
-      # doesn't pay ~750 MB of spaCy weights on every run.
-      - name: Install Presidio + spaCy
+      # Presidio + spaCy only on English corpora — they're the only
+      # ones that invoke the presidio cell. Other corpora skip the
+      # ~750 MB en_core_web_lg download.
+      - name: Install Presidio + spaCy (EN cells only)
+        if: contains(fromJSON('["ai4privacy_en","conll2003_en","wnut_17"]'), matrix.corpus)
         run: |
           set -euo pipefail
           pip install presidio-analyzer spacy
-
-      # Cache the spaCy model dir keyed on the model name. The first
-      # run materialises it from spaCy's CDN (~750 MB); subsequent runs
-      # restore from cache in seconds.
-      - name: Cache spaCy model
-        id: spacy-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.SPACY_DATA_DIR }}
-          key: spacy-${{ env.SPACY_MODEL }}-3.x
-
-      - name: Download spaCy model
-        if: steps.spacy-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p "$SPACY_DATA_DIR"
           python -m spacy download "$SPACY_MODEL"
-          # Copy the installed model into our cache dir for next run.
-          python -c "
-          import shutil, spacy.util
-          src = spacy.util.get_package_path('$SPACY_MODEL')
-          shutil.copytree(src, '$SPACY_DATA_DIR/$SPACY_MODEL', dirs_exist_ok=True)
-          "
 
-      - name: Restore spaCy model from cache
-        if: steps.spacy-cache.outputs.cache-hit == 'true'
-        run: |
-          set -euo pipefail
-          # spaCy looks at the installed package; install from our
-          # cached dir.
-          pip install --no-deps "$SPACY_DATA_DIR/$SPACY_MODEL" || \
-            python -m spacy download "$SPACY_MODEL"
-
-      # GLiNER pulls model weights from HF Hub on first use. Cache by
-      # model id — same as the per-push workflow.
       - name: Cache HuggingFace model cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
           key: hf-cache-gliner-pii-base-v1.0
 
-      # The Go-native GLiNER recognizer uses hugot's downloader, which
-      # writes to ~/.cache/anonde/models/. Same model, different on-
-      # disk layout — cache both.
       - name: Cache anonde model cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/anonde/models
           key: anonde-models-gliner-pii-base-v1.0
 
-      # Cache the per-corpus data/ trees keyed on each loader's source.
-      # Most corpora fetch from HF Datasets; caching the materialised
-      # corpus.jsonl saves the streaming + reservoir-sample step.
-      - name: Cache corpus.jsonl outputs
+      - name: Cache corpus data
         uses: actions/cache@v4
         with:
-          path: |
-            bench/corpora/conll2003_en/data
-            bench/corpora/conll2003_de/data
-            bench/corpora/germeval_14/data
-            bench/corpora/wnut_17/data
-            bench/corpora/wikiann_de/data
-            bench/corpora/openmed/data
-            bench/corpora/pharmaconer_es/data
-            bench/corpora/ai4privacy_en/data
-          key: corpus-data-${{ hashFiles('bench/corpora/*/loader.py') }}
+          path: bench/corpora/${{ matrix.corpus }}/data
+          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus)) }}-maxdocs${{ env.MAX_DOCS }}
 
-      - name: Verify default + hugot builds
+      - name: Verify hugot build (the bench needs it)
         run: |
-          CGO_ENABLED=0 go build ./...
           CGO_ENABLED=1 go build -tags hugot ./...
 
-      # Fetch every corpus's gold (no engine runs yet). Failures here
-      # are non-fatal — conll2003_de is gated and exits with code 2 by
-      # design; render_matrix treats missing gold as "skip this corpus".
-      - name: Fetch all corpora
-        run: |
-          set +e   # tolerate gated corpora (conll2003_de)
-          make -C bench data PYTHON=python3
-          # Always succeed at this step; corpus-level failures surface
-          # in the matrix rendering.
-          exit 0
-
-      # The full matrix. ORT_LIB is needed by anonde-gliner cells (the
-      # silent-fallback class of bugs the per-push bench guards against
-      # is the same here).
-      - name: Run full matrix
+      - name: Run cell — ${{ matrix.corpus }}
         env:
           ORT_LIB: ${{ env.ORT_LIB }}
         run: |
           set -euo pipefail
-          make -C bench matrix PYTHON=python3
+          make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
 
-      # Guard rail — same canary as the per-push bench. Walk every
-      # corpus that has both gold AND an anonde-gliner cell, and assert
-      # we saw non-multiple-of-0.05 scores (sigmoid-shaped, i.e. NER
-      # output rather than pattern fallback).
-      - name: Guard rail — GLiNER actually fired (full sweep)
+      # Upload the cell's data dir as an artifact. The render job will
+      # download every cell-* artifact and reassemble bench/corpora/.
+      - name: Upload cell artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cell-${{ matrix.corpus }}
+          path: bench/corpora/${{ matrix.corpus }}/data/*.jsonl
+          retention-days: 14
+
+  # ---- Aggregate the matrix into a single REPORT. -------------------
+  render:
+    name: render REPORT_MATRIX
+    needs: bench-cell
+    # Render even if some cells failed — render_matrix is tolerant of
+    # missing per-cell JSONLs (they show as "–" in the matrix UI).
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install minimal deps for render
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      # Pull every cell's data back into place. Each artifact is named
+      # `cell-<corpus>` and contains the corpus's data/*.jsonl files;
+      # we re-mount them under bench/corpora/<corpus>/data/.
+      - name: Download all cell artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: cell-outputs
+          pattern: cell-*
+
+      - name: Stitch cell outputs back into bench/corpora/
+        run: |
+          set -euo pipefail
+          if [ ! -d cell-outputs ]; then
+            echo "no cell-outputs/ — every matrix cell must have failed before upload"
+            exit 1
+          fi
+          for d in cell-outputs/cell-*; do
+            [ -d "$d" ] || continue
+            name=$(basename "$d" | sed 's/^cell-//')
+            mkdir -p "bench/corpora/$name/data"
+            cp "$d"/*.jsonl "bench/corpora/$name/data/" 2>/dev/null || \
+              echo "  (cell $name had no JSONL output — will render as missing)"
+          done
+          echo "Reassembled cells:"
+          ls -1 bench/corpora/*/data/*.jsonl 2>/dev/null | sed 's/^/  /' || \
+            echo "  (none — every cell produced no output)"
+
+      - name: Render REPORT_MATRIX
+        run: |
+          make -C bench render PYTHON=python3
+
+      # Same canary as the per-push bench, but walks every gold-bearing
+      # corpus that received an anonde-gliner cell.
+      - name: Guard rail — GLiNER actually fired
         run: |
           python3 - <<'PYEOF'
-          import json, sys, os
+          import json, sys
           from pathlib import Path
 
           failures = []
@@ -222,7 +245,6 @@ jobs:
               pred = corpus_dir / "data" / "anonde_anonde-gliner.jsonl"
               if not gold.exists() or not pred.exists():
                   continue
-              # Skip pure precision-probe corpora (no gold entities anyway).
               has_gold = False
               with gold.open() as fh:
                   for line in fh:
@@ -259,8 +281,6 @@ jobs:
               sys.exit(1)
           PYEOF
 
-      # Snapshot — for workflow_dispatch the user may have provided a
-      # label; for cron we use the date.
       - name: Compute snapshot label
         id: label
         run: |
@@ -275,7 +295,7 @@ jobs:
           LABEL=$(echo "$LABEL" | tr -c 'A-Za-z0-9._-' '_')
           echo "label=$LABEL" >> "$GITHUB_OUTPUT"
 
-      - name: Upload bench artifacts
+      - name: Upload combined report
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -290,11 +310,11 @@ jobs:
         if: always()
         run: |
           {
-            echo "## anonde bench — full matrix"
+            echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio (EN-only)_"
-            echo "_Corpora: every DE + EN + ES corpus in bench/Makefile_"
+            echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio (EN only)_"
+            echo "_Corpora in matrix: 11 (pmc_de, wiki_de, conll2003_de excluded — precision-probe / gated)_"
             echo ""
             if [ -f bench/REPORT_MATRIX.md ]; then
               cat bench/REPORT_MATRIX.md
