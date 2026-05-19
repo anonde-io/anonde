@@ -14,8 +14,8 @@ import (
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
-	"github.com/anonde-io/anonde/internal/core"
 	"github.com/anonde-io/anonde/internal/api"
+	"github.com/anonde-io/anonde/internal/core"
 	"github.com/anonde-io/anonde/internal/policy"
 	"github.com/anonde-io/anonde/internal/store"
 )
@@ -44,15 +44,18 @@ func main() {
 		warmupAnalyzer(analyzerEngine)
 	}
 
-	vaultTTL := durationFromEnv("MEMORY_VAULT_TTL", 5*time.Minute)
-	storeTTL := durationFromEnv("MEMORY_STORE_TTL", 5*time.Minute)
+	vaultTTL := durationFromEnv("ANONDE_VAULT_TTL", 0)
+	storeTTL := durationFromEnv("ANONDE_STORE_TTL", 0)
 	maxBytes := bytesFromEnv("MAX_CONTENT_BYTES", api.DefaultMaxRequestBytes)
+
+	vault, anonStore, storeName, closeStore := selectStoreBackend(vaultTTL, storeTTL)
+	defer closeStore()
 
 	svc := core.NewService(
 		analyzerEngine,
 		anonde.DefaultAnonymizerEngine(),
-		store.NewMemoryVaultWithTTL(vaultTTL),
-		store.NewMemoryStoreWithTTL(storeTTL),
+		vault,
+		anonStore,
 		&policy.Static{},
 	)
 	svc.SetVersionInfo(core.VersionInfo{
@@ -73,8 +76,8 @@ func main() {
 		Protocols:         api.NewServerProtocols(),
 	}
 
-	log.Printf("anonde server listening on %s (max_request_bytes=%d backend=%s model=%s)",
-		addr, maxBytes, backendName, modelName)
+	log.Printf("anonde server listening on %s (max_request_bytes=%d backend=%s model=%s store=%s)",
+		addr, maxBytes, backendName, modelName, storeName)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -225,6 +228,77 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 	}
 }
 
+// selectStoreBackend picks the Vault + Store implementations based on
+// STORE_BACKEND. Default is "memory" so existing dev / library users
+// see no behaviour change.
+//
+// "bbolt" defaults the on-disk file to ANONDE_BBOLT_PATH (override:
+// any writable path; the default "anonde.db" lands in the process
+// CWD). At-rest encryption is opt-in: set ANONDE_VAULT_KEY to a
+// base64 32-byte key to enable AES-256-GCM, otherwise vault values
+// are stored as plaintext JSON. We log loudly when encryption is off
+// so an operator can't miss that the file holds raw PII.
+//
+// Returns the impls plus a `close` that the caller defers; this owns
+// the bbolt *DB lifecycle when it's in play. The two adapters share
+// the same DB file, so the close function flushes both buckets.
+func selectStoreBackend(vaultTTL, storeTTL time.Duration) (core.Vault, core.Store, string, func()) {
+	backend := strings.ToLower(strings.TrimSpace(getenvDefault("STORE_BACKEND", "memory")))
+	switch backend {
+	case "memory":
+		return store.NewMemoryVaultWithTTL(vaultTTL),
+			store.NewMemoryStoreWithTTL(storeTTL),
+			"memory",
+			func() {}
+	case "bbolt":
+		path := strings.TrimSpace(getenvDefault("ANONDE_BBOLT_PATH", "anonde.db"))
+		var key []byte
+		if strings.TrimSpace(os.Getenv("ANONDE_VAULT_KEY")) != "" {
+			var err error
+			key, err = store.LoadVaultKey()
+			if err != nil {
+				log.Fatalf("STORE_BACKEND=bbolt: %v", err)
+			}
+		} else {
+			log.Printf("STORE_BACKEND=bbolt: ANONDE_VAULT_KEY not set — vault stored UNENCRYPTED at %s", path)
+		}
+		db, err := store.OpenDB(path)
+		if err != nil {
+			log.Fatalf("open bbolt db: %v", err)
+		}
+		boltVault, err := store.NewBoltVault(db, vaultTTL, key)
+		if err != nil {
+			_ = db.Close()
+			log.Fatalf("init bolt vault: %v", err)
+		}
+		anonStore := store.NewBoltStore(db, storeTTL)
+
+		// LRU cache in front of the vault to absorb the N-token-per-
+		// reveal read amplification. Default 10k entries (~2 MB of
+		// VaultEntry structs); ANONDE_VAULT_CACHE_SIZE=0 disables the
+		// wrapper entirely and serves all reads through bbolt.
+		cacheSize := intFromEnv("ANONDE_VAULT_CACHE_SIZE", 10_000)
+		vault := store.NewCachedVault(boltVault, cacheSize)
+		label := "bbolt:" + path
+		if key == nil {
+			label += " (plaintext)"
+		} else {
+			label += " (aes256gcm)"
+		}
+		if cacheSize > 0 {
+			label += " (lru=" + strconv.Itoa(cacheSize) + ")"
+		}
+		return vault, anonStore, label, func() {
+			_ = boltVault.Close()
+			_ = anonStore.Close()
+			_ = db.Close()
+		}
+	default:
+		log.Fatalf("unsupported STORE_BACKEND=%q (valid: memory, bbolt)", backend)
+		return nil, nil, "", func() {}
+	}
+}
+
 func durationFromEnv(key string, fallback time.Duration) time.Duration {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -235,6 +309,21 @@ func durationFromEnv(key string, fallback time.Duration) time.Duration {
 		log.Fatalf("invalid duration for %s=%q: %v", key, raw, err)
 	}
 	return parsed
+}
+
+func intFromEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Fatalf("invalid integer for %s=%q: %v", key, raw, err)
+	}
+	if n < 0 {
+		log.Fatalf("invalid integer for %s=%d: must be >= 0", key, n)
+	}
+	return n
 }
 
 func bytesFromEnv(key string, fallback int64) int64 {
