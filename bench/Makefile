@@ -71,9 +71,9 @@ NER_SCORE_FLOOR  ?= 0
 # changes needed).
 DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de \
               wikiann_de germeval_14 conll2003_de adversarial_de \
-              ai4privacy_de
-EN_CORPORA := ai4privacy_en conll2003_en wnut_17
-ES_CORPORA := pharmaconer_es ai4privacy_es
+              ai4privacy_de mapa_de
+EN_CORPORA := ai4privacy_en conll2003_en wnut_17 mapa_en
+ES_CORPORA := pharmaconer_es ai4privacy_es mapa_es
 # ES / FR / IT partitions populated by Phase 1 of the multilingual bench
 # expansion. ai4privacy_es / ai4privacy_fr / ai4privacy_it are the
 # Spanish / French / Italian slices of ai4privacy/pii-masking-300k (one
@@ -81,8 +81,14 @@ ES_CORPORA := pharmaconer_es ai4privacy_es
 # The 300k release covers six languages (en/fr/de/it/es/nl) — Spanish is
 # new vs the old 200k dataset, hence the ai4privacy_es corpus. No nl
 # corpus is wired yet.
-FR_CORPORA := ai4privacy_fr
-IT_CORPORA := ai4privacy_it
+#
+# Phase 2 adds the MAPA legal/administrative corpus across five
+# languages — mapa_{en,de,es,fr,it} — from joelniklaus/mapa (one shared
+# loader, see bench/corpora/mapa_en/cmd/fetch_mapa.py). MAPA gives the
+# matrix a real-gold legal domain number; the synthetic legal_de corpus
+# stays alongside mapa_de (different probes — generated vs real text).
+FR_CORPORA := ai4privacy_fr mapa_fr
+IT_CORPORA := ai4privacy_it mapa_it
 ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORPORA)
 
 # The engines the matrix scores. Each row's name is what compare.py
@@ -181,12 +187,14 @@ endef
 
 # --fold-parity-labels folds STREET_ADDRESS + POSTAL_CODE to LOCATION.
 # Needed for every ai4privacy_* corpus (its gold buckets street + zip
-# under LOCATION) regardless of language, plus the other EN corpora
-# whose gold uses the same convention. ai4privacy_de/fr/it live in the
-# DE/FR/IT partitions, so a plain EN_CORPORA filter would miss them —
-# match the ai4privacy_ prefix explicitly.
+# under LOCATION) and every mapa_* corpus (MAPA's coarse gold buckets
+# street-level detail under a single ADDRESS type) regardless of
+# language, plus the other EN corpora whose gold uses the same
+# convention. ai4privacy_de/fr/it and mapa_de/es/fr/it live in the
+# DE/ES/FR/IT partitions, so a plain EN_CORPORA filter would miss them —
+# match the ai4privacy_ / mapa_ prefixes explicitly.
 define FOLD_FOR_CORPUS
-$(if $(or $(filter $(1),$(EN_CORPORA)),$(filter ai4privacy_%,$(1))),--fold-parity-labels,)
+$(if $(or $(filter $(1),$(EN_CORPORA)),$(filter ai4privacy_% mapa_%,$(1))),--fold-parity-labels,)
 endef
 
 # Local libonnxruntime path for the gliner backend's ORT session. Matches

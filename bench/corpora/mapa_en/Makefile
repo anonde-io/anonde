@@ -1,0 +1,82 @@
+# bench/corpora/mapa_en — English legal/administrative PII bench on the
+# MAPA corpus. Phase 2 of the multilingual bench expansion.
+#
+# MAPA (Multilingual Anonymisation for Public Administration) is an
+# EU-funded, anonymisation-grade NER corpus of legal / administrative
+# text. mapa_en holds the SHARED loader (cmd/fetch_mapa.py); the four
+# sibling corpora (mapa_de/es/fr/it) call it with --language <code>.
+#
+# Targets:
+#   make data        # fetch MAPA en slice -> data/corpus.jsonl
+#   make anonde      # run anonde -> data/anonde.jsonl
+#   make presidio    # run Presidio -> data/presidio.jsonl  (needs spacy model)
+#   make report      # compare -> REPORT.md + results.csv
+#   make all         # everything
+
+HERE   := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT   := $(HERE)../../..
+DATA   := $(HERE)data
+CORPUS := $(DATA)/corpus.jsonl
+ANONDE_OUT := $(DATA)/anonde.jsonl
+PRESIDIO_OUT := $(DATA)/presidio.jsonl
+REPORT := $(HERE)REPORT.md
+CSV    := $(HERE)results.csv
+
+# Shared loader — single source of truth for every mapa_* corpus.
+LOADER := $(HERE)cmd/fetch_mapa.py
+
+ANONDE_BACKEND   ?= patterns-only
+LANGUAGE         ?= en
+MAX_DOCS         ?= 5000
+PYTHON           ?= python3
+ANONDE_MODEL     ?=
+ANONDE_ONNX_FILE ?=
+NER_SCORE_FLOOR  ?= 0
+PRESIDIO_ENGINE  ?= default
+
+GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
+
+.PHONY: all data anonde presidio report clean
+
+all: anonde report
+
+$(CORPUS):
+	mkdir -p $(DATA)
+	$(PYTHON) $(LOADER) --out $@ --max $(MAX_DOCS) --language $(LANGUAGE)
+
+data: $(CORPUS)
+
+# Re-uses the unified runner_anonde from bench/runners. --fold-parity-labels
+# folds STREET_ADDRESS + POSTAL_CODE to LOCATION; MAPA's coarse gold
+# buckets street-level detail under a single ADDRESS type, so the engine
+# side must fold its finer street/zip recognizers to match.
+.PHONY: anonde
+anonde: $(CORPUS)
+	cd $(ROOT) && go run $(GO_TAGS) ./bench/runners/anonde.go \
+		--in $(CORPUS) --out $(ANONDE_OUT) \
+		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
+		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
+		--ner-score-floor $(NER_SCORE_FLOOR) \
+		--fold-parity-labels \
+		--reconciler none --auditor none
+
+.PHONY: presidio
+presidio: $(CORPUS)
+	$(PYTHON) $(ROOT)/bench/runners/presidio.py \
+		--in $(CORPUS) --out $(PRESIDIO_OUT) \
+		--language $(LANGUAGE) \
+		--engine $(PRESIDIO_ENGINE)
+
+# Strict-mode entity compare (uses bench/scoring/compare.py).
+.PHONY: report
+report:
+	$(PYTHON) $(ROOT)/bench/scoring/compare.py \
+		--gold $(CORPUS) \
+		--engine anonde=$(ANONDE_OUT) \
+		$(if $(wildcard $(PRESIDIO_OUT)),--engine presidio=$(PRESIDIO_OUT),) \
+		--label-map $(ROOT)/bench/scoring/label_map.yaml \
+		--out $(REPORT) \
+		--csv $(CSV)
+
+clean:
+	rm -f $(ANONDE_OUT) $(PRESIDIO_OUT) $(REPORT) $(CSV)

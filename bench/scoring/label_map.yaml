@@ -129,6 +129,71 @@ gold:
   CRYPTO: ID
   IBAN_CODE: IBAN
 
+  # ----------------------------------------------------------------
+  # MAPA legal/administrative gold (Phase 2 of the multilingual bench
+  # expansion). Dataset: joelniklaus/mapa (CC-BY-4.0) — the EU-funded
+  # Multilingual Anonymisation for Public Administration corpus. The
+  # shared loader (bench/corpora/mapa_en/cmd/fetch_mapa.py) emits the
+  # five mapa_{en,de,es,fr,it} corpora.
+  #
+  # MAPA ships a TWO-LEVEL annotation: a coarse layer and a fine layer.
+  # The loader builds gold from the COARSE layer — the fine layer is
+  # NOT a clean leaf decomposition of it (no GIVEN NAME label exists;
+  # ~25% of coarse-entity tokens are fine==O; fine sub-mentions cut
+  # across coarse spans). See the loader docstring for the full probe.
+  #
+  # Because the loader maps MAPA's coarse types to canonical anonde
+  # type strings BEFORE writing gold, the entries actually consumed by
+  # compare.py are the canonical ones already listed above (PERSON,
+  # ORGANIZATION, ADDRESS, DATE_TIME). The block below documents the
+  # FULL MAPA label vocabulary (coarse + fine) and is the audit trail
+  # for the loader's COARSE_MAP — and a forward-compatible hook if the
+  # loader is ever switched to emit raw MAPA labels.
+  #
+  # MAPA coarse layer (the layer gold is built from):
+  MAPA_PERSON: PERSON
+  MAPA_ORGANISATION: ORGANIZATION   # EU/BrE spelling
+  MAPA_ADDRESS: ADDRESS
+  MAPA_DATE: DATE
+  # AMOUNT — monetary value. anonde's rule: monetary amounts are NOT
+  # PII. Dropped from gold so a correct non-flag is not a false
+  # negative and a leaked amount is not counted. The loader does not
+  # even emit it; the `~` here documents the decision.
+  MAPA_AMOUNT: ~
+  #
+  # MAPA fine layer (informational — NOT emitted into gold; see above).
+  # Listed so the full upstream vocabulary is documented in one place.
+  # Name parts → PERSON (note: MAPA has NO "given name" label — given
+  # names are coarse PERSON but fine O):
+  MAPA_FAMILY_NAME: PERSON
+  MAPA_INITIAL_NAME: PERSON
+  MAPA_TITLE: PERSON              # honorific bound to a name
+  MAPA_ROLE: ~                   # job role token — not a direct identifier
+  MAPA_PROFESSION: PROFESSION
+  MAPA_NATIONALITY: ~            # NRP-class; no canonical type, drop
+  MAPA_ETHNIC_CATEGORY: ~        # NRP-class; sensitive but no canonical type
+  MAPA_MARITAL_STATUS: ~         # quasi-identifier; no canonical type
+  MAPA_AGE: AGE
+  # Address / location sub-labels:
+  MAPA_CITY: LOCATION
+  MAPA_COUNTRY: LOCATION
+  MAPA_TERRITORY: LOCATION
+  MAPA_PLACE: LOCATION
+  MAPA_BUILDING: ADDRESS
+  # Date sub-labels — day/month/year parts of a coarse DATE span:
+  MAPA_DAY: DATE
+  MAPA_MONTH: DATE
+  MAPA_YEAR: DATE
+  # Contact:
+  MAPA_URL: URL
+  # AMOUNT sub-labels — monetary value/unit, not PII (same rule as
+  # MAPA_AMOUNT above):
+  MAPA_VALUE: ~
+  MAPA_UNIT: ~
+  # Misc fine labels with no PII meaning:
+  MAPA_TYPE: ~                   # document/entity type token
+  MAPA_STANDARD_ABBREVIATION: ~  # legal-citation abbreviation
+
 # anonde internal entity types (see analyzer/recognizers/*.go).
 anonde:
   PERSON: PERSON
