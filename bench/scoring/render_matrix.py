@@ -19,13 +19,20 @@ flat per-corpus list). The (domain, language) of each corpus comes from
 file degrades gracefully into an `uncategorized` / `unknown` group with
 a stderr warning — it is never an error.
 
-The emitted REPORT_MATRIX.md is focused on the load-bearing tables:
+The emitted REPORT_MATRIX.md LEADS with one scannable scorecard, then
+keeps the detailed grids below it as reference:
 
   * TL;DR headline
+  * Scorecard — one table: leak rate per engine for every populated
+    (domain × language) cell, anonde-anchored, with per-domain /
+    per-language / overall roll-ups and an anonde win/loss tally. This
+    is the table a human reads to answer "does anonde beat presidio on
+    German legal?" in five seconds.
   * Engine profiles (tier framing for anonde-patterns / anonde-gliner)
   * Domain × language coverage map (which cells exist)
-  * Per (domain × language): leak-rate grid + per-corpus verdict cards
-    + severity-weighted leak + latency + strict F1
+  * "# Detailed breakdown" — per (domain × language): leak-rate grid +
+    per-corpus verdict cards + severity-weighted leak + latency +
+    strict F1 (demoted below the scorecard, not deleted)
   * Cost reference (self-hosted vs managed)
   * Caveats — training-data overlap
   * Glossary
@@ -520,6 +527,242 @@ def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
     out.append("")
 
 
+# ---- headline scorecard ------------------------------------------------
+# The single table a human reads first. Rows = every populated
+# (domain × language) cell; columns = the engines; cell = leak rate %.
+# anonde-gliner is the production engine, so its column is the anchor:
+# every row tells you at a glance whether anonde wins or loses, and the
+# roll-up rows summarise per-domain / per-language without scanning.
+
+# The anonde column the scorecard anchors on (production engine).
+SCORECARD_ANCHOR = "anonde-gliner"
+
+
+def _cell_leak(rows: dict, corpus: str, engine: str) -> float | None:
+    """Leak rate for one (corpus, engine) cell, or None if not scorable."""
+    cell = rows.get((corpus, engine))
+    if cell is None or cell["total_gold"] == 0:
+        return None
+    return cell["leaked"] / cell["total_gold"]
+
+
+def _group_leak(rows: dict, corpora: list[str], engine: str) -> float | None:
+    """Pooled leak rate for an engine over a set of corpora — leaked
+    spans summed over total gold spans (a doc-weighted mean, not a
+    mean-of-means, so big corpora count proportionally).
+    """
+    leaked = 0
+    total = 0
+    for c in corpora:
+        cell = rows.get((c, engine))
+        if cell is None or cell["total_gold"] == 0:
+            continue
+        leaked += cell["leaked"]
+        total += cell["total_gold"]
+    if total == 0:
+        return None
+    return leaked / total
+
+
+def _fmt_rate(r: float | None, best: bool = False) -> str:
+    if r is None:
+        return "–"
+    txt = f"{r:.1%}"
+    return f"**{txt}** 🥇" if best else txt
+
+
+def _anchor_verdict(anchor: float | None, others: list[float | None]) -> str:
+    """One-glyph verdict for the anonde anchor vs the field of baselines.
+
+    ✅ anonde is strictly the lowest leak; 🟰 tied for lowest;
+    ❌ at least one baseline leaks less; – anchor not scorable.
+    """
+    if anchor is None:
+        return "–"
+    rivals = [o for o in others if o is not None]
+    if not rivals:
+        return "✅"  # only engine scored — trivially the floor
+    best_rival = min(rivals)
+    if anchor < best_rival - 1e-9:
+        return "✅"
+    if abs(anchor - best_rival) < 1e-9:
+        return "🟰"
+    return "❌"
+
+
+def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
+               domain_name, language_name) -> None:
+    """Append the headline scorecard: one row per populated
+    (domain × language) cell, leak rate per engine, anonde-anchored.
+
+    `groups` is the output of `_group_corpora` — (domain, language,
+    corpus_list) in display order. Roll-up rows (per domain, per
+    language, overall) are pooled leak rates so a reader sees the
+    aggregate without scanning every row.
+    """
+    anchor = SCORECARD_ANCHOR
+    # Column order: the anonde anchor first (it is what every row is
+    # judged against), then the rest in the order they were requested.
+    others = [e for e in engines if e != anchor]
+    col_engines = ([anchor] if anchor in engines else []) + others
+
+    out.append("## 🎯 Scorecard · leak rate by domain × language\n")
+    out.append(
+        "The one table. Each row is a `(domain, language)` cell; each "
+        f"number is **leak rate** (fraction of gold PHI spans missed — "
+        f"lower is better). `{anchor}` is the anonde production engine "
+        "and the anchor column; **Verdict** says whether it beats the "
+        "field. 🥇 marks the lowest-leak engine in the row. Roll-up rows "
+        "pool leaked-over-gold across the group (doc-weighted, so larger "
+        "corpora count more).\n")
+
+    header = "| Domain | Language |"
+    for e in col_engines:
+        tag = " ⬅︎ anonde" if e == anchor else ""
+        header += f" `{e}`{tag} |"
+    header += " Verdict |"
+    out.append(header)
+    out.append("|---|---|" + "---:|" * len(col_engines) + ":--:|")
+
+    # Track corpora per domain / per language for the roll-ups.
+    by_domain: dict[str, list[str]] = defaultdict(list)
+    by_language: dict[str, list[str]] = defaultdict(list)
+    all_corpora: list[str] = []
+    domain_seq: list[str] = []
+    lang_seq: list[str] = []
+
+    for domain, language, corpora in groups:
+        if domain not in domain_seq:
+            domain_seq.append(domain)
+        if language not in lang_seq:
+            lang_seq.append(language)
+        by_domain[domain].extend(corpora)
+        by_language[language].extend(corpora)
+        all_corpora.extend(corpora)
+
+        # Pooled leak rate for this exact (domain, language) cell.
+        rates = [_group_leak(rows, corpora, e) for e in col_engines]
+        scorable = [r for r in rates if r is not None]
+        if not scorable:
+            # No scorable engine for this cell — still show the row so
+            # the coverage map and the scorecard agree.
+            row = f"| **{domain_name(domain)}** | {language_name(language)} |"
+            row += " – |" * len(col_engines) + " – |"
+            out.append(row)
+            continue
+        best = min(scorable)
+        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
+        verdict = _anchor_verdict(
+            anchor_rate,
+            [r for e, r in zip(col_engines, rates) if e != anchor])
+        row = f"| **{domain_name(domain)}** | {language_name(language)} |"
+        for e, r in zip(col_engines, rates):
+            is_best = r is not None and abs(r - best) < 1e-9
+            cell = _fmt_rate(r, is_best)
+            if e == anchor and r is not None:
+                cell = f"_{cell}_" if "**" not in cell else cell
+            row += f" {cell} |"
+        row += f" {verdict} |"
+        out.append(row)
+
+    # ---- roll-up: per domain ----------------------------------------
+    out.append("|" + " |" * (len(col_engines) + 3))  # visual spacer row
+    for domain in domain_seq:
+        corpora = by_domain[domain]
+        rates = [_group_leak(rows, corpora, e) for e in col_engines]
+        scorable = [r for r in rates if r is not None]
+        if not scorable:
+            continue
+        best = min(scorable)
+        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
+        verdict = _anchor_verdict(
+            anchor_rate,
+            [r for e, r in zip(col_engines, rates) if e != anchor])
+        row = f"| _Σ {domain_name(domain)}_ | _all_ |"
+        for r in rates:
+            is_best = r is not None and abs(r - best) < 1e-9
+            row += f" {_fmt_rate(r, is_best)} |"
+        row += f" {verdict} |"
+        out.append(row)
+
+    # ---- roll-up: per language --------------------------------------
+    out.append("|" + " |" * (len(col_engines) + 3))
+    for language in lang_seq:
+        corpora = by_language[language]
+        rates = [_group_leak(rows, corpora, e) for e in col_engines]
+        scorable = [r for r in rates if r is not None]
+        if not scorable:
+            continue
+        best = min(scorable)
+        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
+        verdict = _anchor_verdict(
+            anchor_rate,
+            [r for e, r in zip(col_engines, rates) if e != anchor])
+        row = f"| _Σ all domains_ | _{language_name(language)}_ |"
+        for r in rates:
+            is_best = r is not None and abs(r - best) < 1e-9
+            row += f" {_fmt_rate(r, is_best)} |"
+        row += f" {verdict} |"
+        out.append(row)
+
+    # ---- roll-up: overall -------------------------------------------
+    out.append("|" + " |" * (len(col_engines) + 3))
+    rates = [_group_leak(rows, all_corpora, e) for e in col_engines]
+    scorable = [r for r in rates if r is not None]
+    if scorable:
+        best = min(scorable)
+        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
+        verdict = _anchor_verdict(
+            anchor_rate,
+            [r for e, r in zip(col_engines, rates) if e != anchor])
+        row = "| **Σ ALL** | **all** |"
+        for r in rates:
+            is_best = r is not None and abs(r - best) < 1e-9
+            # _fmt_rate already bolds the row best; only add emphasis to
+            # the non-best cells so the overall row reads bold without
+            # double-starring the winner into literal `****`.
+            if r is None:
+                row += " – |"
+            elif is_best:
+                row += f" {_fmt_rate(r, True)} |"
+            else:
+                row += f" **{_fmt_rate(r, False)}** |"
+        row += f" {verdict} |"
+        out.append(row)
+    out.append("")
+
+    # ---- win/loss tally for the anonde anchor -----------------------
+    # Counted over the per-cell rows only (not roll-ups), so it answers
+    # "in how many domain×language cells does anonde lead the field?".
+    wins = ties = losses = 0
+    for domain, language, corpora in groups:
+        rates = {e: _group_leak(rows, corpora, e) for e in col_engines}
+        anchor_rate = rates.get(anchor)
+        if anchor_rate is None:
+            continue
+        rivals = [r for e, r in rates.items() if e != anchor and r is not None]
+        if not rivals:
+            wins += 1
+            continue
+        best_rival = min(rivals)
+        if anchor_rate < best_rival - 1e-9:
+            wins += 1
+        elif abs(anchor_rate - best_rival) < 1e-9:
+            ties += 1
+        else:
+            losses += 1
+    n_cells = wins + ties + losses
+    out.append(
+        f"> **Anonde scoreboard** — across the **{n_cells}** populated "
+        f"`(domain, language)` cells above, `{anchor}` is the "
+        f"**lowest-leak engine in {wins}**, ties in **{ties}**, and is "
+        f"beaten in **{losses}**. ✅ = anonde leads · 🟰 = tied · ❌ = a "
+        "baseline leaks less. Read the row to see which baseline, then "
+        "the Detailed breakdown below for severity-weighted leak, "
+        "latency, and strict F1. (The TL;DR's win count is per-corpus, "
+        "a finer split than these per-cell rows.)\n")
+
+
 def _verdict_cards(out: list[str], per_corpus_verdict: list[dict],
                    section_corpora: set[str]) -> None:
     """Append the per-corpus leak-severity verdict cards for the corpora
@@ -563,18 +806,22 @@ def _render(rows, label_map, corpora, engines, meta=None):
     Layout (per-entity strict-F1 breakdown lives in results_matrix.csv):
 
       1. TL;DR (one-paragraph headline conclusion)
-      2. Engine profiles (tier framing)
-      3. Domain × language coverage map
-      4. Per (domain × language) section, in display order:
+      2. Scorecard — THE table: one row per (domain × language) cell,
+         leak rate per engine, anonde-anchored, with per-domain /
+         per-language / overall roll-ups + a win/loss tally
+      3. Engine profiles (tier framing)
+      4. Domain × language coverage map
+      5. "# Detailed breakdown" — per (domain × language) section, in
+         display order, each with:
            - per-corpus verdict cards (leak severity flags)
            - leak-rate grid (production metric)
            - partial-coverage footnote (if any cell was subsampled)
            - severity-weighted leak rate (procurement metric)
            - latency p50 / p95 (operational metric)
            - strict F1 — overall micro-F1 only (per-entity in CSV)
-      5. Cost reference (managed-service anchor; self-hosted framing)
-      6. Caveats — training-data overlap
-      7. Glossary
+      6. Cost reference (managed-service anchor; self-hosted framing)
+      7. Caveats — training-data overlap
+      8. Glossary
     """
     meta = meta or {}
     out: list[str] = []
@@ -653,6 +900,13 @@ def _render(rows, label_map, corpora, engines, meta=None):
             "Add a corpus with `entities: [...]` in its `corpus.jsonl` to enable F1 + leak-rate metrics.\n"
         )
 
+    # ---- Headline scorecard -----------------------------------------
+    # The single scannable table: leak rate per engine for every
+    # populated (domain × language) cell, anonde-anchored, with
+    # per-domain / per-language / overall roll-ups. This is THE table a
+    # human reads — everything below it is reference detail.
+    _scorecard(out, rows, groups, engines, _domain_name, _language_name)
+
     # ---- Engine profiles --------------------------------------------
     # Anonde-patterns and anonde-gliner are NOT two competing tools —
     # they're two deployment profiles of the same toolkit. Patterns is
@@ -720,6 +974,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # strict F1 — but scoped to one (domain, language) so the report is
     # navigable. Leak rate leads every section: it is the load-bearing
     # metric for a redactor.
+    out.append("# Detailed breakdown\n")
+    out.append(
+        "Everything below is reference detail behind the scorecard. Each "
+        "`(domain × language)` section carries the per-corpus verdict "
+        "cards, the raw leak-rate grid, the severity-weighted leak rate, "
+        "latency, and strict F1. The scorecard above is the answer; "
+        "these tables are the working.\n")
+
     sev = label_map.get("severity") or {}
     section_corpora_global: set[str] = set()
     for domain, language, section_corpora in groups:
