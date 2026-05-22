@@ -13,6 +13,12 @@ name: bench-full
 # catcher, openmed + synth_clinical × 3 engines, ~10-15 min) and
 # bench-history.yml (release-tag snapshot, same subset + commit-back).
 #
+# This is the only workflow that runs the openai-pf engine: it sets
+# RUN_OPENAI_PF=1, so each cell scores the OpenAI Privacy Filter model on
+# a deterministic subsample (OPENAI_PF_SAMPLE docs, ~80 s/doc on CPU).
+# openai-pf is too slow for the per-push bench (bench.yml), which leaves
+# it excluded. See bench/Makefile's ENGINES block for the gating design.
+#
 # Triggers:
 #   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
 #   * Manual workflow_dispatch.
@@ -53,7 +59,15 @@ jobs:
   bench-cell:
     name: cell · ${{ matrix.corpus }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 75 min (was 45): the openai-pf cell is now part of the full matrix
+    # and runs ~80 s/doc on CPU. We score it on a deterministic
+    # OPENAI_PF_SAMPLE-doc subsample (40 → ~53 min) rather than the whole
+    # corpus; 75 min leaves headroom for that plus the four always-on
+    # engines on the same runner. Tradeoff considered: a smaller CI-only
+    # OPENAI_PF_SAMPLE would keep the 45-min cap, but 40 docs is already
+    # the floor for a stable leak-rate estimate, so we bump the timeout
+    # instead of shrinking the sample.
+    timeout-minutes: 75
     strategy:
       # Don't abort sibling cells when one fails — partial results are
       # still useful and the render job is tolerant of missing cells.
@@ -184,12 +198,19 @@ jobs:
         run: |
           CGO_ENABLED=1 go build -tags hugot ./...
 
+      # Run the four always-on engines, then the openai-pf cell. openai-pf
+      # is gated behind RUN_OPENAI_PF=1 — set here (and only here / on the
+      # `matrix` target) so the slow ~80 s/doc model runs on the weekly
+      # full matrix but never on the per-push PR bench. The openai-pf cell
+      # is scored on a deterministic OPENAI_PF_SAMPLE-doc subsample;
+      # render_matrix.py scores it over only the docs it returned.
       - name: Run cell — ${{ matrix.corpus }}
         env:
           ORT_LIB: ${{ env.ORT_LIB }}
         run: |
           set -euo pipefail
           make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
+          make -C bench openai-pf-${{ matrix.corpus }} PYTHON=python3 RUN_OPENAI_PF=1
 
       # Upload the cell's data dir as an artifact. The render job will
       # download every cell-* artifact and reassemble bench/corpora/.
@@ -339,7 +360,7 @@ jobs:
             echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio (EN only)_"
+            echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio, openai-pf (subsampled — ${OPENAI_PF_SAMPLE:-40} docs/corpus)_"
             echo "_Corpora in matrix: 11 (pmc_de, wiki_de, conll2003_de excluded — precision-probe / gated)_"
             echo ""
             if [ -f bench/REPORT_MATRIX.md ]; then

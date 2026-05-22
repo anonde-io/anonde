@@ -25,7 +25,13 @@ Usage:
 
     .venv-bench/bin/python bench/runners/openai_pf.py \\
         --in bench/corpora/openmed/data/corpus.jsonl \\
-        --out bench/corpora/openmed/data/anonde_openaipf.jsonl
+        --out bench/corpora/openmed/data/anonde_openai-pf.jsonl \\
+        --max-docs 40
+
+`--max-docs N` scores only the first N docs in deterministic id order, so
+the matrix can include openai-pf as a column without paying ~80 s/doc over
+the whole corpus. render_matrix.py scores each engine over the docs it
+actually returned, so a 40-of-512 run is not penalised as a 92% leak.
 """
 
 from __future__ import annotations
@@ -70,6 +76,12 @@ def main() -> int:
                     help="HF pipeline aggregation strategy for sub-tokens")
     ap.add_argument("--threshold", type=float, default=0.5,
                     help="drop entities with score below this")
+    ap.add_argument("--max-docs", type=int, default=0,
+                    help="when >0, score only the first N docs in "
+                         "deterministic order (sorted by doc id). Reruns are "
+                         "stable. openai-pf is ~80 s/doc on CPU, so the matrix "
+                         "scores it on a fixed subsample rather than the whole "
+                         "corpus — see render_matrix.py partial-doc scoring.")
     args = ap.parse_args()
 
     try:
@@ -111,18 +123,36 @@ def main() -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    n_docs = 0
-    n_findings = 0
-    with inp.open("r", encoding="utf-8") as fin, out.open("w", encoding="utf-8") as fout:
+    # Load every doc up front. openai-pf is ~80 s/doc, so for the matrix we
+    # score only a deterministic subsample (--max-docs N): sort by doc id and
+    # take the first N. Sorting (not the file order) makes reruns stable even
+    # if the corpus loader reorders lines. The subsample's findings are the
+    # ONLY docs written to the output JSONL — render_matrix.py then scores
+    # openai-pf over just the docs it actually returned (intersection of gold
+    # ids ∩ pred ids), so a partial run does not show as a fake leak.
+    docs: list[dict] = []
+    with inp.open("r", encoding="utf-8") as fin:
         for line in fin:
             line = line.strip()
             if not line:
                 continue
             try:
-                doc = json.loads(line)
+                docs.append(json.loads(line))
             except json.JSONDecodeError as e:
                 print(f"skip malformed line: {e}", file=sys.stderr)
                 continue
+
+    if args.max_docs and args.max_docs > 0:
+        docs.sort(key=lambda d: str(d.get("id", "")))
+        before = len(docs)
+        docs = docs[:args.max_docs]
+        print(f"--max-docs {args.max_docs}: scoring {len(docs)}/{before} docs "
+              f"(deterministic, sorted by id)", file=sys.stderr)
+
+    n_docs = 0
+    n_findings = 0
+    with out.open("w", encoding="utf-8") as fout:
+        for doc in docs:
             doc_id = doc.get("id", "")
             text = unicodedata.normalize("NFC", doc.get("text", ""))
             if not text:

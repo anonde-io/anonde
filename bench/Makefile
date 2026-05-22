@@ -16,10 +16,18 @@
 #   bench/results_matrix.csv flat row-per-(corpus, engine, entity, view)
 #
 # Subset targets:
-#   make matrix-de   skip English corpora
-#   make matrix-en   skip German corpora
+#   make matrix-de   German corpora only
+#   make matrix-en   English corpora only
+#   make matrix-es   Spanish corpora only
+#   make matrix-fr   French corpora only  (no corpora yet — Phase 1 groundwork)
+#   make matrix-it   Italian corpora only (no corpora yet — Phase 1 groundwork)
 #   make data        fetch/generate every corpus (no engine runs)
 #   make clean       remove per-corpus data + the matrix outputs
+#
+# openai-pf is a rendered matrix column but is gated behind RUN_OPENAI_PF=1
+# (it is ~80 s/doc on CPU). `make matrix RUN_OPENAI_PF=1` runs it on a
+# deterministic OPENAI_PF_SAMPLE-doc subsample; without the flag the
+# openai-pf column renders as "–". See the ENGINES block below.
 #
 # Tuning knobs forwarded to each per-corpus Makefile:
 #   ANONDE_BACKEND       which anonde mode (patterns-only|hugot|gliner)
@@ -29,6 +37,8 @@
 #   GLINER_MODEL         model id for the GLiNER cells (default: PII base)
 #   GLINER_THRESHOLD     GLiNER threshold (default: 0.40)
 #   HUGOT_MODEL          model id for the hugot cells (default: multilang PII)
+#   RUN_OPENAI_PF        set to 1 to run the (slow) openai-pf cells
+#   OPENAI_PF_SAMPLE     docs the openai-pf cell scores (default: 40)
 #   PYTHON               python3 executable (default: python3)
 
 HERE   := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
@@ -63,28 +73,43 @@ DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de \
               wikiann_de germeval_14 conll2003_de adversarial_de
 EN_CORPORA := ai4privacy_en conll2003_en wnut_17
 ES_CORPORA := pharmaconer_es
-ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA)
+# FR / IT partitions are intentionally empty for now — Phase 1 of the
+# multilingual expansion only has to append corpus names here, no
+# Makefile plumbing changes. LANG_FOR_CORPUS + matrix-fr / matrix-it
+# below are already wired so a name added here is picked up end-to-end.
+FR_CORPORA :=
+IT_CORPORA :=
+ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORPORA)
 
-# The four engines the matrix scores. Each row's name is what compare.py
+# The engines the matrix scores. Each row's name is what compare.py
 # routes through the label_map (so prefixes matter — see compare.py).
-ENGINES := anonde-patterns anonde-gliner presidio gliner-py
-# anonde-hugot and openai-pf are dropped from the auto-matrix:
-#   * hugot's XLM-R PII model is ~25 000× slower than patterns and the
-#     openmed cell proved it strictly underperforms anonde-gliner
-#     (F1 0.473 vs 0.529 on GraSCCo).
-#   * openai-pf at ~80 sec/doc on CPU makes large corpora untractable
-#     (160+ min for synth_clinical alone); the historical cells it
-#     produced (98 % leak on German clinical) showed the model has no
-#     advantage over GLiNER PII on this matrix.
-# Both are still reachable as one-off targets if anyone wants to bench
-# them manually:
+#
+# openai-pf IS a rendered column, but it is gated: it is ~80 sec/doc on
+# CPU, far too slow to run the whole corpus on a PR. So it is benchmarked
+# on a deterministic subsample (OPENAI_PF_SAMPLE docs, sorted by id) and
+# its cell only runs when RUN_OPENAI_PF=1. The `matrix` target and
+# bench-full.yml set that flag; the per-push `corpus-%` path / bench.yml
+# do NOT, so a PR bench never pays the openai-pf cost. When RUN_OPENAI_PF
+# is unset the openai-pf column simply renders as "–" (cell not run).
+#
+# anonde-hugot stays dropped from the auto-matrix: hugot's XLM-R PII model
+# is ~25 000× slower than patterns and the openmed cell proved it strictly
+# underperforms anonde-gliner (F1 0.473 vs 0.529 on GraSCCo). It is still
+# reachable as a one-off:
 #   make -C bench/corpora/<NAME> all ANONDE_BACKEND=hugot
-#   $(PYTHON) bench/runners/openai_pf.py --in <gold> --out <preds>.jsonl
+ENGINES := anonde-patterns anonde-gliner presidio gliner-py openai-pf
+
+# openai-pf gating + subsample size. RUN_OPENAI_PF=1 enables the cell;
+# OPENAI_PF_SAMPLE is how many docs (deterministic, sorted by id) the
+# openai-pf runner scores. render_matrix.py scores openai-pf over only
+# the docs it returned, so the subsample does not show as a fake leak.
+RUN_OPENAI_PF     ?=
+OPENAI_PF_SAMPLE  ?= 40
 
 MATRIX_REPORT := $(HERE)REPORT_MATRIX.md
 MATRIX_CSV    := $(HERE)results_matrix.csv
 
-.PHONY: help data matrix matrix-de matrix-en clean \
+.PHONY: help data matrix matrix-de matrix-en matrix-es matrix-fr matrix-it clean \
         $(addprefix corpus-,$(ALL_CORPORA)) \
         $(addprefix data-,$(ALL_CORPORA))
 
@@ -99,13 +124,20 @@ help:
 	@echo "  make matrix-de          German subset only"
 	@echo "  make matrix-en          English subset only"
 	@echo "  make matrix-es          Spanish subset only"
-	@echo "  make corpus-<NAME>      run every engine on a single corpus (NAME e.g. openmed)"
+	@echo "  make matrix-fr          French subset only (no corpora yet — Phase 1)"
+	@echo "  make matrix-it          Italian subset only (no corpora yet — Phase 1)"
+	@echo "  make corpus-<NAME>      run the 4 always-on engines on a single corpus"
 	@echo "  make clean              remove generated data + reports + the matrix outputs"
 	@echo ""
 	@echo "Corpora (German):  $(DE_CORPORA)"
 	@echo "Corpora (English): $(EN_CORPORA)"
 	@echo "Corpora (Spanish): $(ES_CORPORA)"
+	@echo "Corpora (French):  $(FR_CORPORA)"
+	@echo "Corpora (Italian): $(IT_CORPORA)"
 	@echo "Engines: $(ENGINES)"
+	@echo ""
+	@echo "openai-pf is gated: pass RUN_OPENAI_PF=1 to run its cells"
+	@echo "  (~80 s/doc; subsample size OPENAI_PF_SAMPLE=$(OPENAI_PF_SAMPLE) docs)"
 	@echo ""
 	@echo "Per-corpus targets also reachable directly:"
 	@echo "  make -C bench/corpora/<NAME> all ANONDE_BACKEND=<mode>"
@@ -133,8 +165,13 @@ $(if $(filter anonde-gliner,$(1)),gliner,\
 )))
 endef
 
+# Corpus → language code. Defaults to `de` when a corpus is in none of the
+# explicit partitions. FR / IT are wired ahead of their corpora (Phase 1).
 define LANG_FOR_CORPUS
-$(if $(filter $(1),$(EN_CORPORA)),en,$(if $(filter $(1),$(ES_CORPORA)),es,de))
+$(if $(filter $(1),$(EN_CORPORA)),en,\
+$(if $(filter $(1),$(ES_CORPORA)),es,\
+$(if $(filter $(1),$(FR_CORPORA)),fr,\
+$(if $(filter $(1),$(IT_CORPORA)),it,de))))
 endef
 
 define FOLD_FOR_CORPUS
@@ -215,6 +252,36 @@ $(CORPORA_DIR)/$(1)/data/anonde_gliner-py.jsonl: | data-$(1)
 	  echo "[matrix] WARN: gliner-py cell for $(1) failed — render will show as missing"
 endef
 
+# openai-pf cell: Python sidecar for the OpenAI Privacy Filter model.
+# Mirrors CELL_gliner_py (warn-and-skip on failure, NOT .PHONY so a
+# completed cell is cached). Two differences from the other cells:
+#
+#   1. GATED by RUN_OPENAI_PF. openai-pf is ~80 sec/doc on CPU — far too
+#      slow for the per-push PR bench (bench.yml, ~30 min budget). When
+#      RUN_OPENAI_PF is unset the recipe is a no-op that prints why; the
+#      renderer then shows the openai-pf column as "–" for that corpus.
+#      `matrix` and bench-full.yml set RUN_OPENAI_PF=1; `corpus-%` /
+#      bench.yml do not.
+#   2. SUBSAMPLED via --max-docs $(OPENAI_PF_SAMPLE). Even when enabled it
+#      only scores the first N docs (deterministic, sorted by id), so the
+#      cell stays bounded (40 docs × ~80 s ≈ 53 min). render_matrix.py
+#      scores openai-pf over only the docs it returned.
+define CELL_openai_pf
+# NOT .PHONY: cache existing per-cell outputs so partial matrices don't re-run.
+$(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl: | data-$(1)
+ifeq ($(strip $(RUN_OPENAI_PF)),)
+	@echo "[matrix] SKIP $(1) x openai-pf — RUN_OPENAI_PF unset (cell is ~80 s/doc; set RUN_OPENAI_PF=1 to enable)"
+else
+	@echo "[matrix] $(1) x openai-pf (sample=$(OPENAI_PF_SAMPLE) docs)"
+	$(PYTHON) $(ROOT)/bench/runners/openai_pf.py \
+	  --in  $(CORPORA_DIR)/$(1)/data/corpus.jsonl \
+	  --out $(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl \
+	  --engine-label openai-pf \
+	  --max-docs $(OPENAI_PF_SAMPLE) || \
+	  echo "[matrix] WARN: openai-pf cell for $(1) failed — render will show as missing"
+endif
+endef
+
 # Expand per-corpus, per-engine. Presidio now runs on every language
 # the matrix supports — the runner picks the right spaCy model from
 # the corpus's LANG_FOR_CORPUS classification (en/de/es). If a model
@@ -224,22 +291,46 @@ $(foreach c,$(ALL_CORPORA),\
   $(foreach e,anonde-patterns anonde-gliner,\
     $(eval $(call CELL_anonde,$(c),$(e))))\
   $(eval $(call CELL_gliner_py,$(c)))\
-  $(eval $(call CELL_presidio,$(c))))
+  $(eval $(call CELL_presidio,$(c)))\
+  $(eval $(call CELL_openai_pf,$(c))))
 
-# Per-corpus convenience target — run every engine for one corpus.
-# Presidio runs on every language now (en + de + es spaCy models); if a
-# given dev box doesn't have the matching model installed the cell
-# warn-and-skips rather than aborting the build.
+# Per-corpus convenience target — runs the four always-on engines for one
+# corpus. openai-pf is deliberately NOT a prerequisite here: this is the
+# target the per-push bench (bench.yml) calls via `corpus-openmed` etc.,
+# and openai-pf at ~80 s/doc would blow the PR budget. The openai-pf cell
+# is pulled in only by `matrix` / `matrix-*` (see openai-pf-cells below).
+# Presidio runs on every language (en + de + es spaCy models); if a given
+# dev box lacks the matching model the cell warn-and-skips.
 $(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
     $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
     $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
     $(CORPORA_DIR)/%/data/anonde_gliner-py.jsonl \
     $(CORPORA_DIR)/%/data/anonde_presidio.jsonl
 
-# Materialise the full matrix, then render the combined report.
-matrix: $(addprefix corpus-,$(ALL_CORPORA)) render
+# openai-pf cells, separated out so only the full-matrix targets depend on
+# them. Each cell self-gates on RUN_OPENAI_PF (no-op + skip message when
+# unset), so even when this prerequisite list is materialised the cost is
+# zero unless RUN_OPENAI_PF=1 is passed.
+.PHONY: openai-pf-cells $(addprefix openai-pf-,$(ALL_CORPORA))
+openai-pf-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ALL_CORPORA)))
 
-matrix-de: $(addprefix corpus-,$(DE_CORPORA))
+# Per-corpus openai-pf convenience target — `make openai-pf-openmed
+# RUN_OPENAI_PF=1`. Used by bench-full.yml so each matrix cell runs only
+# its own corpus's openai-pf cell without overriding ALL_CORPORA.
+$(addprefix openai-pf-,$(ALL_CORPORA)): openai-pf-%: \
+    $(CORPORA_DIR)/%/data/anonde_openai-pf.jsonl
+
+# Materialise the full matrix (four always-on engines + openai-pf), then
+# render the combined report. Run openai-pf with the gate on:
+#   make matrix RUN_OPENAI_PF=1
+matrix: $(addprefix corpus-,$(ALL_CORPORA)) openai-pf-cells render
+
+# Per-language subset matrices. Each depends on its corpora's always-on
+# cells plus the openai-pf cells (self-gated on RUN_OPENAI_PF). FR / IT
+# mirror ES exactly — they render to empty tables until Phase 1 populates
+# FR_CORPORA / IT_CORPORA, at which point no Makefile change is needed.
+matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(DE_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
 	  --corpus "$(DE_CORPORA)" \
@@ -248,7 +339,8 @@ matrix-de: $(addprefix corpus-,$(DE_CORPORA))
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
 
-matrix-en: $(addprefix corpus-,$(EN_CORPORA))
+matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(EN_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
 	  --corpus "$(EN_CORPORA)" \
@@ -257,10 +349,31 @@ matrix-en: $(addprefix corpus-,$(EN_CORPORA))
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
 
-matrix-es: $(addprefix corpus-,$(ES_CORPORA))
+matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ES_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
 	  --corpus "$(ES_CORPORA)" \
+	  --engine "$(ENGINES)" \
+	  --label-map $(HERE)scoring/label_map.yaml \
+	  --out $(MATRIX_REPORT) \
+	  --csv $(MATRIX_CSV)
+
+matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(FR_CORPORA)))
+	$(PYTHON) $(HERE)scoring/render_matrix.py \
+	  --corpora-root $(CORPORA_DIR) \
+	  --corpus "$(FR_CORPORA)" \
+	  --engine "$(ENGINES)" \
+	  --label-map $(HERE)scoring/label_map.yaml \
+	  --out $(MATRIX_REPORT) \
+	  --csv $(MATRIX_CSV)
+
+matrix-it: $(addprefix corpus-,$(IT_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(IT_CORPORA)))
+	$(PYTHON) $(HERE)scoring/render_matrix.py \
+	  --corpora-root $(CORPORA_DIR) \
+	  --corpus "$(IT_CORPORA)" \
 	  --engine "$(ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \

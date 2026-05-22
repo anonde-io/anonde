@@ -15,6 +15,14 @@ name: bench
 #     anonde-gliner ever silently diverges from gliner-py, this is the
 #     guard rail that catches it.
 #
+# openai-pf is deliberately NOT run here. It is a rendered matrix column
+# (see bench/Makefile ENGINES), but at ~80 s/doc on CPU even a 40-doc
+# subsample is ~53 min — far past this workflow's ~30-min PR budget. The
+# openai-pf cell self-gates on RUN_OPENAI_PF, which this workflow never
+# sets, and `make corpus-<NAME>` does not depend on the openai-pf cell —
+# so `corpus-openmed` / `corpus-synth_clinical` below cannot trigger it.
+# openai-pf runs only on the weekly bench-full.yml matrix.
+#
 # Outputs: bench/REPORT_MATRIX.md + bench/results_matrix.csv uploaded as
 # artifacts, plus the headline rendered into the job summary. No
 # regression gating in v1 — adding F1-floor checks needs a baseline

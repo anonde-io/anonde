@@ -157,7 +157,16 @@ def _evaluate(gold_docs, pred_docs, gmap, pmap, canonical_plus_other):
     typeonly = defaultdict(lambda: [0, 0, 0])
     leaked, total_gold = 0, 0
     durations = []
-    for doc_id, gdoc in gold_docs.items():
+    # Partial-doc scoring: score each engine over the intersection of
+    # (gold doc ids) ∩ (that engine's findings doc ids). An engine run on a
+    # deterministic subsample (e.g. openai-pf via --max-docs) only emits
+    # findings for some docs; scoring it over all gold docs would count
+    # every span in the unscored docs as a leak — a fake leak rate. A
+    # full-coverage engine returns every doc, so the intersection equals
+    # the gold set and this is a no-op for it.
+    scored_ids = [doc_id for doc_id in gold_docs if doc_id in pred_docs]
+    for doc_id in scored_ids:
+        gdoc = gold_docs[doc_id]
         g = _gold_spans(gdoc, gmap, canonical_plus_other)
         pdoc = pred_docs.get(doc_id) or {"findings": []}
         p = _pred_spans(pdoc, pmap, canonical_plus_other)

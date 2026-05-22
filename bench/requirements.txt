@@ -23,8 +23,9 @@ datasets
 gliner==0.2.26
 
 # transformers — used by bench/runners/openai_pf.py (the openai-pf
-# cell, excluded from the CI subset but kept loadable for local
-# debugging) and pulled transitively by gliner.
+# cell). openai-pf runs only on the weekly bench-full.yml matrix
+# (RUN_OPENAI_PF=1) on a deterministic doc subsample, never on the
+# per-push bench. Also pulled transitively by gliner.
 transformers
 
 # pyyaml — corpus loaders + scoring scripts read label_map.yaml.

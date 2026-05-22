@@ -192,7 +192,26 @@ def _evaluate(gold_docs, pred_docs, gmap, pmap, canon_set, severity):
     leaked, total_gold = 0, 0
     leaked_w, total_gold_w = 0.0, 0.0
     durations = []
-    for doc_id, gdoc in gold_docs.items():
+
+    # Partial-doc scoring. Some engines (openai-pf at ~80 s/doc) are run on
+    # a deterministic subsample, so they only emit findings for N of M gold
+    # docs. Scoring such an engine over all M would count every gold span in
+    # the (M - N) unscored docs as a leak — a fake ~90%+ leak rate that is
+    # really just "we didn't ask it about those docs".
+    #
+    # Correct behaviour: score each engine over the INTERSECTION of
+    # (gold doc ids) ∩ (that engine's findings doc ids). A full-coverage
+    # engine returns every doc, so the intersection equals the gold set and
+    # this is a no-op for it. An engine that genuinely produced an empty
+    # finding list for a doc (a real "found nothing" result) still appears
+    # in pred_docs with `findings: []`, so it is correctly scored — only
+    # docs the engine never saw are excluded.
+    scored_ids = [doc_id for doc_id in gold_docs if doc_id in pred_docs]
+    corpus_docs = len(gold_docs)
+    scored_docs = len(scored_ids)
+
+    for doc_id in scored_ids:
+        gdoc = gold_docs[doc_id]
         g = _gold_spans(gdoc, gmap, canon_set)
         pdoc = pred_docs.get(doc_id) or {"findings": []}
         p = _pred_spans(pdoc, pmap, canon_set)
@@ -213,6 +232,11 @@ def _evaluate(gold_docs, pred_docs, gmap, pmap, canon_set, severity):
         "leaked": leaked, "total_gold": total_gold,
         "leaked_weighted": leaked_w, "total_gold_weighted": total_gold_w,
         "durations": durations,
+        # Coverage: how many of the corpus's gold docs this engine actually
+        # returned findings for. scored_docs < corpus_docs ⇒ subsampled
+        # engine (e.g. openai-pf --max-docs); the metrics above are computed
+        # over scored_docs only, and _render footnotes the partial coverage.
+        "scored_docs": scored_docs, "corpus_docs": corpus_docs,
     }
 
 
@@ -468,6 +492,33 @@ def _render(rows, label_map, corpora, engines):
         out.append(" ".join(cells))
     out.append("")
 
+    # ---- Partial-coverage footnote ----------------------------------
+    # An engine that was run on a deterministic subsample (e.g. openai-pf
+    # via --max-docs) only scored some of the corpus's gold docs. Every
+    # metric above is computed over just those docs — call that out so a
+    # reader does not compare a 40-doc sample against a 512-doc full run
+    # as if they were the same population.
+    coverage_notes: list[str] = []
+    for c in corpora:
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None:
+                continue
+            scored = cell.get("scored_docs", 0)
+            total = cell.get("corpus_docs", 0)
+            if total > 0 and scored < total:
+                coverage_notes.append(
+                    f"- `{e}` on `{c}`: scored on **{scored}/{total} docs** "
+                    f"(deterministic subsample — metrics above are over those "
+                    f"{scored} docs only, not the full corpus)."
+                )
+    if coverage_notes:
+        out.append("> **Partial coverage** — some engines were benchmarked "
+                   "on a fixed subsample, not every gold doc:\n>")
+        for note in coverage_notes:
+            out.append("> " + note)
+        out.append("")
+
     # ---- Severity-weighted leak rate --------------------------------
     # A leaked SSN is not equivalent to a leaked city. Weighted leak
     # multiplies each gold span by its severity weight (label_map.yaml
@@ -672,8 +723,11 @@ listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
   cleartext is gone either way) — but every leaked span is one we'd have shipped in prod.
   Per-entity-type strict F1 and partial / type-agnostic F1 views are in `results_matrix.csv`.
 - **`–` cells** = engine not run on that corpus. Reasons: language mismatch (Presidio is EN
-  only), per-doc cost too high (openai-pf at 80sec/doc on CPU), or corpus requires manual
-  DUA registration (`ggponc_de`).
+  only), or corpus requires manual DUA registration (`ggponc_de`).
+- **Partial coverage** = an engine scored on a deterministic subsample, not the full corpus.
+  `openai-pf` is ~80 s/doc on CPU, so it is benchmarked on the first N docs (sorted by id) —
+  see the "Partial coverage" footnote after the leak-rate grid. Its metrics are computed over
+  only the docs it scored, so they are comparable in *kind* but not on the same doc population.
 - **⚪ corpora** = precision-probe only (no span-level gold annotations). Useful for "does the
   engine over-redact ordinary prose?" checks, not for F1 / leak rate.
 """)
