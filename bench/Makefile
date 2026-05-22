@@ -19,8 +19,8 @@
 #   make matrix-de   German corpora only
 #   make matrix-en   English corpora only
 #   make matrix-es   Spanish corpora only
-#   make matrix-fr   French corpora only  (no corpora yet — Phase 1 groundwork)
-#   make matrix-it   Italian corpora only (no corpora yet — Phase 1 groundwork)
+#   make matrix-fr   French corpora only  (ai4privacy_fr)
+#   make matrix-it   Italian corpora only (ai4privacy_it)
 #   make data        fetch/generate every corpus (no engine runs)
 #   make clean       remove per-corpus data + the matrix outputs
 #
@@ -70,15 +70,19 @@ NER_SCORE_FLOOR  ?= 0
 # a mirror appears, the bench picks it up automatically (no Makefile
 # changes needed).
 DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de \
-              wikiann_de germeval_14 conll2003_de adversarial_de
+              wikiann_de germeval_14 conll2003_de adversarial_de \
+              ai4privacy_de
 EN_CORPORA := ai4privacy_en conll2003_en wnut_17
-ES_CORPORA := pharmaconer_es
-# FR / IT partitions are intentionally empty for now — Phase 1 of the
-# multilingual expansion only has to append corpus names here, no
-# Makefile plumbing changes. LANG_FOR_CORPUS + matrix-fr / matrix-it
-# below are already wired so a name added here is picked up end-to-end.
-FR_CORPORA :=
-IT_CORPORA :=
+ES_CORPORA := pharmaconer_es ai4privacy_es
+# ES / FR / IT partitions populated by Phase 1 of the multilingual bench
+# expansion. ai4privacy_es / ai4privacy_fr / ai4privacy_it are the
+# Spanish / French / Italian slices of ai4privacy/pii-masking-300k (one
+# shared loader, see bench/corpora/ai4privacy_en/cmd/fetch_pii_masking.py).
+# The 300k release covers six languages (en/fr/de/it/es/nl) — Spanish is
+# new vs the old 200k dataset, hence the ai4privacy_es corpus. No nl
+# corpus is wired yet.
+FR_CORPORA := ai4privacy_fr
+IT_CORPORA := ai4privacy_it
 ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORPORA)
 
 # The engines the matrix scores. Each row's name is what compare.py
@@ -124,8 +128,8 @@ help:
 	@echo "  make matrix-de          German subset only"
 	@echo "  make matrix-en          English subset only"
 	@echo "  make matrix-es          Spanish subset only"
-	@echo "  make matrix-fr          French subset only (no corpora yet — Phase 1)"
-	@echo "  make matrix-it          Italian subset only (no corpora yet — Phase 1)"
+	@echo "  make matrix-fr          French subset only (ai4privacy_fr)"
+	@echo "  make matrix-it          Italian subset only (ai4privacy_it)"
 	@echo "  make corpus-<NAME>      run the 4 always-on engines on a single corpus"
 	@echo "  make clean              remove generated data + reports + the matrix outputs"
 	@echo ""
@@ -166,7 +170,8 @@ $(if $(filter anonde-gliner,$(1)),gliner,\
 endef
 
 # Corpus → language code. Defaults to `de` when a corpus is in none of the
-# explicit partitions. FR / IT are wired ahead of their corpora (Phase 1).
+# explicit partitions. en/es/fr/it are matched against their partitions;
+# everything else (the German clinical corpora) falls through to `de`.
 define LANG_FOR_CORPUS
 $(if $(filter $(1),$(EN_CORPORA)),en,\
 $(if $(filter $(1),$(ES_CORPORA)),es,\
@@ -174,8 +179,14 @@ $(if $(filter $(1),$(FR_CORPORA)),fr,\
 $(if $(filter $(1),$(IT_CORPORA)),it,de))))
 endef
 
+# --fold-parity-labels folds STREET_ADDRESS + POSTAL_CODE to LOCATION.
+# Needed for every ai4privacy_* corpus (its gold buckets street + zip
+# under LOCATION) regardless of language, plus the other EN corpora
+# whose gold uses the same convention. ai4privacy_de/fr/it live in the
+# DE/FR/IT partitions, so a plain EN_CORPORA filter would miss them —
+# match the ai4privacy_ prefix explicitly.
 define FOLD_FOR_CORPUS
-$(if $(filter $(1),$(EN_CORPORA)),--fold-parity-labels,)
+$(if $(or $(filter $(1),$(EN_CORPORA)),$(filter ai4privacy_%,$(1))),--fold-parity-labels,)
 endef
 
 # Local libonnxruntime path for the gliner backend's ORT session. Matches
@@ -327,8 +338,8 @@ matrix: $(addprefix corpus-,$(ALL_CORPORA)) openai-pf-cells render
 
 # Per-language subset matrices. Each depends on its corpora's always-on
 # cells plus the openai-pf cells (self-gated on RUN_OPENAI_PF). FR / IT
-# mirror ES exactly — they render to empty tables until Phase 1 populates
-# FR_CORPORA / IT_CORPORA, at which point no Makefile change is needed.
+# mirror ES exactly — Phase 1 populated FR_CORPORA / IT_CORPORA with the
+# ai4privacy French / Italian slices.
 matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(DE_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \

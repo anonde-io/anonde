@@ -1,11 +1,16 @@
-# bench/corpora/ai4privacy_en — English PII parity bench vs Microsoft
-# Presidio. Was previously `bench/parity/`. Implements Phase 5 of
-# PRIVACY_VAULT_PHASED_PLAN.md (Presidio parity criteria).
+# bench/corpora/ai4privacy_de — German PII bench on the ai4privacy
+# multilingual corpus. Phase 1 of the multilingual bench expansion.
+#
+# This corpus is a thin wrapper: the dataset, the loader, and the gold
+# schema are identical to ai4privacy_en — only the language slice
+# differs. The shared loader lives at
+# ../ai4privacy_en/cmd/fetch_pii_masking.py and is parametrised by
+# `--language de`.
 #
 # Targets:
-#   make data        # fetch ai4privacy/pii-masking-300k -> data/corpus.jsonl
+#   make data        # fetch ai4privacy de slice -> data/corpus.jsonl
 #   make anonde      # run anonde -> data/anonde.jsonl
-#   make presidio    # run Presidio -> data/presidio.jsonl  (needs .venv + spacy model)
+#   make presidio    # run Presidio -> data/presidio.jsonl  (needs de_core_news_lg)
 #   make report      # compare -> REPORT.md + results.csv
 #   make all         # everything
 
@@ -18,8 +23,11 @@ PRESIDIO_OUT := $(DATA)/presidio.jsonl
 REPORT := $(HERE)REPORT.md
 CSV    := $(HERE)results.csv
 
+# Shared loader — single source of truth for every ai4privacy_* corpus.
+LOADER := $(HERE)../ai4privacy_en/cmd/fetch_pii_masking.py
+
 ANONDE_BACKEND   ?= patterns-only
-LANGUAGE         ?= en
+LANGUAGE         ?= de
 MAX_DOCS         ?= 5000
 PYTHON           ?= python3
 ANONDE_MODEL     ?=
@@ -35,13 +43,13 @@ all: anonde report
 
 $(CORPUS):
 	mkdir -p $(DATA)
-	$(PYTHON) $(HERE)cmd/fetch_pii_masking.py --out $@ --max $(MAX_DOCS) --language $(LANGUAGE)
+	$(PYTHON) $(LOADER) --out $@ --max $(MAX_DOCS) --language $(LANGUAGE)
 
 data: $(CORPUS)
 
 # Re-uses the unified runner_anonde from bench/runners. --fold-parity-labels
 # folds STREET_ADDRESS + POSTAL_CODE to LOCATION since ai4privacy gold
-# buckets street + zip under LOCATION.
+# buckets street + zip under LOCATION (same in every language slice).
 .PHONY: anonde
 anonde: $(CORPUS)
 	cd $(ROOT) && go run $(GO_TAGS) ./bench/runners/anonde.go \
@@ -56,6 +64,7 @@ anonde: $(CORPUS)
 presidio: $(CORPUS)
 	$(PYTHON) $(ROOT)/bench/runners/presidio.py \
 		--in $(CORPUS) --out $(PRESIDIO_OUT) \
+		--language $(LANGUAGE) \
 		--engine $(PRESIDIO_ENGINE)
 
 # Strict-mode entity compare (uses bench/scoring/compare.py with the

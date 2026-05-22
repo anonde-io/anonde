@@ -34,7 +34,8 @@ name: bench-full
 #     cell avoids a noisy "exit code 2" red mark in the matrix UI.
 #   * ggponc_de — requires manual DUA registration.
 #
-# Cost: each cell ~5-30 min × 11 cells × 4 runs/month ≈ 1000 min/month.
+# Cost: each cell ~5-30 min × 15 cells × 4 runs/month ≈ 1400 min/month.
+# (15 = 11 original + the 4 ai4privacy de/fr/it/es splits added in Phase 1.)
 # Free-tier limit for public repos is unlimited; for private repos the
 # 2000 min/month free quota covers this.
 
@@ -89,6 +90,15 @@ jobs:
           - wnut_17
           # Spanish
           - pharmaconer_es
+          # General PII — ai4privacy multilingual splits (Phase 1).
+          # Same dataset + loader + gold schema as ai4privacy_en, sliced
+          # by language. Gives the matrix a cross-language EN/DE/FR/IT/ES
+          # general-PII number. ai4privacy/pii-masking-300k covers six
+          # languages (en/fr/de/it/es/nl); en/de/fr/it/es are wired here.
+          - ai4privacy_de
+          - ai4privacy_fr
+          - ai4privacy_it
+          - ai4privacy_es
 
     env:
       ORT_VERSION: "1.26.0"
@@ -155,9 +165,13 @@ jobs:
           case "${{ matrix.corpus }}" in
             ai4privacy_en|conll2003_en|wnut_17)
               python -m spacy download en_core_web_lg ;;
-            pharmaconer_es)
+            pharmaconer_es|ai4privacy_es)
               python -m spacy download es_core_news_lg ;;
-            openmed|pmc_de|synth_clinical|wiki_de|finance_de|legal_de|wikiann_de|germeval_14|conll2003_de|adversarial_de)
+            ai4privacy_fr)
+              python -m spacy download fr_core_news_lg ;;
+            ai4privacy_it)
+              python -m spacy download it_core_news_lg ;;
+            openmed|pmc_de|synth_clinical|wiki_de|finance_de|legal_de|wikiann_de|germeval_14|conll2003_de|adversarial_de|ai4privacy_de)
               python -m spacy download de_core_news_lg ;;
             *)
               echo "no spaCy model mapping for corpus '${{ matrix.corpus }}'; skipping" ;;
@@ -361,7 +375,7 @@ jobs:
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
             echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio, openai-pf (subsampled — ${OPENAI_PF_SAMPLE:-40} docs/corpus)_"
-            echo "_Corpora in matrix: 11 (pmc_de, wiki_de, conll2003_de excluded — precision-probe / gated)_"
+            echo "_Corpora in matrix: 15 — incl. ai4privacy en/de/fr/it/es cross-language general-PII splits (pmc_de, wiki_de, conll2003_de excluded — precision-probe / gated)_"
             echo ""
             if [ -f bench/REPORT_MATRIX.md ]; then
               cat bench/REPORT_MATRIX.md

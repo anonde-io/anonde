@@ -112,6 +112,23 @@ gold:
 
   PROFESSION: PROFESSION
 
+  # ai4privacy structured-PII gold. The ai4privacy_* loader
+  # (bench/corpora/ai4privacy_en/cmd/fetch_pii_masking.py) emits
+  # anonde/Presidio-style entity types directly into gold. Without these
+  # entries the structured-PII types collapse to OTHER (severity 0) and
+  # drop out of scoring entirely — under-counting both recall and leak
+  # rate on every ai4privacy corpus. Mapped to the existing canonical
+  # vocabulary; covers every type the loader's LABEL_MAP can emit.
+  EMAIL_ADDRESS: EMAIL
+  PHONE_NUMBER: PHONE
+  DATE_TIME: DATE
+  IP_ADDRESS: ID
+  MAC_ADDRESS: ID
+  CREDIT_CARD: ID
+  US_SSN: ID
+  CRYPTO: ID
+  IBAN_CODE: IBAN
+
 # anonde internal entity types (see analyzer/recognizers/*.go).
 anonde:
   PERSON: PERSON

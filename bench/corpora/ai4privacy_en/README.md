@@ -1,12 +1,19 @@
 # bench/corpora/ai4privacy_en — English PII parity vs Presidio
 
 End-to-end comparison between anonde and Microsoft Presidio on the
-[`ai4privacy/pii-masking-200k`](https://huggingface.co/datasets/ai4privacy/pii-masking-200k)
-corpus (CC-BY-4.0). Implements the Presidio parity criteria from
+[`ai4privacy/pii-masking-300k`](https://huggingface.co/datasets/ai4privacy/pii-masking-300k)
+corpus. Implements the Presidio parity criteria from
 `PRIVACY_VAULT_PHASED_PLAN.md`.
 
 This bench used to live at `bench/parity/`. It now plugs into the
 top-level matrix (`make -C bench matrix-en`).
+
+The corpus moved from `pii-masking-200k` to `pii-masking-300k` in
+Phase 1 of the multilingual bench expansion — 300k covers six languages
+(en/fr/de/it/es/nl), letting the `ai4privacy_*` corpus family score a
+cross-language general-PII number off one shared loader. The EN baseline
+shifts vs the old 200k numbers; that is expected. The loader is shared:
+`cmd/fetch_pii_masking.py --language <code>`.
 
 ## What it does
 

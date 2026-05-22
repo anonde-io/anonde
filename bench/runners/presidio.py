@@ -8,6 +8,8 @@ Multilingual: --language picks the spaCy NLP model.
   en -> en_core_web_lg (or en_core_web_trf with --engine transformer)
   de -> de_core_news_lg
   es -> es_core_news_lg
+  fr -> fr_core_news_lg
+  it -> it_core_news_lg
 
 The matching spaCy model must be installed locally:
 
@@ -15,6 +17,8 @@ The matching spaCy model must be installed locally:
     python -m spacy download en_core_web_lg
     python -m spacy download de_core_news_lg
     python -m spacy download es_core_news_lg
+    python -m spacy download fr_core_news_lg
+    python -m spacy download it_core_news_lg
 
 Run:
     python bench/runners/presidio.py \\
@@ -39,6 +43,8 @@ DEFAULT_MODEL_BY_LANG: dict[str, str] = {
     "en": "en_core_web_lg",
     "de": "de_core_news_lg",
     "es": "es_core_news_lg",
+    "fr": "fr_core_news_lg",
+    "it": "it_core_news_lg",
 }
 
 
