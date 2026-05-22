@@ -217,7 +217,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		), "hugot", modelName
 	case "gliner":
 		modelName := getenvDefault("GLINER_MODEL", "onnx-community/gliner_multi_pii-v1")
-		onnxPath := getenvDefault("GLINER_ONNX_FILE", "onnx/model_quantized.onnx")
+		onnxPath := glinerOnnxFileFromEnv(modelName)
 		// Threshold is the most impactful knob — multilingual variants
 		// typically need ~0.25, the English base ~0.40. Override without
 		// rebuilding via GLINER_THRESHOLD. Zero = recognizer default (0.40).
@@ -242,6 +242,58 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 	default:
 		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, ollama)", backend)
 		return nil, "", ""
+	}
+}
+
+// glinerOnnxFileFromEnv resolves which ONNX export of the GLiNER model
+// to load. The GLiNER HF repos ship multiple quantization variants of
+// the same weights; the choice is a recall / size / latency trade-off.
+//
+// Two env vars, in precedence order:
+//
+//   - GLINER_ONNX_FILE — explicit in-repo path (e.g. "onnx/model.onnx").
+//     The escape hatch: use it for any repo whose file layout doesn't
+//     match the convenience names below.
+//   - GLINER_QUANT — convenience selector: "int8" | "fp16" | "fp32".
+//     Maps to the conventional filenames in the knowledgator and
+//     onnx-community GLiNER repos. INT8 is the default — the size/speed
+//     pick for the production container.
+//
+// Recall caveat: INT8 quantization uniformly depresses GLiNER's span
+// logits (~0.18 in sigmoid space vs the FP32 weights). On clean
+// saturated text this is invisible, but on lower-confidence multilingual
+// legal / clinical corpora it pushes a band of true spans below the
+// 0.40 threshold and leaks PII. Deployers with English- or
+// multilingual-heavy traffic where PERSON leak rate is the SLO should
+// set GLINER_QUANT=fp32 (or fp16) and accept the larger image + ~2x
+// inference latency. See bench/probes/fp32_vs_int8/REPORT.md.
+//
+// Default stays INT8 so existing deployments and the ~470 MB NER image
+// are unchanged.
+func glinerOnnxFileFromEnv(modelName string) string {
+	// Explicit path wins outright.
+	if raw := strings.TrimSpace(os.Getenv("GLINER_ONNX_FILE")); raw != "" {
+		return raw
+	}
+
+	// onnx-community repos name the int8 build "model_quantized.onnx";
+	// the knowledgator pii-base repo names it "model_quint8.onnx".
+	int8Name := "onnx/model_quantized.onnx"
+	if strings.Contains(strings.ToLower(modelName), "knowledgator") {
+		int8Name = "onnx/model_quint8.onnx"
+	}
+
+	quant := strings.ToLower(strings.TrimSpace(os.Getenv("GLINER_QUANT")))
+	switch quant {
+	case "", "int8", "quint8", "quantized":
+		return int8Name
+	case "fp16", "float16":
+		return "onnx/model_fp16.onnx"
+	case "fp32", "float32", "full":
+		return "onnx/model.onnx"
+	default:
+		log.Printf("GLINER_QUANT=%q not recognised (valid: int8, fp16, fp32); defaulting to int8", quant)
+		return int8Name
 	}
 }
 
