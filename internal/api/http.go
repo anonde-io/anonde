@@ -43,6 +43,7 @@ type HTTPServer struct {
 	svc             *core.Service
 	connectServer   *ConnectServer
 	grpcServer      *GRPCServer
+	proxy           *openAIProxy
 	maxRequestBytes int64
 }
 
@@ -51,6 +52,10 @@ func NewHTTPServer(svc *core.Service) *HTTPServer {
 		svc:             svc,
 		connectServer:   NewConnectServer(svc),
 		grpcServer:      NewGRPCServer(svc),
+		// The OpenAI-compatible proxy is always mounted; a zero
+		// OpenAIProxyConfig resolves to OpenAI as the upstream.
+		// cmd/anonde overrides this from env via SetOpenAIProxy.
+		proxy:           newOpenAIProxy(svc, OpenAIProxyConfig{}),
 		maxRequestBytes: DefaultMaxRequestBytes,
 	}
 }
@@ -63,6 +68,13 @@ func (s *HTTPServer) SetMaxRequestBytes(n int64) {
 	s.maxRequestBytes = n
 }
 
+// SetOpenAIProxy configures the OpenAI upstream the proxy endpoint
+// (POST /v1/chat/completions) forwards to. Call before Routes();
+// cmd/anonde wires this from ANONDE_OPENAI_* env vars.
+func (s *HTTPServer) SetOpenAIProxy(cfg OpenAIProxyConfig) {
+	s.proxy = newOpenAIProxy(s.svc, cfg)
+}
+
 // Routes returns the wired http.Handler suitable for http.Server.
 //
 // Mount on an http.Server whose Protocols field has both HTTP/1.1 and
@@ -71,6 +83,14 @@ func (s *HTTPServer) SetMaxRequestBytes(n int64) {
 func (s *HTTPServer) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
+
+	// OpenAI-compatible proxy. POST /v1/chat/completions is a strictly
+	// more specific pattern than the "/v1/" subtree handed to the REST
+	// gateway below, so ServeMux routes it without conflict. Wrapped in
+	// the request-body cap because, unlike the Connect handler, this
+	// path reads r.Body directly.
+	proxyHandler := http.HandlerFunc(s.proxy.chatCompletions)
+	mux.Handle(chatCompletionsPath, s.limitBody(proxyHandler))
 
 	connectOpts := []connect.HandlerOption{
 		// Replace Connect's default JSON codec with one that uses
@@ -119,6 +139,19 @@ func NewServerProtocols() *http.Protocols {
 	p.SetHTTP1(true)
 	p.SetUnencryptedHTTP2(true)
 	return p
+}
+
+// limitBody caps the request body using http.MaxBytesReader, mirroring
+// the connect.WithReadMaxBytes guard the Connect handler gets. A no-op
+// when maxRequestBytes is 0 (cap disabled).
+func (s *HTTPServer) limitBody(next http.Handler) http.Handler {
+	if s.maxRequestBytes <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {

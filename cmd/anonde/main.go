@@ -69,6 +69,23 @@ func main() {
 	httpAPI := api.NewHTTPServer(svc)
 	httpAPI.SetMaxRequestBytes(maxBytes)
 
+	// OpenAI-compatible proxy (POST /v1/chat/completions). Always
+	// mounted; upstream defaults to OpenAI. The upstream provider is
+	// chosen in-band by a "provider/model" prefix on the model field
+	// (v0.1 supports "openai/" only). Point ANONDE_OPENAI_BASE_URL at
+	// any OpenAI-compatible endpoint (e.g. a local Ollama) to retarget.
+	openAIBase := strings.TrimSpace(os.Getenv("ANONDE_OPENAI_BASE_URL"))
+	httpAPI.SetOpenAIProxy(api.OpenAIProxyConfig{
+		UpstreamBaseURL: openAIBase,
+		UpstreamAPIKey:  strings.TrimSpace(os.Getenv("ANONDE_OPENAI_API_KEY")),
+		DefaultTenant:   strings.TrimSpace(os.Getenv("ANONDE_PROXY_TENANT")),
+		RequestTimeout:  durationFromEnv("ANONDE_PROXY_TIMEOUT", 0),
+	})
+	if openAIBase == "" {
+		openAIBase = "https://api.openai.com/v1 (default)"
+	}
+	log.Printf("openai-compatible proxy enabled at POST /v1/chat/completions (upstream=%s)", openAIBase)
+
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           httpAPI.Routes(),
