@@ -139,6 +139,16 @@ ENGINES := anonde-patterns anonde-gliner presidio gliner-py openai-pf
 RUN_OPENAI_PF     ?=
 OPENAI_PF_SAMPLE  ?= 40
 
+# openai-pf runs from its OWN venv. The openai/privacy-filter model needs
+# transformers>=5.6 (native "openai_privacy_filter" architecture), but
+# gliner==0.2.26 in bench/requirements.txt caps transformers<5.2 and has
+# no release that allows 5.6+. The two engines cannot share one env, so
+# the openai-pf cell bootstraps .venv-openai-pf from
+# requirements-openai-pf.txt. Override OPENAI_PF_PYTHON to reuse an
+# existing interpreter that already has transformers>=5.6.
+OPENAI_PF_VENV    ?= $(HERE).venv-openai-pf
+OPENAI_PF_PYTHON  ?= $(OPENAI_PF_VENV)/bin/python
+
 MATRIX_REPORT := $(HERE)REPORT_MATRIX.md
 MATRIX_CSV    := $(HERE)results_matrix.csv
 
@@ -320,14 +330,31 @@ endef
 #      only scores the first N docs (deterministic, sorted by id), so the
 #      cell stays bounded (40 docs × ~80 s ≈ 53 min). render_matrix.py
 #      scores openai-pf over only the docs it returned.
+# Bootstrap the isolated openai-pf venv (transformers>=5.6 for the
+# openai/privacy-filter native architecture — see requirements-openai-pf.txt).
+# Gated on RUN_OPENAI_PF so a plain `matrix` run never pays for it. The
+# stamp file makes the (slow) pip install run once, not per corpus cell.
+.PHONY: openai-pf-venv
+openai-pf-venv: $(OPENAI_PF_VENV)/.stamp
+$(OPENAI_PF_VENV)/.stamp: $(HERE)requirements-openai-pf.txt
+ifeq ($(strip $(RUN_OPENAI_PF)),)
+	@echo "[matrix] SKIP openai-pf venv — RUN_OPENAI_PF unset"
+else
+	@echo "[matrix] bootstrapping openai-pf venv at $(OPENAI_PF_VENV)"
+	$(PYTHON) -m venv $(OPENAI_PF_VENV)
+	$(OPENAI_PF_PYTHON) -m pip install --upgrade pip
+	$(OPENAI_PF_PYTHON) -m pip install -r $(HERE)requirements-openai-pf.txt
+	@touch $@
+endif
+
 define CELL_openai_pf
 # NOT .PHONY: cache existing per-cell outputs so partial matrices don't re-run.
-$(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl: | data-$(1)
+$(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl: | data-$(1) openai-pf-venv
 ifeq ($(strip $(RUN_OPENAI_PF)),)
 	@echo "[matrix] SKIP $(1) x openai-pf — RUN_OPENAI_PF unset (cell is ~80 s/doc; set RUN_OPENAI_PF=1 to enable)"
 else
 	@echo "[matrix] $(1) x openai-pf (sample=$(OPENAI_PF_SAMPLE) docs)"
-	$(PYTHON) $(ROOT)/bench/runners/openai_pf.py \
+	$(OPENAI_PF_PYTHON) $(ROOT)/bench/runners/openai_pf.py \
 	  --in  $(CORPORA_DIR)/$(1)/data/corpus.jsonl \
 	  --out $(CORPORA_DIR)/$(1)/data/anonde_openai-pf.jsonl \
 	  --engine-label openai-pf \

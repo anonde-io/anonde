@@ -1,0 +1,26 @@
+# Isolated deps for the openai-pf bench cell (bench/runners/openai_pf.py).
+#
+# Why a SEPARATE requirements file (and a separate venv):
+# the openai/privacy-filter model is a transformers-5.6+ NATIVE
+# architecture — config.json declares model_type "openai_privacy_filter"
+# and architecture "OpenAIPrivacyFilterForTokenClassification", both of
+# which only exist in transformers >= 5.6.0. It ships NO custom modeling
+# code and NO `auto_map` in config.json, so `trust_remote_code=True` does
+# nothing — the architecture must be built into the installed
+# transformers. Older transformers fail with:
+#
+#   KeyError: 'openai_privacy_filter'
+#   ValueError: The checkpoint ... has model type `openai_privacy_filter`
+#   but Transformers does not recognize this architecture.
+#
+# bench/requirements.txt pins transformers<5.2.0 because gliner==0.2.26
+# (the gliner-py cell) caps it there and has no release allowing 5.6+.
+# The two engines genuinely cannot share one environment, so the Makefile
+# builds .venv-openai-pf from this file just for the openai-pf cell.
+
+transformers>=5.6.0
+
+# torch — the runtime for the safetensors checkpoint. Not pinned: let
+# transformers' own constraint pick a compatible build. CPU is fine
+# (the cell runs device=-1); a CPU-only wheel is acceptable here.
+torch

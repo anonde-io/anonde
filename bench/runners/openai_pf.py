@@ -16,6 +16,15 @@ Output schema (per line):
 
 Offsets are CODEPOINT indices (Python convention).
 
+Dependency note: openai/privacy-filter is a transformers-5.6+ NATIVE
+architecture (config.json model_type "openai_privacy_filter"). It is NOT
+remote code — there is no modeling_*.py and no `auto_map` in config.json,
+so trust_remote_code does nothing. transformers < 5.6 fails to load it
+with `KeyError: 'openai_privacy_filter'`. The shared bench venv pins
+transformers < 5.2 (gliner==0.2.26's cap), so this runner needs its OWN
+venv built from bench/requirements-openai-pf.txt — the bench Makefile's
+CELL_openai_pf creates and uses .venv-openai-pf for exactly this reason.
+
 Cost note: first run pulls model.safetensors (~2.8 GB) and tokenizer.json
 (~28 MB) from HuggingFace. Subsequent runs are local. Expect ~50–200 ms per
 doc on CPU; chunking long docs is needed because the model has a fixed
@@ -23,7 +32,9 @@ context window — done here by `pipeline(..., stride=..., aggregation=)`.
 
 Usage:
 
-    .venv-bench/bin/python bench/runners/openai_pf.py \\
+    python -m venv bench/.venv-openai-pf
+    bench/.venv-openai-pf/bin/pip install -r bench/requirements-openai-pf.txt
+    bench/.venv-openai-pf/bin/python bench/runners/openai_pf.py \\
         --in bench/corpora/openmed/data/corpus.jsonl \\
         --out bench/corpora/openmed/data/anonde_openai-pf.jsonl \\
         --max-docs 40
@@ -43,22 +54,47 @@ import time
 import unicodedata
 from pathlib import Path
 
-# OpenAI Privacy Filter emits 8 categories (per the model card / blog):
-# NAME, ADDRESS, EMAIL, PHONE, URL, DATE, ACCOUNT_NUMBER, SECRET.
+# OpenAI Privacy Filter emits 8 categories. The model's config.json
+# id2label uses BIES tagging over lowercase labels:
+#   private_person, private_address, private_email, private_phone,
+#   private_url, private_date, account_number, secret
+# (verified against openai/privacy-filter config.json, 2026-05).
+# With aggregation_strategy != "none" the HF pipeline strips the
+# B-/I-/E-/S- prefix and returns these bare names in `entity_group`.
 # Map them to anonde canonical types used by compare.py + label_map.yaml.
-# Labels appear in the model's `id2label` config; the keys here are
-# upper-cased to be tolerant of either case.
+# Keys are matched case-insensitively (see _canonical below); the older
+# uppercase NAME/EMAIL/... aliases are kept so an alternate checkpoint or
+# fine-tune with differently-cased labels still resolves.
 LABEL_TO_CANONICAL: dict[str, str] = {
-    "NAME":           "PERSON",
-    "PERSON":         "PERSON",
-    "ADDRESS":        "ADDRESS",
-    "EMAIL":          "EMAIL_ADDRESS",
-    "PHONE":          "PHONE_NUMBER",
-    "URL":            "URL",
-    "DATE":           "DATE_TIME",
-    "ACCOUNT_NUMBER": "ID",
-    "SECRET":         "ID",
+    "PRIVATE_PERSON":  "PERSON",
+    "PRIVATE_ADDRESS": "ADDRESS",
+    "PRIVATE_EMAIL":   "EMAIL_ADDRESS",
+    "PRIVATE_PHONE":   "PHONE_NUMBER",
+    "PRIVATE_URL":     "URL",
+    "PRIVATE_DATE":    "DATE_TIME",
+    "ACCOUNT_NUMBER":  "ID",
+    "SECRET":          "ID",
+    # legacy / alternate-checkpoint aliases
+    "NAME":            "PERSON",
+    "PERSON":          "PERSON",
+    "ADDRESS":         "ADDRESS",
+    "EMAIL":           "EMAIL_ADDRESS",
+    "PHONE":           "PHONE_NUMBER",
+    "URL":             "URL",
+    "DATE":            "DATE_TIME",
 }
+
+
+def _canonical(raw: str) -> str | None:
+    """Resolve a model entity label to an anonde canonical type.
+
+    Tolerant of BIES prefixes that survive when aggregation is "none"
+    (e.g. "B-private_person") and of either label casing.
+    """
+    name = raw.upper().strip()
+    if len(name) > 2 and name[1] == "-" and name[0] in ("B", "I", "E", "S"):
+        name = name[2:]
+    return LABEL_TO_CANONICAL.get(name)
 
 
 def main() -> int:
@@ -85,6 +121,7 @@ def main() -> int:
     args = ap.parse_args()
 
     try:
+        import transformers  # type: ignore
         from transformers import (  # type: ignore
             AutoModelForTokenClassification,
             AutoTokenizer,
@@ -93,18 +130,48 @@ def main() -> int:
         import torch  # type: ignore
     except ImportError as e:
         print(f"transformers/torch not installed: {e}\n"
-              f"Install: .venv-bench/bin/pip install transformers torch",
+              f"openai-pf needs its OWN venv (transformers>=5.6 — the model\n"
+              f"is a transformers-5.6 native architecture, incompatible with\n"
+              f"the gliner-pinned transformers<5.2 in bench/requirements.txt).\n"
+              f"Install: python -m venv .venv-openai-pf && \\\n"
+              f"  .venv-openai-pf/bin/pip install -r bench/requirements-openai-pf.txt",
+              file=sys.stderr)
+        return 2
+
+    # Preflight: openai/privacy-filter declares model_type
+    # "openai_privacy_filter" / architecture
+    # "OpenAIPrivacyFilterForTokenClassification". That architecture is
+    # NATIVE to transformers and only exists in >= 5.6.0. The repo ships no
+    # custom modeling code and no `auto_map` in config.json, so
+    # trust_remote_code cannot help — older transformers fail with
+    # `KeyError: 'openai_privacy_filter'` deep inside from_pretrained.
+    # Catch it here with an actionable message instead.
+    tv = tuple(int(p) for p in transformers.__version__.split(".")[:2]
+               if p.isdigit())
+    if args.model.startswith("openai/privacy-filter") and tv and tv < (5, 6):
+        print(f"transformers {transformers.__version__} is too old for "
+              f"{args.model}.\n"
+              f"The 'openai_privacy_filter' architecture needs transformers"
+              f">=5.6.0.\n"
+              f"This venv is likely the shared bench venv (gliner pins "
+              f"transformers<5.2).\n"
+              f"Build the isolated openai-pf venv instead:\n"
+              f"  python -m venv .venv-openai-pf && \\\n"
+              f"  .venv-openai-pf/bin/pip install -r "
+              f"bench/requirements-openai-pf.txt\n"
+              f"and run this script with .venv-openai-pf/bin/python.",
               file=sys.stderr)
         return 2
 
     print(f"loading {args.model} (first run downloads ~2.8 GB safetensors)…",
           file=sys.stderr)
     t0 = time.perf_counter()
-    # OpenAI Privacy Filter ships a custom tokenizer class (TokenizersBackend)
-    # not registered in transformers' AutoTokenizer mapping. trust_remote_code
-    # lets transformers run the repo's tokenizer code to register it.
-    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    mdl = AutoModelForTokenClassification.from_pretrained(args.model, trust_remote_code=True)
+    # No trust_remote_code: openai/privacy-filter has no auto_map / remote
+    # modeling code. Both the model architecture and the tokenizer class
+    # (TokenizersBackend) are built into transformers >= 5.6 — the version
+    # preflight above guarantees we are on such a build.
+    tok = AutoTokenizer.from_pretrained(args.model)
+    mdl = AutoModelForTokenClassification.from_pretrained(args.model)
     mdl.eval()
     # Print id2label so the operator can see the model's actual label
     # vocabulary — useful when the LABEL_TO_CANONICAL map looks too sparse.
@@ -179,7 +246,7 @@ def main() -> int:
                 if ent["score"] < args.threshold:
                     continue
                 raw = ent.get("entity_group") or ent.get("entity") or ""
-                canonical = LABEL_TO_CANONICAL.get(raw.upper())
+                canonical = _canonical(raw)
                 if not canonical:
                     continue
                 s, e = int(ent["start"]), int(ent["end"])
