@@ -34,10 +34,16 @@ name: bench-full
 #     cell avoids a noisy "exit code 2" red mark in the matrix UI.
 #   * ggponc_de — requires manual DUA registration.
 #
-# Cost: each cell ~5-30 min × 26 cells × 4 runs/month ≈ 2500 min/month.
-# (26 = 11 original + 4 ai4privacy de/fr/it/es splits (Phase 1) + 5 MAPA
+# meddocan_es (real-gold Spanish clinical de-id, Phase 4) IS in the
+# matrix. MEDDOCAN is openly licensed (CC-BY-4.0, Zenodo); its loader
+# network-fetches the archive and, like conll2003_de, exits 2 cleanly if
+# Zenodo is unreachable — a transient failure shows the cell as missing
+# rather than reddening the matrix (fail-fast: false, tolerant renderer).
+#
+# Cost: each cell ~5-30 min × 30 cells × 4 runs/month ≈ 3000 min/month.
+# (29 = 11 original + 4 ai4privacy de/fr/it/es splits (Phase 1) + 5 MAPA
 # en/de/es/fr/it legal splits (Phase 2) + 5 synth_finance en/de/es/fr/it
-# + 1 synth_logs (Phase 3).)
+# + 1 synth_logs (Phase 3) + 3 synth_clinical en/fr/it (Phase 4).)
 # Free-tier limit for public repos is unlimited; for private repos the
 # 2000 min/month free quota covers this.
 
@@ -110,6 +116,19 @@ jobs:
           # dropped from scoring (label_map: SECRET ~) — anonde ships
           # no secret recognizer yet. See its README.
           - synth_logs
+          # Clinical — Phase 4.
+          # synth_clinical_{en,fr,it} — synthetic clinical documents
+          # (ED triage, OP report, radiology, rehab discharge). One
+          # shared slot-based generator (canonical home:
+          # bench/corpora/synth_clinical/, which is itself the German
+          # regression-anchor corpus in bench.yml), sliced by language.
+          # Gold by construction. meddocan_es is the real-gold Spanish
+          # clinical de-id corpus — it network-fetches from Zenodo and
+          # exits 2 cleanly if unreachable (cell shows as missing).
+          - synth_clinical_en
+          - synth_clinical_fr
+          - synth_clinical_it
+          - meddocan_es
           # General PII — ai4privacy multilingual splits (Phase 1).
           # Same dataset + loader + gold schema as ai4privacy_en, sliced
           # by language. Gives the matrix a cross-language EN/DE/FR/IT/ES
@@ -194,13 +213,13 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ matrix.corpus }}" in
-            ai4privacy_en|conll2003_en|wnut_17|mapa_en|synth_finance_en|synth_logs)
+            ai4privacy_en|conll2003_en|wnut_17|mapa_en|synth_finance_en|synth_logs|synth_clinical_en)
               python -m spacy download en_core_web_lg ;;
-            pharmaconer_es|ai4privacy_es|mapa_es|synth_finance_es)
+            pharmaconer_es|ai4privacy_es|mapa_es|synth_finance_es|meddocan_es)
               python -m spacy download es_core_news_lg ;;
-            ai4privacy_fr|mapa_fr|synth_finance_fr)
+            ai4privacy_fr|mapa_fr|synth_finance_fr|synth_clinical_fr)
               python -m spacy download fr_core_news_lg ;;
-            ai4privacy_it|mapa_it|synth_finance_it)
+            ai4privacy_it|mapa_it|synth_finance_it|synth_clinical_it)
               python -m spacy download it_core_news_lg ;;
             openmed|pmc_de|synth_clinical|wiki_de|finance_de|legal_de|wikiann_de|germeval_14|conll2003_de|adversarial_de|ai4privacy_de|mapa_de|synth_finance_de)
               python -m spacy download de_core_news_lg ;;
@@ -406,7 +425,7 @@ jobs:
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
             echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio, openai-pf (subsampled — ${OPENAI_PF_SAMPLE:-40} docs/corpus)_"
-            echo "_Corpora in matrix: 26 — incl. ai4privacy en/de/fr/it/es cross-language general-PII splits + MAPA en/de/es/fr/it legal splits + synth_finance en/de/es/fr/it + synth_logs (Phase 3) (pmc_de, wiki_de, conll2003_de excluded — precision-probe / gated)_"
+            echo "_Corpora in matrix: 30 — incl. ai4privacy en/de/fr/it/es cross-language general-PII splits + MAPA en/de/es/fr/it legal splits + synth_finance en/de/es/fr/it + synth_logs (Phase 3) + synth_clinical en/fr/it + meddocan_es (Phase 4) (pmc_de, wiki_de, conll2003_de, ggponc_de excluded — precision-probe / gated)_"
             echo ""
             if [ -f bench/REPORT_MATRIX.md ]; then
               cat bench/REPORT_MATRIX.md

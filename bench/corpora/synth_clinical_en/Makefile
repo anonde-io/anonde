@@ -1,23 +1,11 @@
-# bench/corpora/synth_clinical — full-F1 bench against synthetic German
-# clinical text across four sublanguages (ED triage, OP report, radiology,
-# rehab).
+# bench/corpora/synth_clinical_en — English slice of the synthetic
+# clinical bench (Phase 4 of the multilingual bench expansion).
 #
-# Phase 4 of the multilingual bench expansion turned this directory into
-# the CANONICAL home of the shared clinical generator (generate.py +
-# generators.py + templates.py). The sibling corpora
-# synth_clinical_{en,fr,it} are thin Makefile wrappers that invoke this
-# generator with a different LANGUAGE (mirrors the synth_finance_* /
-# ai4privacy_* shared-loader pattern). There is deliberately NO
-# synth_clinical_es — Spanish clinical PHI is the real-gold MEDDOCAN
-# corpus, bench/corpora/meddocan_es.
-#
-# synth_clinical itself stays the GERMAN slice (LANGUAGE=de) and is the
-# per-push regression anchor in .github/workflows/bench.yml — the
-# generator refactor keeps `--language de` byte-identical at a fixed seed.
-#
-# Gold spans are produced by the generator itself (slot-based), so this
-# bench gives proper strict / partial / type-only F1 — not just a
-# precision proxy like wiki_de or pmc_de.
+# Thin wrapper: the generator, templates and vocab are SHARED with every
+# synth_clinical_* corpus and live in ../synth_clinical/. This Makefile
+# only differs in LANGUAGE. Mirrors the synth_finance_* / ai4privacy_*
+# shared-loader pattern. See ../synth_clinical/README.md for the full
+# design.
 
 HERE   := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 ROOT   := $(HERE)../../..
@@ -28,11 +16,11 @@ REPORT := $(HERE)REPORT.md
 CSV    := $(HERE)results.csv
 
 # Shared generator — single source of truth for every synth_clinical_*
-# corpus. The en/fr/it wrappers point GENERATOR at this same file.
-GENERATOR := $(HERE)generate.py
+# corpus. Lives in synth_clinical/; this corpus only changes LANGUAGE.
+GENERATOR := $(HERE)../synth_clinical/generate.py
 
 ANONDE_BACKEND   ?= patterns-only
-LANGUAGE         ?= de
+LANGUAGE         ?= en
 PER_SUBLANGUAGE  ?= 30
 SEED             ?= 20260512
 RECONCILER       ?= none
@@ -57,7 +45,6 @@ $(CORPUS):
 
 data: $(CORPUS)
 
-# Re-uses the unified runner_anonde from bench/runners (single source of truth).
 .PHONY: anonde
 anonde: $(CORPUS)
 	cd $(ROOT) && go run $(GO_TAGS) ./bench/runners/anonde.go \
@@ -68,8 +55,6 @@ anonde: $(CORPUS)
 		--reconciler $(RECONCILER) --ollama-model $(OLLAMA_MODEL) \
 		--auditor $(AUDITOR) --auditor-model $(AUDITOR_MODEL)
 
-# Re-uses compare.py + label_map.yaml from bench/scoring — gold labels
-# match GraSCCo PHI conventions (NAME_PATIENT, LOCATION_HOSPITAL, etc.).
 .PHONY: report
 report:
 	$(PYTHON) $(ROOT)/bench/scoring/compare.py \

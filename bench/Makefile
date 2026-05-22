@@ -19,8 +19,8 @@
 #   make matrix-de   German corpora only
 #   make matrix-en   English corpora only
 #   make matrix-es   Spanish corpora only
-#   make matrix-fr   French corpora only  (ai4privacy_fr)
-#   make matrix-it   Italian corpora only (ai4privacy_it)
+#   make matrix-fr   French corpora only
+#   make matrix-it   Italian corpora only
 #   make data        fetch/generate every corpus (no engine runs)
 #   make clean       remove per-corpus data + the matrix outputs
 #
@@ -69,18 +69,34 @@ NER_SCORE_FLOOR  ?= 0
 # spans at time of writing. The loader is forward-compatible — when/if
 # a mirror appears, the bench picks it up automatically (no Makefile
 # changes needed).
+#
+# meddocan_es is wired into the matrix (the real-gold ES clinical
+# corpus). MEDDOCAN is openly licensed (CC-BY-4.0, Zenodo) — not
+# registration-gated — but its loader fetches the archive over the
+# network. Like conll2003_de, the loader exits 2 cleanly if Zenodo is
+# unreachable: a transient network failure shows the cell as missing
+# rather than reddening the whole matrix (the CI matrix is fail-fast:
+# false and the renderer tolerates missing cells).
+#
 # Phase 3 of the multilingual bench expansion adds two synthetic
 # slot-based families: synth_finance_{en,de,es,fr,it} (financial
 # documents — invoices, statements, KYC, transaction confirmations; one
 # shared generator in bench/corpora/synth_finance_en/) and synth_logs
 # (enterprise logs — auth/error/access/audit; English-classified, see
 # its README for why). All six emit canonical label_map gold types.
+#
+# Phase 4 adds clinical-domain depth: the synth_clinical generator
+# (canonical home: bench/corpora/synth_clinical/) is now parametrised by
+# --language, and synth_clinical_{en,fr,it} are thin wrappers around it.
+# With synth_clinical (de) + openmed + pmc_de that gives DE clinical
+# depth; meddocan_es is the real-gold ES clinical corpus.
 DE_CORPORA := openmed pmc_de synth_clinical wiki_de finance_de legal_de \
               wikiann_de germeval_14 conll2003_de adversarial_de \
               ai4privacy_de mapa_de synth_finance_de
 EN_CORPORA := ai4privacy_en conll2003_en wnut_17 mapa_en \
-              synth_finance_en synth_logs
-ES_CORPORA := pharmaconer_es ai4privacy_es mapa_es synth_finance_es
+              synth_finance_en synth_logs synth_clinical_en
+ES_CORPORA := pharmaconer_es ai4privacy_es mapa_es synth_finance_es \
+              meddocan_es
 # ES / FR / IT partitions populated by Phase 1 of the multilingual bench
 # expansion. ai4privacy_es / ai4privacy_fr / ai4privacy_it are the
 # Spanish / French / Italian slices of ai4privacy/pii-masking-300k (one
@@ -94,8 +110,8 @@ ES_CORPORA := pharmaconer_es ai4privacy_es mapa_es synth_finance_es
 # loader, see bench/corpora/mapa_en/cmd/fetch_mapa.py). MAPA gives the
 # matrix a real-gold legal domain number; the synthetic legal_de corpus
 # stays alongside mapa_de (different probes — generated vs real text).
-FR_CORPORA := ai4privacy_fr mapa_fr synth_finance_fr
-IT_CORPORA := ai4privacy_it mapa_it synth_finance_it
+FR_CORPORA := ai4privacy_fr mapa_fr synth_finance_fr synth_clinical_fr
+IT_CORPORA := ai4privacy_it mapa_it synth_finance_it synth_clinical_it
 ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORPORA)
 
 # The engines the matrix scores. Each row's name is what compare.py
@@ -141,8 +157,8 @@ help:
 	@echo "  make matrix-de          German subset only"
 	@echo "  make matrix-en          English subset only"
 	@echo "  make matrix-es          Spanish subset only"
-	@echo "  make matrix-fr          French subset only (ai4privacy_fr)"
-	@echo "  make matrix-it          Italian subset only (ai4privacy_it)"
+	@echo "  make matrix-fr          French subset only"
+	@echo "  make matrix-it          Italian subset only"
 	@echo "  make corpus-<NAME>      run the 4 always-on engines on a single corpus"
 	@echo "  make clean              remove generated data + reports + the matrix outputs"
 	@echo ""
@@ -201,15 +217,19 @@ endef
 # DE/ES/FR/IT partitions, so a plain EN_CORPORA filter would miss them —
 # match the ai4privacy_ / mapa_ prefixes explicitly.
 #
-# EXCLUDED: the Phase 3 synth_finance_* and synth_logs corpora. Their
-# generators emit canonical ADDRESS gold (street + postcode as one span)
-# — they do NOT use the ai4privacy LOCATION-bucket convention. Folding
-# anonde's STREET_ADDRESS/POSTAL_CODE predictions to LOCATION there would
+# EXCLUDED: the Phase 3 synth_finance_* / synth_logs and the Phase 4
+# synth_clinical_* corpora. Their generators emit gold where street +
+# zip map to ADDRESS (synth_finance) or LOCATION_STREET/LOCATION_ZIP map
+# to ADDRESS via label_map (synth_clinical) — neither uses the
+# ai4privacy LOCATION-bucket convention. Folding anonde's
+# STREET_ADDRESS/POSTAL_CODE predictions to LOCATION there would
 # mismatch the ADDRESS gold and inflate the leak rate. The negative
-# filter keeps fold off for every synth_finance_* even though
-# synth_finance_en lives in EN_CORPORA.
+# filter keeps fold off for every synth_finance_* / synth_clinical_*
+# even though synth_finance_en and synth_clinical_en live in EN_CORPORA
+# — this matches the no-fold treatment the German synth_clinical corpus
+# (in DE_CORPORA) already gets.
 define FOLD_FOR_CORPUS
-$(if $(filter synth_finance_% synth_logs,$(1)),,$(if $(or $(filter $(1),$(EN_CORPORA)),$(filter ai4privacy_% mapa_%,$(1))),--fold-parity-labels,))
+$(if $(filter synth_finance_% synth_clinical_% synth_logs,$(1)),,$(if $(or $(filter $(1),$(EN_CORPORA)),$(filter ai4privacy_% mapa_%,$(1))),--fold-parity-labels,))
 endef
 
 # Local libonnxruntime path for the gliner backend's ORT session. Matches

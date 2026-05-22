@@ -205,6 +205,45 @@ gold:
   MAPA_TYPE: ~                   # document/entity type token
   MAPA_STANDARD_ABBREVIATION: ~  # legal-citation abbreviation
 
+  # ----------------------------------------------------------------
+  # MEDDOCAN PHI gold (Phase 4 of the multilingual bench expansion).
+  # Dataset: MEDDOCAN (Medical Document Anonymization, IberLEF 2019
+  # shared task) — 1,000 expert-annotated Spanish clinical case reports,
+  # CC-BY-4.0, Zenodo record 4279323. The real-gold Spanish clinical
+  # de-id corpus; loader at bench/corpora/meddocan_es/loader.py.
+  #
+  # Like the mapa_* loader, meddocan_es/loader.py maps MEDDOCAN's 22 PHI
+  # labels to the canonical anonde type strings BEFORE writing gold — so
+  # the entries actually consumed by compare.py are the canonical ones
+  # already listed at the top of this gold: section (PERSON, LOCATION,
+  # ADDRESS, ORGANIZATION, DATE, AGE, ID, PHONE, EMAIL, PROFESSION). The
+  # block below is the AUDIT TRAIL for the loader's LABEL_MAP — and a
+  # forward-compatible hook if the loader is ever switched to emit raw
+  # MEDDOCAN labels. The two `~` labels are dropped (no canonical PHI
+  # type); see the loader docstring for the rationale.
+  MEDDOCAN_NOMBRE_SUJETO_ASISTENCIA: PERSON         # patient name
+  MEDDOCAN_NOMBRE_PERSONAL_SANITARIO: PERSON        # clinician name
+  MEDDOCAN_FAMILIARES_SUJETO_ASISTENCIA: PERSON     # named relative
+  MEDDOCAN_CALLE: ADDRESS                           # street address
+  MEDDOCAN_TERRITORIO: LOCATION                     # city / region / postcode
+  MEDDOCAN_PAIS: LOCATION                           # country
+  MEDDOCAN_HOSPITAL: ORGANIZATION
+  MEDDOCAN_INSTITUCION: ORGANIZATION
+  MEDDOCAN_CENTRO_SALUD: ORGANIZATION               # health centre
+  MEDDOCAN_FECHAS: DATE
+  MEDDOCAN_EDAD_SUJETO_ASISTENCIA: AGE
+  MEDDOCAN_ID_SUJETO_ASISTENCIA: ID                 # patient record number
+  MEDDOCAN_ID_TITULACION_PERSONAL_SANITARIO: ID     # clinician licence id
+  MEDDOCAN_ID_ASEGURAMIENTO: ID                     # insurance id
+  MEDDOCAN_ID_CONTACTO_ASISTENCIAL: ID              # care-contact id
+  MEDDOCAN_ID_EMPLEO_PERSONAL_SANITARIO: ID         # clinician employment id
+  MEDDOCAN_NUMERO_TELEFONO: PHONE
+  MEDDOCAN_NUMERO_FAX: PHONE
+  MEDDOCAN_CORREO_ELECTRONICO: EMAIL
+  MEDDOCAN_PROFESION: PROFESSION
+  MEDDOCAN_SEXO_SUJETO_ASISTENCIA: ~   # gender — NRP-class, no canonical type
+  MEDDOCAN_OTROS_SUJETO_ASISTENCIA: ~  # catch-all "other PHI" — no single type
+
 # anonde internal entity types (see analyzer/recognizers/*.go).
 anonde:
   PERSON: PERSON
