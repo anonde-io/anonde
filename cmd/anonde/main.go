@@ -288,6 +288,16 @@ func glinerOnnxFileFromEnv(modelName string) string {
 	case "", "int8", "quint8", "quantized":
 		return int8Name
 	case "fp16", "float16":
+		// CAVEAT: knowledgator/gliner-pii-base-v1.0's shipped
+		// model_fp16.onnx currently has an onnxruntime-incompatible
+		// graph — onnxruntime rejects it on session create with a
+		// "Type Error: Type (tensor(float16)) of output arg ... Cast
+		// ..." failure, and the GLiNER recognizer then silently falls
+		// back to patterns-only. The mapping is kept (a future fixed
+		// FP16 export from the upstream repo may load cleanly), but as
+		// of now GLINER_QUANT=fp16 does NOT work for this model — use
+		// fp32 for the full-precision build. The bench matrix's
+		// quantization-tradeoff column uses fp32 for the same reason.
 		return "onnx/model_fp16.onnx"
 	case "fp32", "float32", "full":
 		return "onnx/model.onnx"

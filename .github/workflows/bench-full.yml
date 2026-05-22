@@ -19,13 +19,13 @@ name: bench-full
 # openai-pf is too slow for the per-push bench (bench.yml), which leaves
 # it excluded. See bench/Makefile's ENGINES block for the gating design.
 #
-# It also runs the anonde-gliner-fp16 engine — the same GLiNER PII model
-# as the production anonde-gliner but loaded from the FP16 ONNX instead
+# It also runs the anonde-gliner-fp32 engine — the same GLiNER PII model
+# as the production anonde-gliner but loaded from the FP32 ONNX instead
 # of INT8, a permanent matrix column tracking the quantization tradeoff.
 # Like openai-pf it is kept off the per-push corpus-X target (bench.yml
-# stays lean); the full matrix pulls it in via `make gliner-fp16-X`. The
+# stays lean); the full matrix pulls it in via `make gliner-fp32-X`. The
 # six engines per corpus: anonde-patterns, anonde-gliner (INT8),
-# anonde-gliner-fp16 (FP16), gliner-py, presidio, openai-pf.
+# anonde-gliner-fp32 (FP32), gliner-py, presidio, openai-pf.
 #
 # Triggers:
 #   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
@@ -179,6 +179,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Free disk on the ~14 GB runner before the cell pulls its heavy
+      # assets. The cell stacks: openai/privacy-filter (~2.8 GB), the
+      # GLiNER PII ONNX exports (INT8 model_quint8.onnx + FP32 model.onnx),
+      # a spaCy model (~750 MB), and TWO Python venvs (bench base + the
+      # isolated openai-pf venv). Both venvs install CPU-only torch (the
+      # PyTorch CPU wheel index — see bench/requirements*.txt), which
+      # already removes the multi-GB CUDA stack that previously overflowed
+      # the disk; dropping the preinstalled Android SDK / .NET / Haskell
+      # toolchains is cheap belt-and-suspenders headroom on top of that.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -244,23 +261,24 @@ jobs:
           esac
 
       # Cache the GLiNER PII model assets. Both ONNX variants the matrix
-      # uses — model_quint8.onnx (INT8, anonde-gliner) and model_fp16.onnx
-      # (FP16, anonde-gliner-fp16) — live in the same HF repo and are
+      # uses — model_quint8.onnx (INT8, anonde-gliner) and model.onnx
+      # (FP32, anonde-gliner-fp32) — live in the same HF repo and are
       # downloaded on demand into these dirs. The cache PATH already
-      # covers both files; the `-int8-fp16` key suffix forces one cache
-      # refresh so a cache populated before the FP16 column existed
-      # (INT8-only) does not make every cell re-download model_fp16.onnx.
+      # covers both files; the `-int8-fp32` key suffix forces one cache
+      # refresh so a cache populated before the FP32 column existed
+      # (INT8-only, or the abandoned FP16 attempt) does not make every
+      # cell re-download model.onnx.
       - name: Cache HuggingFace model cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-cache-gliner-pii-base-v1.0-int8-fp16
+          key: hf-cache-gliner-pii-base-v1.0-int8-fp32
 
       - name: Cache anonde model cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/anonde/models
-          key: anonde-models-gliner-pii-base-v1.0-int8-fp16
+          key: anonde-models-gliner-pii-base-v1.0-int8-fp32
 
       # Cache key includes the recognizer + bench-runner source as well
       # as the corpus loader, because the cached path contains BOTH the
@@ -286,23 +304,23 @@ jobs:
           CGO_ENABLED=1 go build -tags hugot ./...
 
       # Run the four always-on engines (corpus-X), then the
-      # anonde-gliner-fp16 cell, then the openai-pf cell. The FP16 cell
+      # anonde-gliner-fp32 cell, then the openai-pf cell. The FP32 cell
       # and openai-pf are both kept off the per-push `corpus-X` target so
       # bench.yml stays lean; the full matrix pulls them in explicitly
-      # here (gliner-fp16-X / openai-pf-X). openai-pf is additionally
+      # here (gliner-fp32-X / openai-pf-X). openai-pf is additionally
       # gated behind RUN_OPENAI_PF=1 — set here (and only here / on the
       # `matrix` target) so the slow ~80 s/doc model runs on the weekly
       # full matrix but never on the per-push PR bench. The openai-pf cell
       # is scored on a deterministic OPENAI_PF_SAMPLE-doc subsample;
       # render_matrix.py scores it over only the docs it returned. The
-      # FP16 cell is a fast in-process Go run (no gate needed).
+      # FP32 cell is a fast in-process Go run (no gate needed).
       - name: Run cell — ${{ matrix.corpus }}
         env:
           ORT_LIB: ${{ env.ORT_LIB }}
         run: |
           set -euo pipefail
           make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
-          make -C bench gliner-fp16-${{ matrix.corpus }} PYTHON=python3
+          make -C bench gliner-fp32-${{ matrix.corpus }} PYTHON=python3
           make -C bench openai-pf-${{ matrix.corpus }} PYTHON=python3 RUN_OPENAI_PF=1
 
       # Upload the cell's data dir as an artifact. The render job will
@@ -377,10 +395,10 @@ jobs:
 
       # Same canary as the per-push bench, but walks every gold-bearing
       # corpus and checks BOTH GLiNER cells — the production INT8
-      # (anonde-gliner) and the FP16 reference (anonde-gliner-fp16). A
+      # (anonde-gliner) and the FP32 reference (anonde-gliner-fp32). A
       # silent fallback to patterns is the highest-cost bug class, and
-      # the FP16 cell is just as exposed to it (bad ORT_LIB / missing
-      # model_fp16.onnx) as the production one.
+      # the FP32 cell is just as exposed to it (bad ORT_LIB / missing
+      # model.onnx) as the production one.
       - name: Guard rail — GLiNER actually fired
         run: |
           python3 - <<'PYEOF'
@@ -390,8 +408,8 @@ jobs:
           failures = []
           checked = 0
           root = Path("bench/corpora")
-          # The two GLiNER cells the matrix runs: production INT8 + FP16.
-          gliner_engines = ("anonde-gliner", "anonde-gliner-fp16")
+          # The two GLiNER cells the matrix runs: production INT8 + FP32.
+          gliner_engines = ("anonde-gliner", "anonde-gliner-fp32")
           for corpus_dir in sorted(root.iterdir()):
               gold = corpus_dir / "data" / "corpus.jsonl"
               if not gold.exists():
@@ -409,7 +427,7 @@ jobs:
               for eng in gliner_engines:
                   pred = corpus_dir / "data" / f"anonde_{eng}.jsonl"
                   if not pred.exists():
-                      # FP16 / INT8 cell simply not run for this corpus —
+                      # FP32 / INT8 cell simply not run for this corpus —
                       # not a fallback, just a missing cell. Skip silently.
                       continue
                   ner_like = 0
@@ -474,7 +492,7 @@ jobs:
             echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines (6): anonde-patterns, anonde-gliner (INT8, production), anonde-gliner-fp16 (FP16 ONNX — quantization-tradeoff reference column), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
+            echo "_Engines (6): anonde-patterns, anonde-gliner (INT8, production), anonde-gliner-fp32 (FP32 ONNX — quantization-tradeoff reference column), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
             echo "_Corpora in matrix: 30, across 6 domains × 5 languages._"
             echo "_New since Phase 0: ai4privacy de/fr/it/es (Phase 1) · MAPA en/de/es/fr/it legal (Phase 2) · synth_finance en/de/es/fr/it + synth_logs (Phase 3) · synth_clinical en/fr/it + meddocan_es (Phase 4)._"
             echo "_Excluded from the matrix: pmc_de / wiki_de (precision-probe, no gold), conll2003_de (loader-gated), ggponc_de (DUA registration)._"

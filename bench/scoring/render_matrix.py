@@ -537,16 +537,16 @@ def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
 # The anonde column the scorecard anchors on (production engine). The
 # win/verdict logic stays keyed on this one engine: `anonde-gliner` is
 # what actually ships (INT8 ONNX), so "does anonde beat the field?" must
-# be answered for the production build, not the FP16 reference cell.
+# be answered for the production build, not the FP32 reference cell.
 SCORECARD_ANCHOR = "anonde-gliner"
 
 # Anonde engine columns pinned to the FRONT of the scorecard, in this
 # order, so the two GLiNER quantization variants render side by side.
 # `anonde-gliner` (INT8, production — the verdict anchor) leads;
-# `anonde-gliner-fp16` (FP16 ONNX, same model) sits immediately after it
-# so a reader sees the INT8-vs-FP16 quantization tradeoff at a glance.
+# `anonde-gliner-fp32` (FP32 ONNX, same model) sits immediately after it
+# so a reader sees the INT8-vs-FP32 quantization tradeoff at a glance.
 # Engines here that are absent from a given run are skipped silently.
-SCORECARD_FRONT = ["anonde-gliner", "anonde-gliner-fp16"]
+SCORECARD_FRONT = ["anonde-gliner", "anonde-gliner-fp32"]
 
 
 def _is_rival(engine: str) -> bool:
@@ -554,7 +554,7 @@ def _is_rival(engine: str) -> bool:
 
     The verdict answers "does the production engine beat the competing
     field?" — so every `anonde-*` engine is excluded. In particular
-    `anonde-gliner-fp16` is the same GLiNER PII model as the production
+    `anonde-gliner-fp32` is the same GLiNER PII model as the production
     `anonde-gliner`, just a different ONNX quantization: it is a tracked
     reference column, not a competitor, and must not flip a ✅ to ❌.
     """
@@ -625,10 +625,10 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     """
     anchor = SCORECARD_ANCHOR
     # Column order: the anonde engine columns first, pinned in
-    # SCORECARD_FRONT order (anonde-gliner, then anonde-gliner-fp16) so
+    # SCORECARD_FRONT order (anonde-gliner, then anonde-gliner-fp32) so
     # the two GLiNER quantization variants render adjacent. The anchor is
     # the production INT8 engine — every row's verdict is judged against
-    # it, not against the FP16 reference cell. The remaining engines
+    # it, not against the FP32 reference cell. The remaining engines
     # follow in the order they were requested.
     front = [e for e in SCORECARD_FRONT if e in engines]
     others = [e for e in engines if e not in front]
@@ -640,9 +640,9 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         f"number is **leak rate** (fraction of gold PHI spans missed — "
         f"lower is better). `{anchor}` is the anonde production engine "
         "(INT8 ONNX) and the anchor column; **Verdict** says whether it "
-        "beats the field. `anonde-gliner-fp16` is the same GLiNER PII "
-        "model loaded from the FP16 ONNX — it sits next to the anchor so "
-        "the INT8-vs-FP16 quantization tradeoff is visible at a glance, "
+        "beats the field. `anonde-gliner-fp32` is the same GLiNER PII "
+        "model loaded from the FP32 ONNX — it sits next to the anchor so "
+        "the INT8-vs-FP32 quantization tradeoff is visible at a glance, "
         "but the verdict is keyed on the production INT8 engine. 🥇 marks "
         "the lowest-leak engine in the row. Roll-up rows pool "
         "leaked-over-gold across the group (doc-weighted, so larger "
@@ -652,8 +652,8 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     for e in col_engines:
         if e == anchor:
             tag = " ⬅︎ anonde (INT8, prod)"
-        elif e == "anonde-gliner-fp16":
-            tag = " · anonde (FP16)"
+        elif e == "anonde-gliner-fp32":
+            tag = " · anonde (FP32)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -895,11 +895,11 @@ def _render(rows, label_map, corpora, engines, meta=None):
         engine_leaks.sort(key=lambda x: x[1])
         winner = engine_leaks[0]
         # gliner_row = the production engine; best_baseline = the best
-        # NON-anonde engine. `anonde-gliner-fp16` is the same model as
+        # NON-anonde engine. `anonde-gliner-fp32` is the same model as
         # production, just a different ONNX quantization — it is a
         # tracked reference column, not a competing baseline, so
         # `_is_rival` excludes it here exactly as in the scorecard
-        # verdict. (The verdict card would otherwise quote FP16 as "the
+        # verdict. (The verdict card would otherwise quote FP32 as "the
         # best baseline", which is misleading.)
         gliner_row = next((x for x in engine_leaks if x[0] == "anonde-gliner"), None)
         baseline_row = next((x for x in engine_leaks if _is_rival(x[0])), None)
@@ -915,7 +915,7 @@ def _render(rows, label_map, corpora, engines, meta=None):
     scorable = [v for v in per_corpus_verdict if v["scorable"]]
     # A "win" = the production engine (`anonde-gliner`, INT8) leaks no
     # more than every NON-anonde baseline on that corpus. Counted against
-    # rivals only — `anonde-gliner-fp16` is the same model at a different
+    # rivals only — `anonde-gliner-fp32` is the same model at a different
     # ONNX quantization, so it never costs production a win (mirrors the
     # scorecard verdict's `_is_rival` rule).
     gliner_wins = 0
@@ -942,8 +942,8 @@ def _render(rows, label_map, corpora, engines, meta=None):
             f"> **TL;DR** — `anonde-gliner` (production, INT8 ONNX) leaks no more than "
             f"every competing baseline on **{gliner_wins} of {n_scorable}** gold-annotated "
             f"corpora. Biggest absolute improvement over the best baseline: "
-            f"**{biggest_pp * 100:+.1f}pp** in leak rate. The `anonde-gliner-fp16` column is "
-            f"the same GLiNER PII model at FP16 instead of INT8 — it tracks the "
+            f"**{biggest_pp * 100:+.1f}pp** in leak rate. The `anonde-gliner-fp32` column is "
+            f"the same GLiNER PII model at FP32 instead of INT8 — it tracks the "
             f"quantization tradeoff and is not counted as a competitor. Strict F1 trades "
             f"exact-byte alignment for catching more PHI — the right trade-off for a "
             f"redactor, not a benchmark gaming exercise.\n"
@@ -985,10 +985,10 @@ def _render(rows, label_map, corpora, engines, meta=None):
                "**production**) | ~470 MB | required | 5-30 s warmup | natural "
                "text + multilingual PHI; wins leak rate on most gold corpora. "
                "Ships the INT8 ONNX (`model_quint8.onnx`). |")
-    out.append("| `anonde-gliner-fp16` | same GLiNER PII model, FP16 ONNX "
-               "(`model_fp16.onnx`) — reference column, not a separate tier | "
-               "~530 MB | required | 5-30 s warmup | not a competitor: tracks the "
-               "INT8-vs-FP16 quantization tradeoff vs production `anonde-gliner`. "
+    out.append("| `anonde-gliner-fp32` | same GLiNER PII model, FP32 ONNX "
+               "(`model.onnx`) — reference column, not a separate tier | "
+               "~770 MB | required | 5-30 s warmup | not a competitor: tracks the "
+               "INT8-vs-FP32 quantization tradeoff vs production `anonde-gliner`. "
                "INT8 depresses GLiNER's sigmoid logits ~0.18, costing recall on "
                "multilingual legal/clinical text — this column quantifies it. |")
     out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) | "
@@ -1181,9 +1181,9 @@ matrix:
   `gliner-py` loads the FP32 safetensors via PyTorch. Both load the
   same upstream model; quantization appears to bite on noisy English
   NER even though it's invisible on clean German clinical text. The
-  `anonde-gliner-fp16` column makes this explicit: it is the same
-  model loaded from the FP16 ONNX (`model_fp16.onnx`), so the gap
-  between the `anonde-gliner` and `anonde-gliner-fp16` columns
+  `anonde-gliner-fp32` column makes this explicit: it is the same
+  model loaded from the FP32 ONNX (`model.onnx`), so the gap
+  between the `anonde-gliner` and `anonde-gliner-fp32` columns
   isolates the INT8-quantization cost from everything else.
 
 Held-out corpora with no known overlap for any of the four engines

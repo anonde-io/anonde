@@ -20,7 +20,12 @@
 
 transformers>=5.6.0
 
-# torch — the runtime for the safetensors checkpoint. Not pinned: let
-# transformers' own constraint pick a compatible build. CPU is fine
-# (the cell runs device=-1); a CPU-only wheel is acceptable here.
+# torch — the runtime for the safetensors checkpoint. The bench runs
+# CPU-only (the cell runs device=-1), so pull the CPU-only wheel from
+# the PyTorch CPU index. The default PyPI torch wheel drags in the full
+# CUDA stack (nvidia-cu* libs, triton — several GB) which exhausts the
+# ~14 GB GitHub runner disk and has zero benefit on a CPU bench.
+# Not version-pinned: let transformers' constraint pick a compatible
+# build off the CPU index.
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch

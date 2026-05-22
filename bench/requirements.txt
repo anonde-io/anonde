@@ -38,5 +38,12 @@ transformers<5.2.0,>=4.51.3
 # pyyaml — corpus loaders + scoring scripts read label_map.yaml.
 pyyaml
 
-# torch is a transitive dep of gliner; do not pin here — let gliner's
-# constraint pick a compatible version.
+# torch is a transitive dep of gliner; do not pin a version here — let
+# gliner's constraint pick a compatible one. But DO force the CPU-only
+# wheel: the default PyPI torch drags in the full CUDA stack (nvidia-cu*
+# libs, triton — several GB) which the bench never uses (gliner-py runs
+# CPU-only) and which, together with the openai-pf venv's torch,
+# overflows the ~14 GB GitHub runner disk. The CPU index supplies a
+# CPU-only build of the same torch version.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
