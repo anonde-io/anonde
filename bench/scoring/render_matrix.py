@@ -534,8 +534,31 @@ def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
 # every row tells you at a glance whether anonde wins or loses, and the
 # roll-up rows summarise per-domain / per-language without scanning.
 
-# The anonde column the scorecard anchors on (production engine).
+# The anonde column the scorecard anchors on (production engine). The
+# win/verdict logic stays keyed on this one engine: `anonde-gliner` is
+# what actually ships (INT8 ONNX), so "does anonde beat the field?" must
+# be answered for the production build, not the FP16 reference cell.
 SCORECARD_ANCHOR = "anonde-gliner"
+
+# Anonde engine columns pinned to the FRONT of the scorecard, in this
+# order, so the two GLiNER quantization variants render side by side.
+# `anonde-gliner` (INT8, production — the verdict anchor) leads;
+# `anonde-gliner-fp16` (FP16 ONNX, same model) sits immediately after it
+# so a reader sees the INT8-vs-FP16 quantization tradeoff at a glance.
+# Engines here that are absent from a given run are skipped silently.
+SCORECARD_FRONT = ["anonde-gliner", "anonde-gliner-fp16"]
+
+
+def _is_rival(engine: str) -> bool:
+    """True for engines that count as a *baseline* in the anonde verdict.
+
+    The verdict answers "does the production engine beat the competing
+    field?" — so every `anonde-*` engine is excluded. In particular
+    `anonde-gliner-fp16` is the same GLiNER PII model as the production
+    `anonde-gliner`, just a different ONNX quantization: it is a tracked
+    reference column, not a competitor, and must not flip a ✅ to ❌.
+    """
+    return not engine.startswith("anonde")
 
 
 def _cell_leak(rows: dict, corpus: str, engine: str) -> float | None:
@@ -601,24 +624,38 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     aggregate without scanning every row.
     """
     anchor = SCORECARD_ANCHOR
-    # Column order: the anonde anchor first (it is what every row is
-    # judged against), then the rest in the order they were requested.
-    others = [e for e in engines if e != anchor]
-    col_engines = ([anchor] if anchor in engines else []) + others
+    # Column order: the anonde engine columns first, pinned in
+    # SCORECARD_FRONT order (anonde-gliner, then anonde-gliner-fp16) so
+    # the two GLiNER quantization variants render adjacent. The anchor is
+    # the production INT8 engine — every row's verdict is judged against
+    # it, not against the FP16 reference cell. The remaining engines
+    # follow in the order they were requested.
+    front = [e for e in SCORECARD_FRONT if e in engines]
+    others = [e for e in engines if e not in front]
+    col_engines = front + others
 
     out.append("## 🎯 Scorecard · leak rate by domain × language\n")
     out.append(
         "The one table. Each row is a `(domain, language)` cell; each "
         f"number is **leak rate** (fraction of gold PHI spans missed — "
         f"lower is better). `{anchor}` is the anonde production engine "
-        "and the anchor column; **Verdict** says whether it beats the "
-        "field. 🥇 marks the lowest-leak engine in the row. Roll-up rows "
-        "pool leaked-over-gold across the group (doc-weighted, so larger "
+        "(INT8 ONNX) and the anchor column; **Verdict** says whether it "
+        "beats the field. `anonde-gliner-fp16` is the same GLiNER PII "
+        "model loaded from the FP16 ONNX — it sits next to the anchor so "
+        "the INT8-vs-FP16 quantization tradeoff is visible at a glance, "
+        "but the verdict is keyed on the production INT8 engine. 🥇 marks "
+        "the lowest-leak engine in the row. Roll-up rows pool "
+        "leaked-over-gold across the group (doc-weighted, so larger "
         "corpora count more).\n")
 
     header = "| Domain | Language |"
     for e in col_engines:
-        tag = " ⬅︎ anonde" if e == anchor else ""
+        if e == anchor:
+            tag = " ⬅︎ anonde (INT8, prod)"
+        elif e == "anonde-gliner-fp16":
+            tag = " · anonde (FP16)"
+        else:
+            tag = ""
         header += f" `{e}`{tag} |"
     header += " Verdict |"
     out.append(header)
@@ -654,7 +691,7 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
         verdict = _anchor_verdict(
             anchor_rate,
-            [r for e, r in zip(col_engines, rates) if e != anchor])
+            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
         row = f"| **{domain_name(domain)}** | {language_name(language)} |"
         for e, r in zip(col_engines, rates):
             is_best = r is not None and abs(r - best) < 1e-9
@@ -677,7 +714,7 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
         verdict = _anchor_verdict(
             anchor_rate,
-            [r for e, r in zip(col_engines, rates) if e != anchor])
+            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
         row = f"| _Σ {domain_name(domain)}_ | _all_ |"
         for r in rates:
             is_best = r is not None and abs(r - best) < 1e-9
@@ -697,7 +734,7 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
         verdict = _anchor_verdict(
             anchor_rate,
-            [r for e, r in zip(col_engines, rates) if e != anchor])
+            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
         row = f"| _Σ all domains_ | _{language_name(language)}_ |"
         for r in rates:
             is_best = r is not None and abs(r - best) < 1e-9
@@ -714,7 +751,7 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
         verdict = _anchor_verdict(
             anchor_rate,
-            [r for e, r in zip(col_engines, rates) if e != anchor])
+            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
         row = "| **Σ ALL** | **all** |"
         for r in rates:
             is_best = r is not None and abs(r - best) < 1e-9
@@ -740,7 +777,7 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         anchor_rate = rates.get(anchor)
         if anchor_rate is None:
             continue
-        rivals = [r for e, r in rates.items() if e != anchor and r is not None]
+        rivals = [r for e, r in rates.items() if _is_rival(e) and r is not None]
         if not rivals:
             wins += 1
             continue
@@ -857,9 +894,15 @@ def _render(rows, label_map, corpora, engines, meta=None):
             continue
         engine_leaks.sort(key=lambda x: x[1])
         winner = engine_leaks[0]
-        # Best baseline = best non-anonde-gliner engine.
+        # gliner_row = the production engine; best_baseline = the best
+        # NON-anonde engine. `anonde-gliner-fp16` is the same model as
+        # production, just a different ONNX quantization — it is a
+        # tracked reference column, not a competing baseline, so
+        # `_is_rival` excludes it here exactly as in the scorecard
+        # verdict. (The verdict card would otherwise quote FP16 as "the
+        # best baseline", which is misleading.)
         gliner_row = next((x for x in engine_leaks if x[0] == "anonde-gliner"), None)
-        baseline_row = next((x for x in engine_leaks if x[0] != "anonde-gliner"), None)
+        baseline_row = next((x for x in engine_leaks if _is_rival(x[0])), None)
         per_corpus_verdict.append({
             "corpus": c,
             "scorable": True,
@@ -870,10 +913,19 @@ def _render(rows, label_map, corpora, engines, meta=None):
         })
 
     scorable = [v for v in per_corpus_verdict if v["scorable"]]
-    gliner_wins = sum(
-        1 for v in scorable
-        if v["gliner"] is not None and v["winner"][0] == "anonde-gliner"
-    )
+    # A "win" = the production engine (`anonde-gliner`, INT8) leaks no
+    # more than every NON-anonde baseline on that corpus. Counted against
+    # rivals only — `anonde-gliner-fp16` is the same model at a different
+    # ONNX quantization, so it never costs production a win (mirrors the
+    # scorecard verdict's `_is_rival` rule).
+    gliner_wins = 0
+    for v in scorable:
+        if v["gliner"] is None:
+            continue
+        gliner_rate = v["gliner"][1]
+        rival_rates = [r for (e, r, _c) in v["engine_leaks"] if _is_rival(e)]
+        if not rival_rates or gliner_rate <= min(rival_rates) + 1e-9:
+            gliner_wins += 1
     n_scorable = len(scorable)
 
     # ---- title + TL;DR ----------------------------------------------
@@ -887,11 +939,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
         ) if any(v["gliner"] and v["best_baseline"] for v in scorable) else 0.0
 
         tldr = (
-            f"> **TL;DR** — `anonde-gliner` (production) is the lowest-leak engine on "
-            f"**{gliner_wins} of {n_scorable}** gold-annotated corpora. "
-            f"Biggest absolute improvement over the best baseline: **{biggest_pp * 100:+.1f}pp** "
-            f"in leak rate. Strict F1 trades exact-byte alignment for catching more PHI "
-            f"— the right trade-off for a redactor, not a benchmark gaming exercise.\n"
+            f"> **TL;DR** — `anonde-gliner` (production, INT8 ONNX) leaks no more than "
+            f"every competing baseline on **{gliner_wins} of {n_scorable}** gold-annotated "
+            f"corpora. Biggest absolute improvement over the best baseline: "
+            f"**{biggest_pp * 100:+.1f}pp** in leak rate. The `anonde-gliner-fp16` column is "
+            f"the same GLiNER PII model at FP16 instead of INT8 — it tracks the "
+            f"quantization tradeoff and is not counted as a competitor. Strict F1 trades "
+            f"exact-byte alignment for catching more PHI — the right trade-off for a "
+            f"redactor, not a benchmark gaming exercise.\n"
         )
         out.append(tldr)
     else:
@@ -928,7 +983,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
                "PROFESSION when the regex shape is tight |")
     out.append("| `anonde-gliner` | GLiNER PII + patterns (anonde tier 2, "
                "**production**) | ~470 MB | required | 5-30 s warmup | natural "
-               "text + multilingual PHI; wins leak rate on most gold corpora |")
+               "text + multilingual PHI; wins leak rate on most gold corpora. "
+               "Ships the INT8 ONNX (`model_quint8.onnx`). |")
+    out.append("| `anonde-gliner-fp16` | same GLiNER PII model, FP16 ONNX "
+               "(`model_fp16.onnx`) — reference column, not a separate tier | "
+               "~530 MB | required | 5-30 s warmup | not a competitor: tracks the "
+               "INT8-vs-FP16 quantization tradeoff vs production `anonde-gliner`. "
+               "INT8 depresses GLiNER's sigmoid logits ~0.18, costing recall on "
+               "multilingual legal/clinical text — this column quantifies it. |")
     out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) | "
                "~1 GB | not required | 3-10 s | well-formed English "
                "(strong on EN newswire-shaped text where spaCy was trained) |")
@@ -1118,8 +1180,11 @@ matrix:
   uses the INT8-quantised ONNX (`model_quint8.onnx`, ~196 MB) while
   `gliner-py` loads the FP32 safetensors via PyTorch. Both load the
   same upstream model; quantization appears to bite on noisy English
-  NER even though it's invisible on clean German clinical text. See
-  `TODO.md` for the planned FP32 ONNX comparison cell.
+  NER even though it's invisible on clean German clinical text. The
+  `anonde-gliner-fp16` column makes this explicit: it is the same
+  model loaded from the FP16 ONNX (`model_fp16.onnx`), so the gap
+  between the `anonde-gliner` and `anonde-gliner-fp16` columns
+  isolates the INT8-quantization cost from everything else.
 
 Held-out corpora with no known overlap for any of the four engines
 listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,

@@ -52,6 +52,12 @@ GLINER_MODEL     ?= knowledgator/gliner-pii-base-v1.0
 # int8-quantised build for CI/bench — same ~196 MB file the recognizer
 # falls back to when ModelName == default AND OnnxFilePath == "".
 GLINER_ONNX_FILE ?= onnx/model_quint8.onnx
+# FP16 ONNX variant — same HF repo, same model, half-precision instead of
+# INT8. The `anonde-gliner-fp16` engine column benchmarks it side by side
+# with the INT8 production `anonde-gliner` so the quantization tradeoff
+# (INT8 depresses GLiNER's sigmoid logits ~0.18, costing recall on
+# multilingual legal/clinical text) stays tracked in every report.
+GLINER_FP16_ONNX_FILE ?= onnx/model_fp16.onnx
 GLINER_THRESHOLD ?= 0.40
 HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
@@ -130,7 +136,17 @@ ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORP
 # underperforms anonde-gliner (F1 0.473 vs 0.529 on GraSCCo). It is still
 # reachable as a one-off:
 #   make -C bench/corpora/<NAME> all ANONDE_BACKEND=hugot
-ENGINES := anonde-patterns anonde-gliner presidio gliner-py openai-pf
+#
+# anonde-gliner-fp16 IS a permanent rendered column: it is the same GLiNER
+# PII model as the production anonde-gliner but loaded from the FP16 ONNX
+# (onnx/model_fp16.onnx) instead of the INT8 onnx/model_quint8.onnx. It
+# exists so every report shows the INT8-vs-FP16 quantization tradeoff side
+# by side. Like openai-pf it is gated OUT of the per-push `corpus-%` path
+# (so bench.yml stays lean — patterns + gliner + gliner-py only): its cell
+# is a prerequisite of `matrix` / `matrix-*` via the gliner-fp16-cells
+# target below, NOT of `corpus-%`. Unlike openai-pf it is always run when
+# pulled in (no RUN_* gate) — it is a fast in-process Go cell.
+ENGINES := anonde-patterns anonde-gliner anonde-gliner-fp16 presidio gliner-py openai-pf
 
 # openai-pf gating + subsample size. RUN_OPENAI_PF=1 enables the cell;
 # OPENAI_PF_SAMPLE is how many docs (deterministic, sorted by id) the
@@ -201,12 +217,25 @@ $(addprefix data-,$(ALL_CORPORA)):
 # We expand this in $(eval ...) loops below; each generated target
 # depends on the corpus's data target and shells out to the right runner.
 
+# anonde engine name → analyzer backend. Both anonde-gliner (INT8 ONNX)
+# and anonde-gliner-fp16 (FP16 ONNX) run the `gliner` backend — they
+# differ only in which ONNX file the cell passes via --onnx-file (see
+# CELL_anonde + GLINER_ONNX_FILE_FOR).
 define ANONDE_BACKEND_FOR
 $(if $(filter anonde-patterns,$(1)),patterns-only,\
 $(if $(filter anonde-hugot,$(1)),hugot,\
-$(if $(filter anonde-gliner,$(1)),gliner,\
+$(if $(filter anonde-gliner anonde-gliner-fp16,$(1)),gliner,\
 )))
 endef
+
+# anonde-gliner* engine name → ONNX file. anonde-gliner uses the INT8
+# build (production); anonde-gliner-fp16 uses the FP16 build. Any other
+# engine falls back to ANONDE_ONNX_FILE (the generic override knob).
+# Kept on ONE line on purpose: a multi-line `define` with `\`-continued
+# `$(if ...)` collapses each continuation to a leading space, and this
+# value lands inside a quoted `--onnx-file "..."` arg where that space
+# is not stripped.
+GLINER_ONNX_FILE_FOR = $(if $(filter anonde-gliner,$(1)),$(GLINER_ONNX_FILE),$(if $(filter anonde-gliner-fp16,$(1)),$(GLINER_FP16_ONNX_FILE),$(ANONDE_ONNX_FILE)))
 
 # Corpus → language code. Defaults to `de` when a corpus is in none of the
 # explicit partitions. en/es/fr/it are matched against their partitions;
@@ -260,17 +289,17 @@ define CELL_anonde
 $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	@echo "[matrix] $(1) x $(2)"
 	cd $(ROOT) && go run \
-	  $(if $(filter $(2),anonde-hugot anonde-gliner),-tags hugot,) \
+	  $(if $(filter $(2),anonde-hugot anonde-gliner anonde-gliner-fp16),-tags hugot,) \
 	  ./bench/runners/anonde.go \
 	    --in  bench/corpora/$(1)/data/corpus.jsonl \
 	    --out bench/corpora/$(1)/data/anonde_$(2).jsonl \
 	    --backend $(call ANONDE_BACKEND_FOR,$(2)) \
 	    --language $(call LANG_FOR_CORPUS,$(1)) \
 	    --ner-score-floor $(NER_SCORE_FLOOR) \
-	    --model "$(if $(filter $(2),anonde-gliner),$(GLINER_MODEL),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
-	    --onnx-file "$(if $(filter $(2),anonde-gliner),$(GLINER_ONNX_FILE),$(ANONDE_ONNX_FILE))" \
-	    --gliner-threshold $(if $(filter $(2),anonde-gliner),$(GLINER_THRESHOLD),0) \
-	    $(if $(filter $(2),anonde-gliner),--ort-library "$(ORT_LIB)",) \
+	    --model "$(if $(filter $(2),anonde-gliner anonde-gliner-fp16),$(GLINER_MODEL),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
+	    --onnx-file "$(call GLINER_ONNX_FILE_FOR,$(2))" \
+	    --gliner-threshold $(if $(filter $(2),anonde-gliner anonde-gliner-fp16),$(GLINER_THRESHOLD),0) \
+	    $(if $(filter $(2),anonde-gliner anonde-gliner-fp16),--ort-library "$(ORT_LIB)",) \
 	    $(call FOLD_FOR_CORPUS,$(1))
 endef
 
@@ -369,19 +398,23 @@ endef
 # isn't installed locally the cell is reported as missing rather than
 # crashing the build.
 $(foreach c,$(ALL_CORPORA),\
-  $(foreach e,anonde-patterns anonde-gliner,\
+  $(foreach e,anonde-patterns anonde-gliner anonde-gliner-fp16,\
     $(eval $(call CELL_anonde,$(c),$(e))))\
   $(eval $(call CELL_gliner_py,$(c)))\
   $(eval $(call CELL_presidio,$(c)))\
   $(eval $(call CELL_openai_pf,$(c))))
 
 # Per-corpus convenience target — runs the four always-on engines for one
-# corpus. openai-pf is deliberately NOT a prerequisite here: this is the
-# target the per-push bench (bench.yml) calls via `corpus-openmed` etc.,
-# and openai-pf at ~80 s/doc would blow the PR budget. The openai-pf cell
-# is pulled in only by `matrix` / `matrix-*` (see openai-pf-cells below).
-# Presidio runs on every language (en + de + es spaCy models); if a given
-# dev box lacks the matching model the cell warn-and-skips.
+# corpus. openai-pf AND anonde-gliner-fp16 are deliberately NOT
+# prerequisites here: this is the target the per-push bench (bench.yml)
+# calls via `corpus-openmed` etc., and the per-push bench stays lean
+# (anonde-patterns + anonde-gliner + gliner-py + presidio). openai-pf at
+# ~80 s/doc would blow the PR budget; anonde-gliner-fp16 is a permanent
+# matrix column but not part of the per-push regression catcher. Both are
+# pulled in only by `matrix` / `matrix-*` (see openai-pf-cells and
+# gliner-fp16-cells below). Presidio runs on every language (en + de + es
+# spaCy models); if a given dev box lacks the matching model the cell
+# warn-and-skips.
 $(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
     $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
     $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
@@ -395,22 +428,38 @@ $(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
 .PHONY: openai-pf-cells $(addprefix openai-pf-,$(ALL_CORPORA))
 openai-pf-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ALL_CORPORA)))
 
+# anonde-gliner-fp16 cells, separated out the same way as openai-pf-cells:
+# only the full-matrix targets (`matrix` / `matrix-*`) depend on them, so
+# the per-push `corpus-%` path / bench.yml never build the FP16 cell. The
+# FP16 cell is a fast in-process Go run (no RUN_* gate needed) — keeping
+# it off `corpus-%` is purely to keep the per-push bench scope unchanged.
+.PHONY: gliner-fp16-cells $(addprefix gliner-fp16-,$(ALL_CORPORA))
+gliner-fp16-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp16.jsonl,$(ALL_CORPORA)))
+
+# Per-corpus anonde-gliner-fp16 convenience target — `make
+# gliner-fp16-openmed`. Used by bench-full.yml so each matrix cell builds
+# only its own corpus's FP16 cell without overriding ALL_CORPORA.
+$(addprefix gliner-fp16-,$(ALL_CORPORA)): gliner-fp16-%: \
+    $(CORPORA_DIR)/%/data/anonde_anonde-gliner-fp16.jsonl
+
 # Per-corpus openai-pf convenience target — `make openai-pf-openmed
 # RUN_OPENAI_PF=1`. Used by bench-full.yml so each matrix cell runs only
 # its own corpus's openai-pf cell without overriding ALL_CORPORA.
 $(addprefix openai-pf-,$(ALL_CORPORA)): openai-pf-%: \
     $(CORPORA_DIR)/%/data/anonde_openai-pf.jsonl
 
-# Materialise the full matrix (four always-on engines + openai-pf), then
-# render the combined report. Run openai-pf with the gate on:
+# Materialise the full matrix (four always-on engines + anonde-gliner-fp16
+# + openai-pf), then render the combined report. Run openai-pf with the
+# gate on:
 #   make matrix RUN_OPENAI_PF=1
-matrix: $(addprefix corpus-,$(ALL_CORPORA)) openai-pf-cells render
+matrix: $(addprefix corpus-,$(ALL_CORPORA)) gliner-fp16-cells openai-pf-cells render
 
 # Per-language subset matrices. Each depends on its corpora's always-on
 # cells plus the openai-pf cells (self-gated on RUN_OPENAI_PF). FR / IT
 # mirror ES exactly — Phase 1 populated FR_CORPORA / IT_CORPORA with the
 # ai4privacy French / Italian slices.
 matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp16.jsonl,$(DE_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(DE_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -421,6 +470,7 @@ matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp16.jsonl,$(EN_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(EN_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -431,6 +481,7 @@ matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp16.jsonl,$(ES_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ES_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -441,6 +492,7 @@ matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp16.jsonl,$(FR_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(FR_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -451,6 +503,7 @@ matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-it: $(addprefix corpus-,$(IT_CORPORA)) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp16.jsonl,$(IT_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(IT_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
