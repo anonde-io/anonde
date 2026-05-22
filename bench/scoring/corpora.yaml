@@ -1,0 +1,132 @@
+# bench/scoring/corpora.yaml — corpus → (domain, language) metadata.
+#
+# Phase 5 of the multilingual bench expansion. The matrix now spans
+# ~30 corpora across 5 languages and 6 domains; the flat REPORT_MATRIX.md
+# (one long list of per-corpus cards) no longer reads well. This file
+# gives render_matrix.py the (domain, language) of every corpus so the
+# report can be grouped by domain, then language within each domain.
+#
+# `language` here is the SAME classification the top-level bench/Makefile
+# encodes in its DE/EN/ES/FR/IT corpus partitions (and the
+# LANG_FOR_CORPUS macro). It is duplicated here — rather than re-parsed
+# from the Makefile — so the renderer is self-contained: a reader of the
+# report, or a CI render step, needs only this YAML + the label map, not
+# a Makefile parse.
+#
+# `domain` is the new axis. Taxonomy (6 domains):
+#
+#   clinical      medical / clinical de-identification corpora —
+#                 discharge letters, case reports, ED triage notes.
+#   legal         legal / administrative text — court & public-admin
+#                 documents (MAPA) and the synthetic German legal corpus.
+#   finance       retail-finance documents — invoices, bank statements,
+#                 KYC/onboarding, transaction confirmations.
+#   logs          enterprise log excerpts — auth / error / access / audit.
+#   general_pii   broad structured-PII corpora not tied to one vertical
+#                 (the ai4privacy pii-masking family).
+#   news_ner      academic newswire / social NER corpora — CoNLL-2003,
+#                 GermEval-14, WNUT-17, WikiAnn. Not PHI-shaped; they
+#                 probe portable PERSON/LOCATION/ORG recall.
+#   adversarial   out-of-distribution / perturbation probes.
+#
+# Adding a corpus: add one entry below. A corpus ABSENT from this file
+# is NOT an error — render_matrix.py groups it under domain
+# `uncategorized` / language `unknown` and prints a stderr warning, so a
+# new corpus shows up in the report immediately (just ungrouped) and the
+# warning is the nudge to classify it here.
+
+corpora:
+  # ---- clinical -----------------------------------------------------
+  openmed:             { domain: clinical,    language: de }   # GraSCCo PHI
+  pmc_de:              { domain: clinical,    language: de }   # PubMed Central DE (precision-probe)
+  wiki_de:             { domain: clinical,    language: de }   # Wikipedia DE medical (precision-probe)
+  synth_clinical:      { domain: clinical,    language: de }   # synthetic DE clinical (regression anchor)
+  synth_clinical_en:   { domain: clinical,    language: en }
+  synth_clinical_fr:   { domain: clinical,    language: fr }
+  synth_clinical_it:   { domain: clinical,    language: it }
+  pharmaconer_es:      { domain: clinical,    language: es }   # PharmaCoNER (chemical/drug — precision-probe)
+  meddocan_es:         { domain: clinical,    language: es }   # MEDDOCAN real-gold ES clinical de-id
+  # ggponc_de is DUA-gated and OMITTED from the bench/Makefile matrix
+  # partitions — it is run manually via `make -C bench/corpora/ggponc_de`.
+  # Listed here so a manual render still groups it correctly instead of
+  # falling through to 'uncategorized'.
+  ggponc_de:           { domain: clinical,    language: de }   # GGPONC (DUA-gated; manual run only)
+
+  # ---- legal --------------------------------------------------------
+  legal_de:            { domain: legal,       language: de }   # synthetic DE legal
+  mapa_en:             { domain: legal,       language: en }   # MAPA legal/administrative
+  mapa_de:             { domain: legal,       language: de }
+  mapa_es:             { domain: legal,       language: es }
+  mapa_fr:             { domain: legal,       language: fr }
+  mapa_it:             { domain: legal,       language: it }
+
+  # ---- finance ------------------------------------------------------
+  finance_de:          { domain: finance,     language: de }   # synthetic DE retail finance
+  synth_finance_en:    { domain: finance,     language: en }
+  synth_finance_de:    { domain: finance,     language: de }
+  synth_finance_es:    { domain: finance,     language: es }
+  synth_finance_fr:    { domain: finance,     language: fr }
+  synth_finance_it:    { domain: finance,     language: it }
+
+  # ---- logs ---------------------------------------------------------
+  # synth_logs is English-classified (English log scaffolding, PII
+  # sampled across EN/DE/ES/FR/IT) — see its README.
+  synth_logs:          { domain: logs,        language: en }
+
+  # ---- general_pii --------------------------------------------------
+  ai4privacy_en:       { domain: general_pii, language: en }   # ai4privacy/pii-masking-300k
+  ai4privacy_de:       { domain: general_pii, language: de }
+  ai4privacy_es:       { domain: general_pii, language: es }
+  ai4privacy_fr:       { domain: general_pii, language: fr }
+  ai4privacy_it:       { domain: general_pii, language: it }
+
+  # ---- news_ner -----------------------------------------------------
+  conll2003_en:        { domain: news_ner,    language: en }   # CoNLL-2003 EN newswire
+  conll2003_de:        { domain: news_ner,    language: de }   # CoNLL-2003 DE (LDC-gated; loader exits 2)
+  wnut_17:             { domain: news_ner,    language: en }   # WNUT-17 emerging-entity (social)
+  germeval_14:         { domain: news_ner,    language: de }   # GermEval-14
+  wikiann_de:          { domain: news_ner,    language: de }   # WikiAnn DE
+
+  # ---- adversarial --------------------------------------------------
+  adversarial_de:      { domain: adversarial, language: de }   # OOD perturbation probe over synth_clinical
+
+# Display order for the report's domain sections. Domains not listed
+# here (including the synthetic `uncategorized` fallback) are appended
+# afterwards in alphabetical order. Leads with the PHI-bearing verticals
+# (clinical / legal / finance) since those are the load-bearing
+# proof-points; news_ner + adversarial are diagnostic and come last.
+domain_order:
+  - clinical
+  - legal
+  - finance
+  - logs
+  - general_pii
+  - news_ner
+  - adversarial
+
+# Display order for languages within a domain section.
+language_order:
+  - en
+  - de
+  - es
+  - fr
+  - it
+
+# Human-readable names for the section headers.
+domain_labels:
+  clinical:      Clinical / medical de-identification
+  legal:         Legal / administrative
+  finance:       Retail finance
+  logs:          Enterprise logs
+  general_pii:   General structured PII
+  news_ner:      Academic NER (newswire / social)
+  adversarial:   Adversarial / out-of-distribution
+  uncategorized: Uncategorized (not in corpora.yaml)
+
+language_labels:
+  en: English
+  de: German
+  es: Spanish
+  fr: French
+  it: Italian
+  unknown: Unknown language

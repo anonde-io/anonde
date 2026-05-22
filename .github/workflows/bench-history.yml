@@ -133,6 +133,10 @@ jobs:
           make -C bench corpus-openmed PYTHON=python3
           make -C bench corpus-synth_clinical PYTHON=python3
 
+      # Same renderer + subset as bench.yml. render_matrix.py groups by
+      # domain → language via bench/scoring/corpora.yaml (resolved by
+      # default, beside the script); openmed + synth_clinical are both
+      # clinical / German so the snapshot has a single domain section.
       - name: Render REPORT_MATRIX
         run: |
           python bench/scoring/render_matrix.py \

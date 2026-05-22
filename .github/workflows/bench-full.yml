@@ -23,9 +23,11 @@ name: bench-full
 #   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
 #   * Manual workflow_dispatch.
 #
-# Wall-clock target: under 40 min for the slowest cell (typically
-# ai4privacy_en), so the whole matrix completes in ~40 min wall-clock
-# regardless of total CPU-time.
+# Wall-clock: cells run in parallel (one runner per corpus), so the
+# whole matrix completes in roughly the time of the slowest cell. The
+# openai-pf engine is the long pole — at ~80 s/doc on a 40-doc subsample
+# its cell runs ~53 min, which is why bench-cell's timeout is 75 min.
+# Cells without openai-pf finish far sooner.
 #
 # Corpora skipped from the CI matrix:
 #   * pmc_de / wiki_de — no gold spans (precision-probe only); F1 +
@@ -41,9 +43,15 @@ name: bench-full
 # rather than reddening the matrix (fail-fast: false, tolerant renderer).
 #
 # Cost: each cell ~5-30 min × 30 cells × 4 runs/month ≈ 3000 min/month.
-# (29 = 11 original + 4 ai4privacy de/fr/it/es splits (Phase 1) + 5 MAPA
-# en/de/es/fr/it legal splits (Phase 2) + 5 synth_finance en/de/es/fr/it
-# + 1 synth_logs (Phase 3) + 3 synth_clinical en/fr/it (Phase 4).)
+# The 30 cells break down as:
+#   11  Phase 0 baseline — openmed, synth_clinical, finance_de, legal_de,
+#       wikiann_de, germeval_14, adversarial_de, ai4privacy_en,
+#       conll2003_en, wnut_17, pharmaconer_es
+#    4  ai4privacy de/fr/it/es splits           (Phase 1)
+#    5  MAPA en/de/es/fr/it legal splits        (Phase 2)
+#    5  synth_finance en/de/es/fr/it            (Phase 3)
+#    1  synth_logs                              (Phase 3)
+#    4  synth_clinical en/fr/it + meddocan_es   (Phase 4)
 # Free-tier limit for public repos is unlimited; for private repos the
 # 2000 min/month free quota covers this.
 
@@ -336,7 +344,13 @@ jobs:
           ls -1 bench/corpora/*/data/*.jsonl 2>/dev/null | sed 's/^/  /' || \
             echo "  (none — every cell produced no output)"
 
-      - name: Render REPORT_MATRIX
+      # `make render` invokes bench/scoring/render_matrix.py, which groups
+      # the report by domain → language. The (domain, language) of each
+      # corpus comes from bench/scoring/corpora.yaml; the renderer resolves
+      # that file by default (it sits beside the script), so no extra flag
+      # is needed here. A corpus missing from corpora.yaml still renders —
+      # under an 'uncategorized' group, with a stderr warning.
+      - name: Render REPORT_MATRIX (grouped by domain × language)
         run: |
           make -C bench render PYTHON=python3
 
@@ -417,6 +431,9 @@ jobs:
             bench/corpora/*/data/anonde_*.jsonl
           retention-days: 90
 
+      # Render the combined report into the run's job summary. The report
+      # itself is grouped by domain → language (see render_matrix.py); the
+      # lines below just give the run's provenance + corpus inventory.
       - name: Headline → job summary
         if: always()
         run: |
@@ -424,8 +441,10 @@ jobs:
             echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines: anonde-patterns, anonde-gliner, gliner-py, presidio, openai-pf (subsampled — ${OPENAI_PF_SAMPLE:-40} docs/corpus)_"
-            echo "_Corpora in matrix: 30 — incl. ai4privacy en/de/fr/it/es cross-language general-PII splits + MAPA en/de/es/fr/it legal splits + synth_finance en/de/es/fr/it + synth_logs (Phase 3) + synth_clinical en/fr/it + meddocan_es (Phase 4) (pmc_de, wiki_de, conll2003_de, ggponc_de excluded — precision-probe / gated)_"
+            echo "_Engines (5): anonde-patterns, anonde-gliner, gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
+            echo "_Corpora in matrix: 30, across 6 domains × 5 languages._"
+            echo "_New since Phase 0: ai4privacy de/fr/it/es (Phase 1) · MAPA en/de/es/fr/it legal (Phase 2) · synth_finance en/de/es/fr/it + synth_logs (Phase 3) · synth_clinical en/fr/it + meddocan_es (Phase 4)._"
+            echo "_Excluded from the matrix: pmc_de / wiki_de (precision-probe, no gold), conll2003_de (loader-gated), ggponc_de (DUA registration)._"
             echo ""
             if [ -f bench/REPORT_MATRIX.md ]; then
               cat bench/REPORT_MATRIX.md

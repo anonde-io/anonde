@@ -9,23 +9,31 @@ Cells are discovered on disk under:
 
 For each (corpus, engine) pair we compute precision / recall / F1 in the
 three views compare.py uses (strict, partial, type-agnostic), plus
-leak-rate and latency. Then we emit a single simplified REPORT_MATRIX.md
-focused on the load-bearing tables:
+leak-rate and latency.
+
+Phase 5 of the multilingual bench expansion: the matrix now spans ~30
+corpora across 5 languages and 6 domains, so the report is GROUPED BY
+domain, then by language within each domain (it used to be a single
+flat per-corpus list). The (domain, language) of each corpus comes from
+`corpora.yaml` (loaded via --corpora-meta); a corpus absent from that
+file degrades gracefully into an `uncategorized` / `unknown` group with
+a stderr warning — it is never an error.
+
+The emitted REPORT_MATRIX.md is focused on the load-bearing tables:
 
   * TL;DR headline
   * Engine profiles (tier framing for anonde-patterns / anonde-gliner)
-  * Per-corpus verdict cards (leak severity flags)
-  * Leak rate grid (production metric)
-  * Severity-weighted leak rate (procurement metric)
-  * Latency p50 / p95 (operational metric)
-  * Strict F1 — overall micro-F1 only (per-entity breakdown in CSV)
+  * Domain × language coverage map (which cells exist)
+  * Per (domain × language): leak-rate grid + per-corpus verdict cards
+    + severity-weighted leak + latency + strict F1
   * Cost reference (self-hosted vs managed)
   * Caveats — training-data overlap
   * Glossary
 
-The CSV writes one row per (corpus, engine, entity, view) so downstream
-analysis can pivot — including the per-entity-type strict-F1 breakdown
-that used to live in the report.
+The CSV writes one row per (corpus, engine, entity, view) — now with
+leading `domain` / `language` columns so downstream analysis can pivot
+on the same axes the report groups by. The per-entity-type strict-F1
+breakdown that used to live in the report stays in the CSV.
 """
 
 from __future__ import annotations
@@ -69,6 +77,88 @@ def _load_label_map(path: Path) -> dict:
         raise
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+# ---- corpus metadata (domain / language) -------------------------------
+# Fallback group for any corpus not listed in corpora.yaml. Kept as
+# module constants so the warning text and the grouping logic agree.
+UNCATEGORIZED_DOMAIN = "uncategorized"
+UNKNOWN_LANGUAGE = "unknown"
+
+
+def _load_corpora_meta(path: Path) -> dict:
+    """Load corpora.yaml → {corpora, domain_order, language_order,
+    domain_labels, language_labels}.
+
+    Missing file is tolerated (not every invocation passes one): the
+    renderer then puts every corpus under the uncategorized group. A
+    present-but-malformed file still raises — that is a real bug.
+    """
+    try:
+        import yaml
+    except ImportError:
+        print("PyYAML required: pip install pyyaml", file=sys.stderr)
+        raise
+    if not path.exists():
+        print(f"warn: corpora metadata {path} not found — every corpus "
+              f"will render under '{UNCATEGORIZED_DOMAIN}'", file=sys.stderr)
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _corpus_meta(corpus: str, meta: dict) -> tuple[str, str]:
+    """Return (domain, language) for a corpus, degrading gracefully.
+
+    A corpus absent from corpora.yaml (or an entry missing either key)
+    falls back to UNCATEGORIZED_DOMAIN / UNKNOWN_LANGUAGE. The caller
+    collects every such corpus and emits ONE consolidated warning.
+    """
+    entry = (meta.get("corpora") or {}).get(corpus) or {}
+    domain = entry.get("domain") or UNCATEGORIZED_DOMAIN
+    language = entry.get("language") or UNKNOWN_LANGUAGE
+    return domain, language
+
+
+def _group_corpora(corpora: list[str], meta: dict) -> tuple[list, list[str]]:
+    """Group the requested corpora into ordered (domain, language, [corpus])
+    buckets.
+
+    Returns (groups, unclassified) where:
+      * groups   — list of (domain, language, corpus_list) in display
+                   order: domains follow corpora.yaml `domain_order`
+                   (unlisted domains appended alphabetically), languages
+                   follow `language_order`, and corpora within a cell
+                   keep the order they were requested in.
+      * unclassified — corpora that fell back to the uncategorized group,
+                   for the caller's consolidated warning.
+    """
+    buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
+    unclassified: list[str] = []
+    for c in corpora:
+        domain, language = _corpus_meta(c, meta)
+        if domain == UNCATEGORIZED_DOMAIN or language == UNKNOWN_LANGUAGE:
+            unclassified.append(c)
+        buckets[(domain, language)].append(c)
+
+    domain_order = list(meta.get("domain_order") or [])
+    language_order = list(meta.get("language_order") or [])
+
+    def _domain_key(d: str) -> tuple:
+        # Listed domains sort by their index; unlisted (incl.
+        # uncategorized) sort after, alphabetically.
+        return (domain_order.index(d), "") if d in domain_order else (
+            len(domain_order), d)
+
+    def _lang_key(lang: str) -> tuple:
+        return (language_order.index(lang), "") if lang in language_order else (
+            len(language_order), lang)
+
+    groups: list[tuple[str, str, list[str]]] = []
+    for (domain, language) in sorted(
+            buckets, key=lambda dl: (_domain_key(dl[0]), _lang_key(dl[1]))):
+        groups.append((domain, language, buckets[(domain, language)]))
+    return groups, unclassified
 
 
 def _normalize(label: str, mapping: dict, canonical: set[str]) -> str | None:
@@ -314,24 +404,191 @@ def _fmt_leak_bar(rate: float) -> str:
     return "💀"  # essentially blind (>60% leak)
 
 
-def _render(rows, label_map, corpora, engines):
-    """rows: dict[(corpus, engine)] = evaluate-result-or-None.
+def _leak_grid(out: list[str], rows: dict, corpora: list[str],
+               engines: list[str]) -> None:
+    """Append a raw leak-rate grid (one row per corpus) to `out`. Used
+    once per (domain × language) section — `corpora` is the section's
+    corpus list, not the global one.
+    """
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
+    for c in corpora:
+        scorable_cell = next((rows[(c, e)] for e in engines
+                              if (c, e) in rows and rows[(c, e)]["total_gold"] > 0), None)
+        if scorable_cell is None:
+            out.append(f"| `{c}` |" + " – |" * len(engines))
+            continue
+        cells = [f"| `{c}` |"]
+        best_rate = float("inf")
+        rates: list[float | None] = []
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None or cell["total_gold"] == 0:
+                rates.append(None)
+            else:
+                r = cell["leaked"] / cell["total_gold"]
+                rates.append(r)
+                best_rate = min(best_rate, r)
+        for r in rates:
+            if r is None:
+                cells.append("– |")
+                continue
+            txt = f"{r:.1%}"
+            if abs(r - best_rate) < 1e-9:
+                txt = f"**{txt}** 🥇"
+            cells.append(f"{txt} |")
+        out.append(" ".join(cells))
+    out.append("")
 
-    Simplified layout (per-entity strict-F1 breakdown lives in
-    results_matrix.csv, not in this report):
+
+def _weighted_leak_grid(out: list[str], rows: dict, corpora: list[str],
+                        engines: list[str]) -> None:
+    """Append a severity-weighted leak-rate grid for one section."""
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
+    for c in corpora:
+        scorable_cell = next((rows[(c, e)] for e in engines
+                              if (c, e) in rows and rows[(c, e)]["total_gold_weighted"] > 0), None)
+        if scorable_cell is None:
+            out.append(f"| `{c}` |" + " – |" * len(engines))
+            continue
+        cells = [f"| `{c}` |"]
+        best_rate = float("inf")
+        rates: list[float | None] = []
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None or cell["total_gold_weighted"] == 0:
+                rates.append(None)
+            else:
+                r = cell["leaked_weighted"] / cell["total_gold_weighted"]
+                rates.append(r)
+                best_rate = min(best_rate, r)
+        for r in rates:
+            if r is None:
+                cells.append("– |")
+                continue
+            txt = f"{r:.1%}"
+            if abs(r - best_rate) < 1e-9:
+                txt = f"**{txt}** 🥇"
+            cells.append(f"{txt} |")
+        out.append(" ".join(cells))
+    out.append("")
+
+
+def _latency_grid(out: list[str], rows: dict, corpora: list[str],
+                  engines: list[str]) -> None:
+    """Append a p50 / p95 per-document latency grid for one section."""
+    out.append("| Corpus | " + " | ".join(f"`{e}` p50 / p95" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
+    for c in corpora:
+        cells = [f"| `{c}` |"]
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None or not cell["durations"]:
+                cells.append("– |")
+                continue
+            lat = _latency(cell["durations"])
+            cells.append(f"{_fmt_latency(lat['p50'])} / {_fmt_latency(lat['p95'])} |")
+        out.append(" ".join(cells))
+    out.append("")
+
+
+def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
+                    engines: list[str]) -> None:
+    """Append a strict (CoNLL exact span+type) micro-F1 grid for one section."""
+    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
+    out.append("|---|" + "---:|" * len(engines))
+    for c in corpora:
+        cells = [f"| `{c}` |"]
+        f1s: list[float | None] = []
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None:
+                f1s.append(None)
+                continue
+            f1s.append(_f1_overall(cell["strict"]))
+        best = max((f for f in f1s if f is not None), default=None)
+        for f in f1s:
+            if f is None:
+                cells.append("– |")
+                continue
+            txt = f"{f:.3f}"
+            if best is not None and abs(f - best) < 1e-9 and best > 0:
+                txt = f"**{txt}** 🥇"
+            cells.append(f"{txt} |")
+        out.append(" ".join(cells))
+    out.append("")
+
+
+def _verdict_cards(out: list[str], per_corpus_verdict: list[dict],
+                   section_corpora: set[str]) -> None:
+    """Append the per-corpus leak-severity verdict cards for the corpora
+    in `section_corpora` (the verdict dicts are computed globally; we
+    just filter to this section).
+    """
+    for v in per_corpus_verdict:
+        c = v["corpus"]
+        if c not in section_corpora:
+            continue
+        if not v["scorable"]:
+            out.append(f"- ⚪ **`{c}`** — no gold annotations; precision-probe only "
+                       f"(see `bench/corpora/{c}/README.md`).")
+            continue
+        gliner_row = v["gliner"]
+        baseline_row = v["best_baseline"]
+        if gliner_row is None:
+            out.append(f"- ❔ **`{c}`** — `anonde-gliner` did not run on this corpus.")
+            continue
+        gliner_rate = gliner_row[1]
+        flag = _fmt_leak_bar(gliner_rate)
+        line = f"- {flag} **`{c}`** — `anonde-gliner` leaks **{gliner_rate:.1%}**"
+        if baseline_row is not None:
+            be, br, _ = baseline_row
+            delta_pp = (br - gliner_rate) * 100
+            arrow = "↓" if delta_pp > 0 else "↑"
+            line += (
+                f" vs the best baseline `{be}` at **{br:.1%}** "
+                f"({arrow} **{abs(delta_pp):.1f}pp** {'better' if delta_pp > 0 else 'worse'})."
+            )
+        else:
+            line += " — no comparable baseline ran on this corpus."
+        out.append(line)
+    out.append("")
+
+
+def _render(rows, label_map, corpora, engines, meta=None):
+    """rows: dict[(corpus, engine)] = evaluate-result-or-None.
+    meta: parsed corpora.yaml (domain/language metadata); may be {}.
+
+    Layout (per-entity strict-F1 breakdown lives in results_matrix.csv):
 
       1. TL;DR (one-paragraph headline conclusion)
       2. Engine profiles (tier framing)
-      3. Per-corpus verdict (leak severity flags)
-      4. Leak rate (production metric)
-      5. Severity-weighted leak rate (procurement metric)
-      6. Latency p50 / p95 (operational metric)
-      7. Strict F1 — overall micro-F1 only (per-entity in CSV)
-      8. Cost reference (managed-service anchor; self-hosted framing)
-      9. Caveats — training-data overlap
-     10. Glossary
+      3. Domain × language coverage map
+      4. Per (domain × language) section, in display order:
+           - per-corpus verdict cards (leak severity flags)
+           - leak-rate grid (production metric)
+           - partial-coverage footnote (if any cell was subsampled)
+           - severity-weighted leak rate (procurement metric)
+           - latency p50 / p95 (operational metric)
+           - strict F1 — overall micro-F1 only (per-entity in CSV)
+      5. Cost reference (managed-service anchor; self-hosted framing)
+      6. Caveats — training-data overlap
+      7. Glossary
     """
+    meta = meta or {}
     out: list[str] = []
+
+    # ---- group corpora by (domain, language) ------------------------
+    groups, _unclassified = _group_corpora(corpora, meta)
+    domain_labels = meta.get("domain_labels") or {}
+    language_labels = meta.get("language_labels") or {}
+
+    def _domain_name(d: str) -> str:
+        return domain_labels.get(d, d.replace("_", " ").title())
+
+    def _language_name(lang: str) -> str:
+        return language_labels.get(lang, lang.upper())
 
     # ---- compute headline stats first so the TL;DR can quote them ------
     # For each corpus, find (winner_engine, winner_leak_rate, gap_vs_best_baseline).
@@ -426,213 +683,115 @@ def _render(rows, label_map, corpora, engines):
                "parity check vs anonde-gliner's INT8 ONNX path |")
     out.append("")
 
-    # ---- per-corpus verdict cards -----------------------------------
-    out.append("## Per-corpus verdict\n")
-    out.append("`🟢/🟡/🟠/🔴/💀` flags the production engine's leak severity on each corpus. "
-               "`⚪` corpora produced text but no span-level gold, so F1/leak are not measurable.\n")
-    for v in per_corpus_verdict:
-        c = v["corpus"]
-        if not v["scorable"]:
-            out.append(f"- ⚪ **`{c}`** — no gold annotations; precision-probe only "
-                       f"(see `bench/corpora/{c}/README.md`).")
-            continue
-        gliner_row = v["gliner"]
-        baseline_row = v["best_baseline"]
-        if gliner_row is None:
-            out.append(f"- ❔ **`{c}`** — `anonde-gliner` did not run on this corpus.")
-            continue
-        gliner_rate = gliner_row[1]
-        flag = _fmt_leak_bar(gliner_rate)
-        line = f"- {flag} **`{c}`** — `anonde-gliner` leaks **{gliner_rate:.1%}**"
-        if baseline_row is not None:
-            be, br, _ = baseline_row
-            delta_pp = (br - gliner_rate) * 100
-            arrow = "↓" if delta_pp > 0 else "↑"
-            line += (
-                f" vs the best baseline `{be}` at **{br:.1%}** "
-                f"({arrow} **{abs(delta_pp):.1f}pp** {'better' if delta_pp > 0 else 'worse'})."
-            )
-        else:
-            line += " — no comparable baseline ran on this corpus."
-        out.append(line)
-    out.append("")
-
-    # ---- Leak rate grid (the load-bearing metric) -------------------
-    out.append("## Leak rate · lower is better\n")
-    out.append("A gold PHI span is *leaked* when **no** predicted span overlaps it. "
-               "This is the metric that matters for redaction: 'did we miss a name?'\n")
-    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
-    out.append("|---|" + "---:|" * len(engines))
-    for c in corpora:
-        scorable_cell = next((rows[(c, e)] for e in engines
-                              if (c, e) in rows and rows[(c, e)]["total_gold"] > 0), None)
-        if scorable_cell is None:
-            out.append(f"| `{c}` |" + " – |" * len(engines))
-            continue
-        cells = [f"| `{c}` |"]
-        # Find the best (lowest) leak for highlighting.
-        best_rate = float("inf")
-        rates = []
-        for e in engines:
-            cell = rows.get((c, e))
-            if cell is None or cell["total_gold"] == 0:
-                rates.append(None)
-            else:
-                r = cell["leaked"] / cell["total_gold"]
-                rates.append(r)
-                best_rate = min(best_rate, r)
-        for r in rates:
-            if r is None:
-                cells.append("– |")
-                continue
-            txt = f"{r:.1%}"
-            if abs(r - best_rate) < 1e-9:
-                txt = f"**{txt}** 🥇"
-            cells.append(f"{txt} |")
+    # ---- Domain × language coverage map -----------------------------
+    # The matrix now spans ~30 corpora across 6 domains and 5 languages.
+    # This grid is the table of contents: each cell lists the corpora
+    # that exist for that (domain, language), so a missing cell ("·") is
+    # explicit rather than silently absent. The detailed metric sections
+    # below follow this same domain → language grouping.
+    domains_seen: list[str] = []
+    for d, _lang, _cs in groups:
+        if d not in domains_seen:
+            domains_seen.append(d)
+    langs_seen: list[str] = []
+    for _d, lang, _cs in groups:
+        if lang not in langs_seen:
+            langs_seen.append(lang)
+    cell_corpora: dict[tuple[str, str], list[str]] = {
+        (d, lang): cs for d, lang, cs in groups
+    }
+    out.append("## Coverage map · domain × language\n")
+    out.append("Which corpora populate each `(domain, language)` cell. `·` = no "
+               "corpus wired for that combination yet. The metric sections below "
+               "are grouped on these same two axes.\n")
+    out.append("| Domain | " + " | ".join(_language_name(lang) for lang in langs_seen) + " |")
+    out.append("|---|" + "---|" * len(langs_seen))
+    for d in domains_seen:
+        cells = [f"| **{_domain_name(d)}** |"]
+        for lang in langs_seen:
+            cs = cell_corpora.get((d, lang))
+            cells.append((", ".join(f"`{c}`" for c in cs) if cs else "·") + " |")
         out.append(" ".join(cells))
     out.append("")
 
-    # ---- Partial-coverage footnote ----------------------------------
-    # An engine that was run on a deterministic subsample (e.g. openai-pf
-    # via --max-docs) only scored some of the corpus's gold docs. Every
-    # metric above is computed over just those docs — call that out so a
-    # reader does not compare a 40-doc sample against a 512-doc full run
-    # as if they were the same population.
-    coverage_notes: list[str] = []
-    for c in corpora:
-        for e in engines:
-            cell = rows.get((c, e))
-            if cell is None:
-                continue
-            scored = cell.get("scored_docs", 0)
-            total = cell.get("corpus_docs", 0)
-            if total > 0 and scored < total:
-                coverage_notes.append(
-                    f"- `{e}` on `{c}`: scored on **{scored}/{total} docs** "
-                    f"(deterministic subsample — metrics above are over those "
-                    f"{scored} docs only, not the full corpus)."
-                )
-    if coverage_notes:
-        out.append("> **Partial coverage** — some engines were benchmarked "
-                   "on a fixed subsample, not every gold doc:\n>")
-        for note in coverage_notes:
-            out.append("> " + note)
-        out.append("")
-
-    # ---- Severity-weighted leak rate --------------------------------
-    # A leaked SSN is not equivalent to a leaked city. Weighted leak
-    # multiplies each gold span by its severity weight (label_map.yaml
-    # `severity:` section) before computing the ratio. Direct
-    # identifiers (PERSON, PHONE, EMAIL, ADDRESS, dates) weigh 5;
-    # high-stakes IDs (SSN/MRN/IBAN) weigh 10; quasi-identifiers
-    # (LOCATION, ORG, PROFESSION, generic URL/AGE) weigh 1.
-    #
-    # Why this column exists: compliance teams already think in tiers,
-    # and the raw leak rate flattens that signal. A bench that scores
-    # tools only on raw recall rewards "catch everything that's easy"
-    # over "catch the things that matter." This row weights toward the
-    # things that matter.
+    # ---- per (domain × language) metric sections --------------------
+    # Each section carries the same card content the old flat report
+    # had — verdict cards, raw + severity-weighted leak rate, latency,
+    # strict F1 — but scoped to one (domain, language) so the report is
+    # navigable. Leak rate leads every section: it is the load-bearing
+    # metric for a redactor.
     sev = label_map.get("severity") or {}
-    if sev:
-        out.append("## Severity-weighted leak rate · lower is better\n")
-        out.append("Raw leak rate weights every span equally; severity-weighted leak "
-                   "multiplies each by its compliance impact tier — direct identifiers "
-                   "(PERSON, EMAIL, PHONE, ADDRESS, DOB) = 5, high-stakes IDs "
-                   "(SSN/MRN/IBAN) = 10, quasi-identifiers (LOCATION, ORG, PROFESSION) "
-                   "= 1. Defaults in `label_map.yaml::severity` — override per use case.\n")
-        out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
-        out.append("|---|" + "---:|" * len(engines))
-        for c in corpora:
-            scorable_cell = next((rows[(c, e)] for e in engines
-                                  if (c, e) in rows and rows[(c, e)]["total_gold_weighted"] > 0), None)
-            if scorable_cell is None:
-                out.append(f"| `{c}` |" + " – |" * len(engines))
-                continue
-            cells = [f"| `{c}` |"]
-            best_rate = float("inf")
-            rates: list[float | None] = []
+    section_corpora_global: set[str] = set()
+    for domain, language, section_corpora in groups:
+        section_corpora_global.update(section_corpora)
+        heading = f"{_domain_name(domain)} · {_language_name(language)}"
+        out.append(f"## {heading}\n")
+        out.append(f"Corpora in this group: "
+                   + ", ".join(f"`{c}`" for c in section_corpora) + ".\n")
+
+        # Verdict cards — production-engine leak severity flags.
+        out.append("### Verdict\n")
+        out.append("`🟢/🟡/🟠/🔴/💀` flags `anonde-gliner`'s leak severity. "
+                   "`⚪` corpora produced text but no span-level gold (F1/leak "
+                   "not measurable); `❔` = `anonde-gliner` did not run.\n")
+        _verdict_cards(out, per_corpus_verdict, set(section_corpora))
+
+        # Leak rate — the load-bearing metric, leads the section.
+        out.append("### Leak rate · lower is better\n")
+        out.append("A gold PHI span is *leaked* when **no** predicted span overlaps it "
+                   "— 'did we miss a name?'\n")
+        _leak_grid(out, rows, section_corpora, engines)
+
+        # Partial-coverage footnote, scoped to this section's cells.
+        # An engine run on a deterministic subsample (openai-pf via
+        # --max-docs) only scored some gold docs; its metrics here are
+        # over those docs only — flag it so a 40-doc sample is not read
+        # as a full-corpus number.
+        coverage_notes: list[str] = []
+        for c in section_corpora:
             for e in engines:
                 cell = rows.get((c, e))
-                if cell is None or cell["total_gold_weighted"] == 0:
-                    rates.append(None)
-                else:
-                    r = cell["leaked_weighted"] / cell["total_gold_weighted"]
-                    rates.append(r)
-                    best_rate = min(best_rate, r)
-            for r in rates:
-                if r is None:
-                    cells.append("– |")
+                if cell is None:
                     continue
-                txt = f"{r:.1%}"
-                if abs(r - best_rate) < 1e-9:
-                    txt = f"**{txt}** 🥇"
-                cells.append(f"{txt} |")
-            out.append(" ".join(cells))
-        out.append("")
+                scored = cell.get("scored_docs", 0)
+                total = cell.get("corpus_docs", 0)
+                if total > 0 and scored < total:
+                    coverage_notes.append(
+                        f"- `{e}` on `{c}`: scored on **{scored}/{total} docs** "
+                        f"(deterministic subsample — metrics above are over those "
+                        f"{scored} docs only, not the full corpus)."
+                    )
+        if coverage_notes:
+            out.append("> **Partial coverage** — some engines were benchmarked "
+                       "on a fixed subsample, not every gold doc:\n>")
+            for note in coverage_notes:
+                out.append("> " + note)
+            out.append("")
 
-    # ---- Latency grid (mixed units, p50 + p95) ----------------------
-    # Two columns per engine — p50 for steady-state UX, p95 for the
-    # tail. Mean + p99 are in results_matrix.csv. We bias to p95 over
-    # p99 because at sample sizes 100-1000 (typical bench corpus), p99
-    # is dominated by a handful of outliers and unstable run-to-run.
-    out.append("## Latency · per-document p50 / p95\n")
-    out.append("Wall-clock per `engine.Analyze(doc)` call. p50 = steady-state, p95 = tail. "
-               "Mean + p99 in `results_matrix.csv`. For redaction services, p95 is the SLO "
-               "knob — the latency a customer waiting on `/v1/ingest` actually feels.\n")
-    out.append("| Corpus | " + " | ".join(f"`{e}` p50 / p95" for e in engines) + " |")
-    out.append("|---|" + "---:|" * len(engines))
-    for c in corpora:
-        cells = [f"| `{c}` |"]
-        for e in engines:
-            cell = rows.get((c, e))
-            if cell is None or not cell["durations"]:
-                cells.append("– |")
-                continue
-            lat = _latency(cell["durations"])
-            cells.append(
-                f"{_fmt_latency(lat['p50'])} / {_fmt_latency(lat['p95'])} |"
-            )
-        out.append(" ".join(cells))
-    out.append("")
+        # Severity-weighted leak rate — procurement metric.
+        if sev:
+            out.append("### Severity-weighted leak rate · lower is better\n")
+            out.append("Each leaked span weighted by compliance tier — direct "
+                       "identifiers (PERSON, EMAIL, PHONE, ADDRESS, DOB) = 5, "
+                       "high-stakes IDs (SSN/MRN/IBAN) = 10, quasi-identifiers "
+                       "(LOCATION, ORG, PROFESSION) = 1. Defaults in "
+                       "`label_map.yaml::severity`.\n")
+            _weighted_leak_grid(out, rows, section_corpora, engines)
 
-    # ---- Strict F1 (CoNLL-style: exact span + type) ----------------
-    # This is the metric every NER paper publishes. We surface it here
-    # (not just CSV) so you can cite a number that compares apples-to-
-    # apples with academic baselines. Note: strict will be uniformly
-    # lower than leak-derived metrics — exact-byte alignment is harder
-    # than overlap, and many recognizers emit "Elena Rossi" vs gold's
-    # ["Elena"] + ["Rossi"]. For a redactor that's not a bug.
-    out.append("## Strict F1 · CoNLL exact span + type\n")
-    out.append("Predicted span counts only if `(start, end, type)` matches gold exactly after "
-               "label normalisation. The number every NER paper publishes; useful for direct "
-               "comparison to academic baselines, less useful as a production metric "
-               "(strict scoring penalises broader-or-narrower spans that still redact the PHI).\n")
-    out.append("> Per-entity-type strict F1 (PERSON, LOCATION, ORG, DATE, AGE, PHONE, "
-               "EMAIL, URL, ID, ADDRESS, PROFESSION, …) is in `results_matrix.csv` "
-               "— that's the right place to triage which entity types each engine struggles with.\n")
-    out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
-    out.append("|---|" + "---:|" * len(engines))
-    for c in corpora:
-        cells = [f"| `{c}` |"]
-        # Compute strict F1 per engine first so we can highlight the winner.
-        f1s: list[float | None] = []
-        for e in engines:
-            cell = rows.get((c, e))
-            if cell is None:
-                f1s.append(None)
-                continue
-            f1s.append(_f1_overall(cell["strict"]))
-        best = max((f for f in f1s if f is not None), default=None)
-        for f in f1s:
-            if f is None:
-                cells.append("– |")
-                continue
-            txt = f"{f:.3f}"
-            if best is not None and abs(f - best) < 1e-9 and best > 0:
-                txt = f"**{txt}** 🥇"
-            cells.append(f"{txt} |")
-        out.append(" ".join(cells))
-    out.append("")
+        # Latency — operational metric.
+        out.append("### Latency · per-document p50 / p95\n")
+        out.append("Wall-clock per `engine.Analyze(doc)` call. p50 = steady-state, "
+                   "p95 = tail (the SLO knob). Mean + p99 in `results_matrix.csv`.\n")
+        _latency_grid(out, rows, section_corpora, engines)
+
+        # Strict F1 — academic-comparison metric.
+        out.append("### Strict F1 · CoNLL exact span + type\n")
+        out.append("Predicted span counts only on an exact `(start, end, type)` match "
+                   "after label normalisation. Useful for academic comparison, less so "
+                   "as a production metric (it penalises broader-or-narrower spans that "
+                   "still redact the PHI). Per-entity-type breakdown in "
+                   "`results_matrix.csv`.\n")
+        _strict_f1_grid(out, rows, section_corpora, engines)
 
     # ---- Cost reference ---------------------------------------------
     # All engines we benchmark are self-hostable, so per-cell cost columns
@@ -722,14 +881,19 @@ listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
   metric, since a span that's 11 chars vs gold's 5 still successfully tokenises (the
   cleartext is gone either way) — but every leaked span is one we'd have shipped in prod.
   Per-entity-type strict F1 and partial / type-agnostic F1 views are in `results_matrix.csv`.
-- **`–` cells** = engine not run on that corpus. Reasons: language mismatch (Presidio is EN
-  only), or corpus requires manual DUA registration (`ggponc_de`).
+- **`–` cells** = engine not run on that corpus. Reasons: the matching spaCy / model assets
+  weren't installed on the runner, or the corpus requires manual DUA registration (`ggponc_de`)
+  or is loader-gated (`conll2003_de`).
 - **Partial coverage** = an engine scored on a deterministic subsample, not the full corpus.
   `openai-pf` is ~80 s/doc on CPU, so it is benchmarked on the first N docs (sorted by id) —
-  see the "Partial coverage" footnote after the leak-rate grid. Its metrics are computed over
-  only the docs it scored, so they are comparable in *kind* but not on the same doc population.
+  see the per-section "Partial coverage" footnote under the leak-rate grid. Its metrics are
+  computed over only the docs it scored, so they are comparable in *kind* but not on the same
+  doc population.
 - **⚪ corpora** = precision-probe only (no span-level gold annotations). Useful for "does the
   engine over-redact ordinary prose?" checks, not for F1 / leak rate.
+- **Domain / language grouping** = the report is organised by domain (clinical, legal, finance,
+  logs, general PII, academic NER, adversarial) and language within each. The mapping lives in
+  `bench/scoring/corpora.yaml`; a corpus missing from it renders under an `uncategorized` group.
 """)
 
     out.append(f"---\n*Generated by `bench/scoring/render_matrix.py` over "
@@ -746,6 +910,15 @@ def main() -> int:
     ap.add_argument("--engine", action="append", required=True,
                     help="repeat: --engine anonde-gliner ...")
     ap.add_argument("--label-map", required=True)
+    # corpora.yaml supplies each corpus's (domain, language) so the report
+    # can group by domain → language. Optional with a default: when the
+    # flag is omitted it resolves to corpora.yaml next to this script, so
+    # the existing Makefile / CI invocations keep working unchanged. A
+    # missing file is tolerated (every corpus falls back to uncategorized).
+    ap.add_argument("--corpora-meta",
+                    default=str(Path(__file__).parent / "corpora.yaml"),
+                    help="corpus domain/language metadata "
+                         "(default: corpora.yaml beside this script)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--csv", default="")
     args = ap.parse_args()
@@ -765,6 +938,15 @@ def main() -> int:
     gmap = label_map.get("gold", {}) or {}
     severity = label_map.get("severity", {}) or {}
 
+    meta = _load_corpora_meta(Path(args.corpora_meta))
+    # One consolidated warning for every corpus missing from corpora.yaml,
+    # rather than crashing — they still render, just under 'uncategorized'.
+    _groups, unclassified = _group_corpora(corpora, meta)
+    if unclassified:
+        print(f"warn: {len(unclassified)} corpus/corpora not in "
+              f"{args.corpora_meta} — rendering under '{UNCATEGORIZED_DOMAIN}': "
+              f"{', '.join(unclassified)}", file=sys.stderr)
+
     root = Path(args.corpora_root)
     rows: dict[tuple[str, str], dict] = {}
     for c in corpora:
@@ -781,19 +963,27 @@ def main() -> int:
             preds = _load_jsonl(pred_path)
             rows[(c, e)] = _evaluate(gold, preds, gmap, pmap, canon_set, severity)
 
-    Path(args.out).write_text(_render(rows, label_map, corpora, engines), encoding="utf-8")
+    Path(args.out).write_text(
+        _render(rows, label_map, corpora, engines, meta), encoding="utf-8")
     print(f"wrote {args.out}", file=sys.stderr)
 
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
-            w.writerow(["corpus", "engine", "view", "entity", "tp", "fp", "fn",
+            # `domain` / `language` lead the row so downstream analysis can
+            # pivot on the same axes the report groups by. The remaining
+            # columns are unchanged — existing consumers that index by name
+            # keep working; index-by-position consumers must shift by two.
+            w.writerow(["domain", "language", "corpus", "engine", "view",
+                        "entity", "tp", "fp", "fn",
                         "precision", "recall", "f1"])
             for (c, e), res in rows.items():
+                domain, language = _corpus_meta(c, meta)
                 for view in ("strict", "partial", "type_only"):
                     for t, (tp, fp, fn) in res[view].items():
                         p, r, f = _prf(tp, fp, fn)
-                        w.writerow([c, e, view, t, tp, fp, fn,
+                        w.writerow([domain, language, c, e, view, t,
+                                    tp, fp, fn,
                                     f"{p:.4f}", f"{r:.4f}", f"{f:.4f}"])
         print(f"wrote {args.csv}", file=sys.stderr)
     return 0
