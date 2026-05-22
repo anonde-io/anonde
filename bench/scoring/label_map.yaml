@@ -71,6 +71,17 @@ gold:
   # false negative. Falls precision-probe-only.
   OTHER: ~
 
+  # Secret tokens — API keys, JWTs, bearer/session tokens, OAuth client
+  # secrets. Emitted by the synth_logs corpus (Phase 3 of the
+  # multilingual bench expansion). anonde ships NO secret recognizer
+  # yet, so `~` drops these gold spans from scoring: that gives a fair
+  # PII-only leak number today rather than penalising anonde for a
+  # capability it was never built to have. The spans STAY in the gold
+  # JSONL — when a secret recognizer lands, a future phase scores them
+  # by changing this one line (e.g. `SECRET: ID` or adding SECRET to the
+  # `canonical:` list above). See bench/corpora/synth_logs/README.md.
+  SECRET: ~
+
   # GraSCCo PHI labels (GeMTeX DeID layer 'kind' values).
   NAME_PATIENT: PERSON
   NAME_DOCTOR: PERSON
