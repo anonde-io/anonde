@@ -26,6 +26,12 @@ var (
 	deAgeJahreAltRE = regexp.MustCompile(
 		`\b(?:0?[1-9]|[1-9]\d|1[01]\d)\s+(?:[Jj]ahre|[Jj]\.)\s+alt\b`,
 	)
+	// X Jahre followed by comma / closing paren / semicolon — the common
+	// surface for ages in patient-vorstellung headers like
+	// "(86 Jahre, geb. 02.08.1954)" where there's no "alt" keyword.
+	deAgeJahreClauseRE = regexp.MustCompile(
+		`\b(?:0?[1-9]|[1-9]\d|1[01]\d)\s+[Jj]ahre[,;)\s]`,
+	)
 	deAgeParenRE = regexp.MustCompile(
 		`\b(?:Patient|Patientin|Pat\.)\s*\((?:0?[1-9]|[1-9]\d|1[01]\d)\)`,
 	)
@@ -49,6 +55,7 @@ func NewDEAgeRecognizer() *PatternRecognizer {
 			{re: deAgeJaehrigeRE, score: 0.90},
 			{re: deAgeJaehrigRE, score: 0.85},
 			{re: deAgeJahreAltRE, score: 0.85},
+			{re: deAgeJahreClauseRE, score: 0.78},
 			{re: deAgeParenRE, score: 0.85},
 			{re: deAgeImAlterRE, score: 0.90},
 			{re: deAgeLebensalterRE, score: 0.80},

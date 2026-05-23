@@ -40,12 +40,35 @@ var (
 			`(?:\s+\d{1,4}\s?[a-z]?)?\b`,
 	)
 
+	// Compound -weg / -ring / -steig / -gang form, MANDATORY house-number
+	// suffix. These suffixes are individually deliberately excluded from
+	// the no-number compound form (they collide with clinical words —
+	// Vorgang, Anstieg, Vorweg, Ohrring). Requiring a trailing 1-4 digit
+	// number with optional letter ("12 a") restores recall on legal /
+	// finance / general-prose addresses while keeping clinical text safe.
+	deStreetCompoundNumberedRE = regexp.MustCompile(
+		`\b[A-ZÄÖÜ][a-zäöüß-]{2,30}` +
+			`(?:weg|ring|steig|gang|chaussee|promenade)` +
+			`\s+\d{1,4}\s?[a-z]?\b`,
+	)
+
 	// Separated, two-token: "Friesische Str. 21", "Rote Allee 5", etc.
 	deStreetSeparatedRE = regexp.MustCompile(
 		`\b[A-ZÄÖÜ][a-zäöüß-]{2,30}\s+` +
 			`(?:Stra(?:ß|ss)e|Str\.|Weg|Platz|Pfad|Gasse|Kamp|Allee|Ring|Promenade|Steig|Gang|Chaussee)` +
 			`\.?` +
 			`(?:\s+\d{1,4}\s?[a-z]?)?\b`,
+	)
+
+	// Preposition form: "Am Rathaus 138", "Im Tal 12", "An der Mühle 3".
+	// Common German address shape where the street name is a place rather
+	// than a -straße compound. MANDATORY trailing house number — without
+	// it the clinical-text collisions are constant ("Am Bauch", "Im Bett",
+	// "An der Niere"). With a 1-4-digit number the FP risk drops sharply.
+	deStreetPrepNumberedRE = regexp.MustCompile(
+		`\b(?:Am|Im|An\s+der|An\s+den)\s+[A-ZÄÖÜ][a-zäöüß-]{2,30}` +
+			`(?:\s+[A-ZÄÖÜ][a-zäöüß-]+){0,2}` +
+			`\s+\d{1,4}\s?[a-z]?\b`,
 	)
 )
 
@@ -59,7 +82,9 @@ func NewDEStreetRecognizer() *PatternRecognizer {
 		[]string{"de"},
 		[]namedPattern{
 			{re: deStreetCompoundRE, score: 0.80},
+			{re: deStreetCompoundNumberedRE, score: 0.82},
 			{re: deStreetSeparatedRE, score: 0.85},
+			{re: deStreetPrepNumberedRE, score: 0.80},
 		},
 		[]string{
 			"anschrift", "adresse", "wohnhaft", "wohnort",

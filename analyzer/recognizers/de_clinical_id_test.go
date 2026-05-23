@@ -40,6 +40,19 @@ func TestDEClinicalIDRecognizer(t *testing.T) {
 		// Histology codes.
 		{"Histology slash", "Histologie (H25440/51): Kein", []string{"H25440/51"}},
 
+		// Banking / finance anchors.
+		{"Kundennummer dashed", "Kundennummer: KD-6556039\nIBAN:", []string{"KD-6556039"}},
+		{"Kunden-Nr", "Kunden-Nr.: 9988776655", []string{"9988776655"}},
+		{"Kontonummer", "Kontonummer: 100200300", []string{"100200300"}},
+		{"Kontoauszug Nr slash date", "Kontoauszug Nr. K46473874/26.12.2022", []string{"K46473874/26"}},
+		{"Customer EN", "Customer Number: ACC-552211", []string{"ACC-552211"}},
+		{"Rechnungs-Nr", "Rechnungs-Nr.: R-4477", []string{"R-4477"}},
+
+		// German court-case numbers (Aktenzeichen / Az / Geschäftszeichen).
+		{"Az Roman case num", "Az.: 10 Ls 296/22\nKlage", []string{"10 Ls 296/22"}},
+		{"Aktenzeichen", "Aktenzeichen: 25 VIII 24/22 vom", []string{"25 VIII 24/22"}},
+		{"Az with citation", "Beweis: Vorlage der Rechnung Nr. 4 VII 532/21 vom", []string{"4 VII 532/21"}},
+
 		// Must NOT match — short standalone numbers, lab values, dates.
 		{"date should not match", "vom 12.05.2023 bis 24.06.2023", nil},
 		{"lab value", "Leukozyten 8700", nil},

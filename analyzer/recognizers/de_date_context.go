@@ -31,6 +31,27 @@ var (
 	dePartialDateRE = regexp.MustCompile(
 		`\b(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.`,
 	)
+
+	// Obfuscated / typo-perturbed date — adversarial corpora insert one
+	// digit between month and year ("02.081.954" for "02.08.1954") or
+	// produce other malformed DD.MMM.YYY shapes. Day still 1-31; the
+	// month and year groups are loosened to {2,3} and {2,4} digits.
+	// FP risk on German thousands-separated numbers ("12.345.678") is
+	// real — that's why this is gated through the context window, never
+	// emitted unconditionally.
+	deObfuscatedDateRE = regexp.MustCompile(
+		`\b(?:0?[1-9]|[12]\d|3[01])\.\d{2,3}\.\d{2,4}\b`,
+	)
+
+	// Time of day HH:MM, plus the adversarial-obfuscated form HHH:M
+	// ("101:1" for "10:11", "185:7" for "18:57"). Hour 0-23 nominally
+	// but extended to 0-299 to absorb the digit-shift perturbations
+	// that adversarial_de produces. Context-gated — bare scores like
+	// "5:0" in sports text or "1:2" in ratios will not match (hour
+	// group needs at least 2 digits).
+	deTimeOfDayRE = regexp.MustCompile(
+		`\b\d{2,3}:\d{1,2}\b`,
+	)
 )
 
 // Trigger phrases scanned in a lower-cased window before each candidate.
@@ -39,17 +60,24 @@ var (
 // short words like "am" without surrounding spaces, since they would fire on
 // any word ending in "am".
 var deDateContextTriggers = []string{
-	"z.n.", "st.p.",                 // Zustand nach / Status post (surgical history)
+	"z.n.", "st.p.", // Zustand nach / Status post (surgical history)
 	"seit ", "vom ", "bis ", " ab ", // date-range prepositions
 	" am ",
 	"geb.", "geboren ", "jahrgang", "geburtsjahr",
 	"erstdiagnose", "ed ", "ed.",
-	"uicc", "ajcc",         // oncology staging classifications
+	"uicc", "ajcc", // oncology staging classifications
 	"stadium ",
 	"diagnose",
 	"behandelt ", "behandlung",
 	"aufnahme", "entlassung",
-	"(* ", "* ",            // German birth-marker asterisk: "* 1978"
+	"(* ", "* ", // German birth-marker asterisk: "* 1978"
+
+	// Adversarial / general-prose date and time signals. "Datum",
+	// "Uhrzeit", and "Zeit" anchor the obfuscated DD.MMM.YYY / HHH:M
+	// shapes the adversarial_de corpus produces. Lowercased here because
+	// the window match lowercases the text before substring lookup.
+	"datum", "uhrzeit", " zeit ", "zeitpunkt",
+	"kontaktnummer", "telefonkontakt",
 }
 
 const deDateContextWindow = 40 // chars before candidate scanned for triggers
@@ -127,6 +155,18 @@ func (r *DEDateContextRecognizer) Analyze(_ context.Context, text string, _ []st
 	}
 	for _, m := range dePartialDateRE.FindAllStringIndex(text, -1) {
 		tryEmit(m[0], m[1], 0.80)
+	}
+	// Obfuscated dates score lower than clean ones — the clean
+	// DD.MM.YYYY (from de_date_time's deDateNumericRE at 0.85) wins
+	// the conflict resolver when both fire on a real date.
+	for _, m := range deObfuscatedDateRE.FindAllStringIndex(text, -1) {
+		tryEmit(m[0], m[1], 0.70)
+	}
+	// Times of day. Same context-gating: only emit when a date/time
+	// trigger appears nearby. Score below dates so an unambiguous date
+	// always wins the conflict pass.
+	for _, m := range deTimeOfDayRE.FindAllStringIndex(text, -1) {
+		tryEmit(m[0], m[1], 0.65)
 	}
 	return out, nil
 }
