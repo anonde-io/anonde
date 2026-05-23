@@ -96,11 +96,18 @@ const (
 	// labels. The model emits broader-name spans (e.g. "Jane Doe") with
 	// noticeably lower confidence than the leading single-token name
 	// ("Jane"); at the global threshold (0.40) only the narrow span
-	// survives and the surname leaks to the LLM. 0.25 is the empirical
-	// floor that recovers all repro fixtures in TestGLiNER_PersonBreadth
-	// without introducing new false positives — going lower (0.10) starts
-	// flagging "it", "Contact", "." as PERSON in the same probes.
-	defaultPersonThreshold = 0.25
+	// survives and the surname leaks to the LLM.
+	//
+	// Retuned 2026-05-23 from 0.25 → 0.22 as part of Lever 0 (see
+	// ZERO_LEAK_ROADMAP.md and the prompt-encoding bug comment in init()).
+	// The tokenizer fix shifts the entire sigmoid distribution upward by
+	// ~0.15–0.20, but the surname-coverage gap on the
+	// "Contact John Doe about it." fixture lands the wider PERSON span at
+	// score 0.221 — just under the previous 0.25 floor. Lowering to 0.22
+	// recovers it; other PersonBreadth fixtures keep passing. 0.22 is
+	// still well above the noise floor (sub-0.15 candidates are "it",
+	// "Contact", ".") so false positives do not return.
+	defaultPersonThreshold = 0.22
 
 	// defaultOrgThreshold is the per-class threshold for ORGANIZATION
 	// labels. The 2026-05-15 bench-full matrix shows the same fingerprint
@@ -414,18 +421,57 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		//   * doing it inside r.mu-guarded runChunk is fine, but the
 		//     init() once-only flow is the right home for constant-data
 		//     computation.
-		// Strip-specials defensively in case the tokenizer's post-
-		// processor template injects [CLS]/[SEP] even when
-		// AddSpecialTokens=false is set (observed on some HF setups).
+		//
+		// PROMPT-ENCODING BUG (Lever 0, see ZERO_LEAK_ROADMAP.md):
+		// Encoding the full prompt as one string via tok.Encode(r.promptString)
+		// triggers a spurious `▁` metaspace token between every <<ENT>> /
+		// <<SEP>> added-token and the following label under
+		// gomlx/hftokenizer. Python's reference tokenizer (HF tokenizers
+		// Rust) does NOT emit that extra `▁` because added tokens swallow
+		// the following whitespace. Result: ~37–44% prompt-token inflation
+		// vs the Python sidecar, which depresses every sigmoid score by
+		// ~0.15–0.20 (the model sees a "noisier" prompt than it was trained
+		// on). Probe on the 80-doc mapa_it slice: 44.95% → 22.94% leak
+		// after this fix.
+		//
+		// Fix: encode each piece independently. tok.Encode("<<ENT>>") for
+		// the added-token alone (no leading space — added tokens are atomic
+		// units in the vocab), then tok.Encode(" "+label) which forces SPM
+		// to emit exactly one `▁` on the first subword of the label —
+		// matching Python's `is_split_into_words=True` behaviour. The final
+		// <<SEP>> token is appended the same way. Each per-piece result is
+		// stripped of any boundary CLS/SEP IDs the tokenizer's post-
+		// processor injects (defence-in-depth — AddSpecialTokens=false
+		// usually suffices, but some HF setups still emit them).
+		//
+		// Do NOT undo this without re-running the mapa_it probe; the
+		// previously-attributed "INT8 vs FP32" leak regression was the
+		// same metaspace bug, misdiagnosed.
 		if err := tok.With(api.EncodeOptions{AddSpecialTokens: false, IncludeSpans: false}); err != nil {
 			r.initErr = fmt.Errorf("gliner: configure tokenizer for prompt encode: %w", err)
 			return
 		}
-		r.promptIDs = stripBoundarySpecials(
-			tok.Encode(r.promptString),
-			gliner_clsID(tok),
-			gliner_sepID(tok),
-		)
+		clsID := gliner_clsID(tok)
+		sepID := gliner_sepID(tok)
+		encodePiece := func(s string) []int {
+			return stripBoundarySpecials(tok.Encode(s), clsID, sepID)
+		}
+		var promptIDs []int
+		for _, lbl := range r.labels {
+			// <<ENT>> as an atomic added token. No leading space — the
+			// HF tokenizer vocab treats <<ENT>> as a literal vocab entry;
+			// prefixing a space here would force SPM to emit a stray `▁`
+			// on it (the original bug).
+			promptIDs = append(promptIDs, encodePiece(gliner_entToken)...)
+			// " "+label forces SPM to emit ONE leading `▁` on the first
+			// subword of the label — exactly what HF's
+			// `is_split_into_words=True` path produces in Python.
+			promptIDs = append(promptIDs, encodePiece(" "+lbl)...)
+		}
+		// Final <<SEP>> separates the label prompt from the text. Same
+		// rule: atomic added token, no leading space.
+		promptIDs = append(promptIDs, encodePiece(gliner_sepToken)...)
+		r.promptIDs = promptIDs
 		// Restore the runtime-default options. runChunk re-sets
 		// AddSpecialTokens=false locally under r.mu and restores on
 		// defer; this baseline matches what init() previously left.
