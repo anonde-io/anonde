@@ -37,6 +37,8 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewMedicalLicenseRecognizer(),
 		recognizers.NewENAnomalyRecognizer(),
 		recognizers.NewENOrganizationRecognizer(),
+		recognizers.NewENStreetRecognizer(),
+		recognizers.NewENPersonRecognizer(),
 
 		// Cross-language structured PII
 		recognizers.NewSocialHandleRecognizer(),
