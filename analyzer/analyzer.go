@@ -4,10 +4,83 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode"
 )
+
+// ansiEscapeRE matches ANSI SGR / CSI sequences that real-world log
+// pipelines insert into text for coloring and cursor control. Examples:
+//
+//	\x1b[31m   set foreground red
+//	\x1b[0m    reset
+//	\x1b[1;33m bold yellow
+//
+// We strip these in-place before dispatching recognizers so a PII span
+// like "26.03.2003" doesn't get split by an escape sequence into
+// fragments no pattern can match. After recognizers run, finding
+// offsets are translated back to the original text via an offset map.
+var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// stripANSI removes ANSI escape sequences from text and returns the
+// cleaned text plus an offset map. The map is indexed by position in
+// the cleaned text and yields the corresponding position in the
+// original. For a stripped-text span [s, e) the original-text span is
+// [offsetMap[s], offsetMap[e-1]+1).
+//
+// On text with no ANSI codes the result is a no-op: cleaned == text
+// and offsetMap is identity. Cost on clean input is one regex scan
+// per call.
+func stripANSI(text string) (cleaned string, offsetMap []int) {
+	matches := ansiEscapeRE.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text, nil
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	offsetMap = make([]int, 0, len(text))
+	prev := 0
+	for _, m := range matches {
+		// Append text segment before the escape.
+		segment := text[prev:m[0]]
+		b.WriteString(segment)
+		for i := prev; i < m[0]; i++ {
+			offsetMap = append(offsetMap, i)
+		}
+		prev = m[1]
+	}
+	// Append the tail after the last escape.
+	if prev < len(text) {
+		b.WriteString(text[prev:])
+		for i := prev; i < len(text); i++ {
+			offsetMap = append(offsetMap, i)
+		}
+	}
+	return b.String(), offsetMap
+}
+
+// translateFindings remaps Start/End offsets from cleaned-text space
+// to original-text space using the offset map produced by stripANSI.
+// A nil offsetMap is a no-op — used when stripANSI found no escapes.
+func translateFindings(findings []RecognizerResult, offsetMap []int) []RecognizerResult {
+	if offsetMap == nil {
+		return findings
+	}
+	out := findings[:0]
+	for _, r := range findings {
+		if r.Start < 0 || r.End <= r.Start || r.End > len(offsetMap) {
+			// Out-of-range finding (shouldn't happen but is defensive).
+			continue
+		}
+		origStart := offsetMap[r.Start]
+		origEnd := offsetMap[r.End-1] + 1
+		r.Start = origStart
+		r.End = origEnd
+		out = append(out, r)
+	}
+	return out
+}
 
 // AnalysisConfig configures a single Analyze call.
 type AnalysisConfig struct {
@@ -134,6 +207,16 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	if cfg.Language == "" {
 		cfg.Language = "en"
 	}
+
+	// Strip ANSI escape sequences before recognizers run, so log-style
+	// inputs with embedded color codes are processed as plain text.
+	// findings emitted by recognizers reference positions in cleanText,
+	// translated back to the original at the end of the pipeline before
+	// returning to the caller. On plain text with no escapes this is a
+	// zero-cost no-op (offsetMap == nil).
+	originalText := text
+	cleanText, offsetMap := stripANSI(text)
+	text = cleanText
 
 	candidates := e.Registry.GetByLanguage(cfg.Language)
 
@@ -284,6 +367,14 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 			}
 		}
 	}
+
+	// 10. Translate findings from cleanText offsets back to the
+	// original input. No-op when stripANSI found no escape sequences
+	// (offsetMap == nil). Must be the last step so every downstream
+	// consumer (anonymizer, vault, audit log) sees positions that
+	// match the caller-supplied text exactly.
+	_ = originalText // retained for clarity; the caller owns the slice.
+	all = translateFindings(all, offsetMap)
 
 	return all, nil
 }

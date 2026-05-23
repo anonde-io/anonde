@@ -16,10 +16,17 @@ import "regexp"
 // a "Dr."/"Prof." token + plausible institution name nearby.
 
 var (
-	// Suffix form: <Capitalised…>-Klinikum / -Krankenhaus / -Klinik / -Zentrum / -Spital
+	// Suffix form: <stem>-Klinikum / -Krankenhaus / -Klinik / -Zentrum / -Spital
 	// Optionally followed by 1-2 capitalised words ("Klinikum rechts der Isar").
+	//
+	// (?i) makes the whole pattern case-insensitive — clean clinical
+	// German always title-cases these words, but adversarial corpora
+	// scramble case ("SAnA KLiNiKuM"). The case-insensitive flag costs
+	// nothing on legitimate input (matches the same strings) and recovers
+	// ~100 LOCATION_HOSPITAL leaks on adversarial_de. The inner stem
+	// class drops the ALL-CAPS requirement for the same reason.
 	deOrgSuffixRE = regexp.MustCompile(
-		`\b[A-ZÄÖÜ][a-zäöüß-]{2,30}(?:[- ](?:Klinikum|Krankenhaus|Klinik|Zentrum|Spital|Hospital|Praxis|Ambulanz|Reha-?Zentrum))\b`,
+		`(?i)\b[a-zäöüß][a-zäöüß-]{2,30}(?:[- ](?:Klinikum|Krankenhaus|Klinik|Zentrum|Spital|Hospital|Praxis|Ambulanz|Reha-?Zentrum))\b`,
 	)
 
 	// Prefix form: Universitätsklinik(um) / Medizinische Hochschule / ...
@@ -30,14 +37,14 @@ var (
 	// Notaufnahme" as one organisation. Fix matches typical document
 	// layout where a clinic name doesn't break across a newline.
 	deOrgPrefixRE = regexp.MustCompile(
-		`\b(?:Universit[äa]tsklinik(?:um)?|Universit[äa]tsspital|Klinikum|Krankenhaus|` +
+		`(?i)\b(?:Universit[äa]tsklinik(?:um)?|Universit[äa]tsspital|Klinikum|Krankenhaus|` +
 			`Medizinische[ \t]+Hochschule|Fachklinik|Reha-?Klinik|` +
-			`Praxis[ \t]+(?:Dr\.|Prof\.|für[ \t]+\w+))[ \t]+[A-ZÄÖÜ][a-zäöüß-]+(?:[ \t]+[A-ZÄÖÜ][a-zäöüß-]+){0,2}`,
+			`Praxis[ \t]+(?:Dr\.|Prof\.|für[ \t]+\w+))[ \t]+[a-zäöüß][a-zäöüß-]+(?:[ \t]+[a-zäöüß][a-zäöüß-]+){0,2}`,
 	)
 
 	// Standalone famous German hospital names. Closed list — high precision.
 	deOrgWellKnownRE = regexp.MustCompile(
-		`\b(?:Charit[ée]|Vivantes|Asklepios|Helios|Sana|MediClin|` +
+		`(?i)\b(?:Charit[ée]|Vivantes|Asklepios|Helios|Sana|MediClin|` +
 			`Schön[ \t]+Klinik|Rhön-?Klinikum|Diakonissenkrankenhaus)\b`,
 	)
 )

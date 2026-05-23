@@ -100,11 +100,16 @@ func makeSet(words ...string) map[string]struct{} {
 	return m
 }
 
-// Word matcher: pulls capitalised tokens (1–4 words), respecting hyphens
-// and German letters. We need word-boundary matches but Go regex's `\w`
-// is ASCII-only; build the matcher manually.
+// Word matcher: pulls letter tokens (1–4 words), respecting hyphens
+// and German letters. The class is case-insensitive on the inner chars
+// so case-scrambled adversarial input ("kReFeLd", "brAuNsChWeIg") still
+// surfaces a candidate that the case-insensitive lookup below catches.
+// A capitalised-first-letter requirement here would silently drop the
+// case-scrambled inputs and produce ~50 false-negative city leaks on
+// adversarial_de. Word-boundary on the outside still keeps mid-word
+// false matches out.
 var dePlaceCandidateRE = regexp.MustCompile(
-	`\b[A-ZÄÖÜ][a-zäöüß-]+(?:[ -][A-ZÄÖÜ][a-zäöüß-]+){0,3}\b`,
+	`\b[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß-]+(?:[ -][A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß-]+){0,3}\b`,
 )
 
 // DEPlaceRecognizer matches against the closed lists above.

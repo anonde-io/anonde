@@ -16,30 +16,34 @@ import "regexp"
 // many such numbers in clinical text (lab values, doses). Every pattern
 // here requires a German age-context cue inline.
 
+// (?i) makes the keyword head case-insensitive ("Jahre", "JAhRe",
+// "jahre" all match) — clean German always title-cases these but
+// adversarial corpora scramble case at the character level. The digit
+// span is naturally case-irrelevant.
 var (
 	deAgeJaehrigRE = regexp.MustCompile(
-		`\b(?:0?[1-9]|[1-9]\d|1[01]\d)[-\s]?[Jj][äaä]hrig(?:e[nrms]?)?\b`,
+		`(?i)\b(?:0?[1-9]|[1-9]\d|1[01]\d)[-\s]?j[äaä]hrig(?:e[nrms]?)?\b`,
 	)
 	deAgeJaehrigeRE = regexp.MustCompile(
-		`\b(?:0?[1-9]|[1-9]\d|1[01]\d)[-\s]?[Jj][äaä]hrige[nrms]?\b`,
+		`(?i)\b(?:0?[1-9]|[1-9]\d|1[01]\d)[-\s]?j[äaä]hrige[nrms]?\b`,
 	)
 	deAgeJahreAltRE = regexp.MustCompile(
-		`\b(?:0?[1-9]|[1-9]\d|1[01]\d)\s+(?:[Jj]ahre|[Jj]\.)\s+alt\b`,
+		`(?i)\b(?:0?[1-9]|[1-9]\d|1[01]\d)\s+(?:jahre|j\.)\s+alt\b`,
 	)
 	// X Jahre followed by comma / closing paren / semicolon — the common
 	// surface for ages in patient-vorstellung headers like
 	// "(86 Jahre, geb. 02.08.1954)" where there's no "alt" keyword.
 	deAgeJahreClauseRE = regexp.MustCompile(
-		`\b(?:0?[1-9]|[1-9]\d|1[01]\d)\s+[Jj]ahre[,;)\s]`,
+		`(?i)\b(?:0?[1-9]|[1-9]\d|1[01]\d)\s+jahre[,;)\s]`,
 	)
 	deAgeParenRE = regexp.MustCompile(
-		`\b(?:Patient|Patientin|Pat\.)\s*\((?:0?[1-9]|[1-9]\d|1[01]\d)\)`,
+		`(?i)\b(?:Patient|Patientin|Pat\.)\s*\((?:0?[1-9]|[1-9]\d|1[01]\d)\)`,
 	)
 	deAgeImAlterRE = regexp.MustCompile(
-		`\bim\s+Alter\s+von\s+(?:0?[1-9]|[1-9]\d|1[01]\d)\b`,
+		`(?i)\bim\s+Alter\s+von\s+(?:0?[1-9]|[1-9]\d|1[01]\d)\b`,
 	)
 	deAgeLebensalterRE = regexp.MustCompile(
-		`\b(?:Lebensalter|Alter)\s*[:.]?\s*(?:0?[1-9]|[1-9]\d|1[01]\d)\b`,
+		`(?i)\b(?:Lebensalter|Alter)\s*[:.]?\s*(?:0?[1-9]|[1-9]\d|1[01]\d)\b`,
 	)
 )
 
