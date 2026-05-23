@@ -98,9 +98,8 @@ const (
 	// ("Jane"); at the global threshold (0.40) only the narrow span
 	// survives and the surname leaks to the LLM.
 	//
-	// Retuned 2026-05-23 from 0.25 → 0.22 as part of Lever 0 (see
-	// ZERO_LEAK_ROADMAP.md and the prompt-encoding bug comment in init()).
-	// The tokenizer fix shifts the entire sigmoid distribution upward by
+	// Retuned 2026-05-23 from 0.25 → 0.22 alongside the prompt-encoding
+	// fix in init(). The tokenizer fix shifts the entire sigmoid distribution upward by
 	// ~0.15–0.20, but the surname-coverage gap on the
 	// "Contact John Doe about it." fixture lands the wider PERSON span at
 	// score 0.221 — just under the previous 0.25 floor. Lowering to 0.22
@@ -422,7 +421,7 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		//     init() once-only flow is the right home for constant-data
 		//     computation.
 		//
-		// PROMPT-ENCODING BUG (Lever 0, see ZERO_LEAK_ROADMAP.md):
+		// PROMPT-ENCODING BUG:
 		// Encoding the full prompt as one string via tok.Encode(r.promptString)
 		// triggers a spurious `▁` metaspace token between every <<ENT>> /
 		// <<SEP>> added-token and the following label under

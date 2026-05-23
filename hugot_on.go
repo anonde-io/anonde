@@ -64,3 +64,19 @@ func DefaultAnalyzerEngineWithGLiNERConfig(cfg recognizers.GLiNERConfig) *analyz
 	registry.Add(patternRecognizers()...)
 	return analyzer.NewAnalyzerEngine(registry)
 }
+
+// DefaultAnalyzerEngineWithGLiNEREnsemble wires a pre-built
+// EnsembleGLiNERRecognizer into the standard pattern-recognizer
+// registry. The ensemble itself is constructed by
+// recognizers.NewEnsembleGLiNERRecognizer / EnsembleFromEnv, so this
+// constructor is intentionally thin — the multi-model stacking logic
+// lives in the ensemble file, and this is only the analyzer-engine
+// glue.
+//
+// Real implementation only; hugot_off.go's stub log.Fatalfs.
+func DefaultAnalyzerEngineWithGLiNEREnsemble(ens *recognizers.EnsembleGLiNERRecognizer) *analyzer.AnalyzerEngine {
+	registry := analyzer.NewRecognizerRegistry()
+	registry.Add(ens)
+	registry.Add(patternRecognizers()...)
+	return analyzer.NewAnalyzerEngine(registry)
+}

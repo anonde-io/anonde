@@ -33,9 +33,13 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewUSBankRecognizer(),
 		recognizers.NewUSDriverLicenseRecognizer(),
 		recognizers.NewUSITINRecognizer(),
+		recognizers.NewUSZipRecognizer(),
 		recognizers.NewMedicalLicenseRecognizer(),
 		recognizers.NewENAnomalyRecognizer(),
 		recognizers.NewENOrganizationRecognizer(),
+
+		// Cross-language structured PII
+		recognizers.NewSocialHandleRecognizer(),
 
 		// United Kingdom
 		recognizers.NewUKNHSRecognizer(),
@@ -89,6 +93,8 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewDEPlaceRecognizer(),
 		recognizers.NewDEClinicalIDRecognizer(),
 		recognizers.NewDEOrganizationRecognizer(),
+		recognizers.NewDELegalFinanceOrgRecognizer(),
+		recognizers.NewBICRecognizer(),
 		recognizers.NewDEProfessionRecognizer(),
 		recognizers.NewDEAnomalyRecognizer(),
 	}

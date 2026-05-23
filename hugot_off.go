@@ -46,3 +46,14 @@ func DefaultAnalyzerEngineWithGLiNERConfig(_ recognizers.GLiNERConfig) *analyzer
 		"or use ANALYZER_BACKEND=patterns / ollama / hugot instead.")
 	return nil
 }
+
+// DefaultAnalyzerEngineWithGLiNEREnsemble is the fail-fast stub for the
+// GLiNER ensemble recognizer. Same rationale as
+// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// `-tags hugot`.
+func DefaultAnalyzerEngineWithGLiNEREnsemble(_ *recognizers.EnsembleGLiNERRecognizer) *analyzer.AnalyzerEngine {
+	log.Fatalf("gliner-ensemble backend not available: this binary was built without -tags hugot. " +
+		"Rebuild with `go build -tags hugot ./...` for the GLiNER ensemble variant, " +
+		"or unset ANONDE_NER_STACK to use the single-model path.")
+	return nil
+}

@@ -229,6 +229,19 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 				log.Printf("GLINER_THRESHOLD=%q ignored: %v", raw, err)
 			}
 		}
+		// Multi-model GLiNER stacking: if ANONDE_NER_STACK is set,
+		// build an ensemble across the listed model IDs instead of the
+		// single-model path. Unset → fall through to current behaviour
+		// with no change. EnsembleFromEnv returns (nil, nil) on unset
+		// and (nil, error) on a malformed value (e.g. ",,,") so a typo
+		// fails fast at boot rather than silently disabling NER.
+		if ens, ensErr := recognizers.EnsembleFromEnv(threshold, os.Getenv("ORT_SO_PATH")); ensErr != nil {
+			log.Fatalf("ANONDE_NER_STACK: %v", ensErr)
+		} else if ens != nil {
+			log.Printf("analyzer backend: gliner-ensemble (threshold=%.2f) — single-model GLINER_MODEL=%s ignored",
+				threshold, modelName)
+			return anonde.DefaultAnalyzerEngineWithGLiNEREnsemble(ens), "gliner-ensemble", os.Getenv("ANONDE_NER_STACK")
+		}
 		log.Printf("analyzer backend: gliner (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
 		return anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
