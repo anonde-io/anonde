@@ -19,20 +19,23 @@ flat per-corpus list). The (domain, language) of each corpus comes from
 file degrades gracefully into an `uncategorized` / `unknown` group with
 a stderr warning — it is never an error.
 
-The emitted REPORT_MATRIX.md LEADS with one scannable scorecard, then
-keeps the detailed grids below it as reference:
+The emitted REPORT_MATRIX.md LEADS with one *roll-ups-only* scorecard,
+then keeps the detailed grids below it as reference:
 
   * TL;DR headline
-  * Scorecard — one table: leak rate per engine for every populated
-    (domain × language) cell, anonde-anchored, with per-domain /
-    per-language / overall roll-ups and an anonde win/loss tally. This
-    is the table a human reads to answer "does anonde beat presidio on
-    German legal?" in five seconds.
-  * Engine profiles (tier framing for anonde-patterns / anonde-gliner)
+  * Scorecard — one compact table at most 13 rows: **Σ ALL** + one row
+    per domain (Σ across all languages in that domain) + one row per
+    language (Σ across all domains in that language). Anonde-anchored
+    on `anonde-gliner-fp32` (the production engine), with a win/loss
+    tally. This is the table a human reads to answer "does anonde beat
+    presidio overall?" in five seconds. Per-(domain × language) detail
+    moves into the Detailed breakdown below.
+  * Engine profiles (tier framing for anonde-patterns / anonde-gliner-fp32)
   * Domain × language coverage map (which cells exist)
-  * "# Detailed breakdown" — per (domain × language): leak-rate grid +
-    per-corpus verdict cards + severity-weighted leak + latency +
-    strict F1 (demoted below the scorecard, not deleted)
+  * "# Detailed breakdown" — leads with the dense per-(domain × language)
+    leak-rate grid (the rows demoted off the scorecard), then per
+    (domain × language) section with per-corpus verdict cards + leak
+    rate + severity-weighted leak + latency + strict F1.
   * Cost reference (self-hosted vs managed)
   * Caveats — training-data overlap
   * Glossary
@@ -528,25 +531,28 @@ def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
 
 
 # ---- headline scorecard ------------------------------------------------
-# The single table a human reads first. Rows = every populated
-# (domain × language) cell; columns = the engines; cell = leak rate %.
-# anonde-gliner is the production engine, so its column is the anchor:
-# every row tells you at a glance whether anonde wins or loses, and the
-# roll-up rows summarise per-domain / per-language without scanning.
+# The single roll-ups-only table a human reads first. Rows = Σ ALL +
+# per-domain Σ + per-language Σ (at most 13 rows total); columns = the
+# engines; cell = leak rate %. anonde-gliner-fp32 is the production
+# engine, so its column is the anchor: every row tells you at a glance
+# whether anonde wins or loses on that domain / language slice. The
+# per-(domain × language) detail rows live in the Detailed breakdown
+# below the scorecard.
 
 # The anonde column the scorecard anchors on (production engine). The
-# win/verdict logic stays keyed on this one engine: `anonde-gliner` is
-# what actually ships (INT8 ONNX), so "does anonde beat the field?" must
-# be answered for the production build, not the FP32 reference cell.
-SCORECARD_ANCHOR = "anonde-gliner"
+# win/verdict logic stays keyed on this one engine: `anonde-gliner-fp32`
+# is what actually ships (FP32 ONNX), so "does anonde beat the field?"
+# is answered for the production build. `anonde-gliner` (INT8) is kept
+# as a legacy reference column for regression tracking, not the anchor.
+SCORECARD_ANCHOR = "anonde-gliner-fp32"
 
 # Anonde engine columns pinned to the FRONT of the scorecard, in this
-# order, so the two GLiNER quantization variants render side by side.
-# `anonde-gliner` (INT8, production — the verdict anchor) leads;
-# `anonde-gliner-fp32` (FP32 ONNX, same model) sits immediately after it
-# so a reader sees the INT8-vs-FP32 quantization tradeoff at a glance.
-# Engines here that are absent from a given run are skipped silently.
-SCORECARD_FRONT = ["anonde-gliner", "anonde-gliner-fp32"]
+# order, so the three GLiNER variants render side by side: production
+# FP32 first (the verdict anchor), then INT8 (legacy / memory-constrained
+# deployments), then the LARGE FP32 variant (3-4x parameters, probing
+# whether scaling closes the remaining Romance-language cells). Engines
+# here that are absent from a given run are skipped silently.
+SCORECARD_FRONT = ["anonde-gliner-fp32", "anonde-gliner", "anonde-gliner-large"]
 
 
 def _is_rival(engine: str) -> bool:
@@ -554,9 +560,10 @@ def _is_rival(engine: str) -> bool:
 
     The verdict answers "does the production engine beat the competing
     field?" — so every `anonde-*` engine is excluded. In particular
-    `anonde-gliner-fp32` is the same GLiNER PII model as the production
-    `anonde-gliner`, just a different ONNX quantization: it is a tracked
-    reference column, not a competitor, and must not flip a ✅ to ❌.
+    `anonde-gliner` (INT8 legacy) and `anonde-gliner-large` are the same
+    GLiNER PII family as the production `anonde-gliner-fp32`, just a
+    different quantization or model size: they are tracked reference
+    columns, not competitors, and must not flip a ✅ to ❌.
     """
     return not engine.startswith("anonde")
 
@@ -615,59 +622,37 @@ def _anchor_verdict(anchor: float | None, others: list[float | None]) -> str:
 
 def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
                domain_name, language_name) -> None:
-    """Append the headline scorecard: one row per populated
-    (domain × language) cell, leak rate per engine, anonde-anchored.
+    """Append the headline scorecard — roll-ups only.
+
+    13 rows max: **Σ ALL** + one row per domain (Σ across all languages
+    in that domain) + one row per language (Σ across all domains in that
+    language). The per-(domain × language) detail rows that used to live
+    here move into the Detailed breakdown below. Anonde-anchored on the
+    production engine (`anonde-gliner-fp32`); a win/loss tally beneath
+    the table summarises the per-cell verdicts counted from the
+    underlying (domain × language) population.
 
     `groups` is the output of `_group_corpora` — (domain, language,
-    corpus_list) in display order. Roll-up rows (per domain, per
-    language, overall) are pooled leak rates so a reader sees the
-    aggregate without scanning every row.
+    corpus_list) in display order; we read it to collect the per-domain
+    and per-language corpus lists for the pooled rates.
     """
     anchor = SCORECARD_ANCHOR
     # Column order: the anonde engine columns first, pinned in
-    # SCORECARD_FRONT order (anonde-gliner, then anonde-gliner-fp32) so
-    # the two GLiNER quantization variants render adjacent. The anchor is
-    # the production INT8 engine — every row's verdict is judged against
-    # it, not against the FP32 reference cell. The remaining engines
-    # follow in the order they were requested.
+    # SCORECARD_FRONT order so the three GLiNER variants render adjacent
+    # (FP32 production → INT8 legacy → LARGE). The anchor is the FP32
+    # production engine — every row's verdict is judged against it. The
+    # remaining engines follow in the order they were requested.
     front = [e for e in SCORECARD_FRONT if e in engines]
     others = [e for e in engines if e not in front]
     col_engines = front + others
 
-    out.append("## 🎯 Scorecard · leak rate by domain × language\n")
-    out.append(
-        "The one table. Each row is a `(domain, language)` cell; each "
-        f"number is **leak rate** (fraction of gold PHI spans missed — "
-        f"lower is better). `{anchor}` is the anonde production engine "
-        "(INT8 ONNX) and the anchor column; **Verdict** says whether it "
-        "beats the field. `anonde-gliner-fp32` is the same GLiNER PII "
-        "model loaded from the FP32 ONNX — it sits next to the anchor so "
-        "the INT8-vs-FP32 quantization tradeoff is visible at a glance, "
-        "but the verdict is keyed on the production INT8 engine. 🥇 marks "
-        "the lowest-leak engine in the row. Roll-up rows pool "
-        "leaked-over-gold across the group (doc-weighted, so larger "
-        "corpora count more).\n")
-
-    header = "| Domain | Language |"
-    for e in col_engines:
-        if e == anchor:
-            tag = " ⬅︎ anonde (INT8, prod)"
-        elif e == "anonde-gliner-fp32":
-            tag = " · anonde (FP32)"
-        else:
-            tag = ""
-        header += f" `{e}`{tag} |"
-    header += " Verdict |"
-    out.append(header)
-    out.append("|---|---|" + "---:|" * len(col_engines) + ":--:|")
-
-    # Track corpora per domain / per language for the roll-ups.
+    # Collect per-domain / per-language / overall corpus lists for the
+    # pooled roll-up rows.
     by_domain: dict[str, list[str]] = defaultdict(list)
     by_language: dict[str, list[str]] = defaultdict(list)
     all_corpora: list[str] = []
     domain_seq: list[str] = []
     lang_seq: list[str] = []
-
     for domain, language, corpora in groups:
         if domain not in domain_seq:
             domain_seq.append(domain)
@@ -677,100 +662,95 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         by_language[language].extend(corpora)
         all_corpora.extend(corpora)
 
-        # Pooled leak rate for this exact (domain, language) cell.
+    out.append("## 🎯 Scorecard · leak rate roll-ups\n")
+    out.append(
+        "The one table. Roll-up rows only (per domain · per language · "
+        "overall); the per-(domain × language) detail grid lives in the "
+        "Detailed breakdown below. Each number is **leak rate** (fraction "
+        f"of gold PHI spans missed — lower is better). `{anchor}` is the "
+        "anonde production engine (FP32 ONNX) and the anchor column; "
+        "**Verdict** says whether it beats the field. `anonde-gliner` is "
+        "the same model at INT8 quantization (kept as a legacy / memory-"
+        "constrained reference); `anonde-gliner-large` is the 3-4x-larger "
+        "GLiNER PII variant at FP32 (probing whether scale closes the "
+        "remaining Romance-language cells). Both sit beside the anchor so "
+        "the quantization and scale tradeoffs are visible at a glance, "
+        "but the verdict is keyed on production. 🥇 marks the lowest-leak "
+        "engine in the row. Roll-up rows pool leaked-over-gold across "
+        "the group (doc-weighted, so larger corpora count more).\n")
+
+    # ---- header --------------------------------------------------------
+    header = "| Slice | Scope |"
+    for e in col_engines:
+        if e == anchor:
+            tag = " ⬅︎ anonde (FP32, prod)"
+        elif e == "anonde-gliner":
+            tag = " · anonde (INT8, legacy)"
+        elif e == "anonde-gliner-large":
+            tag = " · anonde (LARGE)"
+        else:
+            tag = ""
+        header += f" `{e}`{tag} |"
+    header += " Verdict |"
+    out.append(header)
+    out.append("|---|---|" + "---:|" * len(col_engines) + ":--:|")
+
+    def _emit_row(label_left: str, label_right: str, corpora: list[str],
+                  bold_row: bool = False) -> None:
+        """Render one roll-up row (per-domain, per-language, or overall)."""
         rates = [_group_leak(rows, corpora, e) for e in col_engines]
         scorable = [r for r in rates if r is not None]
         if not scorable:
-            # No scorable engine for this cell — still show the row so
-            # the coverage map and the scorecard agree.
-            row = f"| **{domain_name(domain)}** | {language_name(language)} |"
-            row += " – |" * len(col_engines) + " – |"
-            out.append(row)
-            continue
+            return
         best = min(scorable)
-        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
+        anchor_rate = (rates[col_engines.index(anchor)]
+                       if anchor in col_engines else None)
         verdict = _anchor_verdict(
             anchor_rate,
             [r for e, r in zip(col_engines, rates) if _is_rival(e)])
-        row = f"| **{domain_name(domain)}** | {language_name(language)} |"
-        for e, r in zip(col_engines, rates):
-            is_best = r is not None and abs(r - best) < 1e-9
-            cell = _fmt_rate(r, is_best)
-            if e == anchor and r is not None:
-                cell = f"_{cell}_" if "**" not in cell else cell
-            row += f" {cell} |"
-        row += f" {verdict} |"
-        out.append(row)
-
-    # ---- roll-up: per domain ----------------------------------------
-    out.append("|" + " |" * (len(col_engines) + 3))  # visual spacer row
-    for domain in domain_seq:
-        corpora = by_domain[domain]
-        rates = [_group_leak(rows, corpora, e) for e in col_engines]
-        scorable = [r for r in rates if r is not None]
-        if not scorable:
-            continue
-        best = min(scorable)
-        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
-        verdict = _anchor_verdict(
-            anchor_rate,
-            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
-        row = f"| _Σ {domain_name(domain)}_ | _all_ |"
+        row = f"| {label_left} | {label_right} |"
         for r in rates:
-            is_best = r is not None and abs(r - best) < 1e-9
-            row += f" {_fmt_rate(r, is_best)} |"
-        row += f" {verdict} |"
-        out.append(row)
-
-    # ---- roll-up: per language --------------------------------------
-    out.append("|" + " |" * (len(col_engines) + 3))
-    for language in lang_seq:
-        corpora = by_language[language]
-        rates = [_group_leak(rows, corpora, e) for e in col_engines]
-        scorable = [r for r in rates if r is not None]
-        if not scorable:
-            continue
-        best = min(scorable)
-        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
-        verdict = _anchor_verdict(
-            anchor_rate,
-            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
-        row = f"| _Σ all domains_ | _{language_name(language)}_ |"
-        for r in rates:
-            is_best = r is not None and abs(r - best) < 1e-9
-            row += f" {_fmt_rate(r, is_best)} |"
-        row += f" {verdict} |"
-        out.append(row)
-
-    # ---- roll-up: overall -------------------------------------------
-    out.append("|" + " |" * (len(col_engines) + 3))
-    rates = [_group_leak(rows, all_corpora, e) for e in col_engines]
-    scorable = [r for r in rates if r is not None]
-    if scorable:
-        best = min(scorable)
-        anchor_rate = rates[col_engines.index(anchor)] if anchor in col_engines else None
-        verdict = _anchor_verdict(
-            anchor_rate,
-            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
-        row = "| **Σ ALL** | **all** |"
-        for r in rates:
-            is_best = r is not None and abs(r - best) < 1e-9
-            # _fmt_rate already bolds the row best; only add emphasis to
-            # the non-best cells so the overall row reads bold without
-            # double-starring the winner into literal `****`.
             if r is None:
                 row += " – |"
-            elif is_best:
-                row += f" {_fmt_rate(r, True)} |"
+                continue
+            is_best = abs(r - best) < 1e-9
+            if bold_row:
+                # The overall Σ ALL row reads bold without double-
+                # starring the winner into literal `****`.
+                if is_best:
+                    row += f" {_fmt_rate(r, True)} |"
+                else:
+                    row += f" **{_fmt_rate(r, False)}** |"
             else:
-                row += f" **{_fmt_rate(r, False)}** |"
+                row += f" {_fmt_rate(r, is_best)} |"
         row += f" {verdict} |"
         out.append(row)
+
+    # ---- Σ ALL (overall) ----------------------------------------------
+    # The one row a reader looks at if they only look at one row.
+    _emit_row("**Σ ALL**", "**all**", all_corpora, bold_row=True)
+    # Visual spacer between the headline overall row and the slice rows.
+    out.append("|" + " |" * (len(col_engines) + 3))
+
+    # ---- per-domain Σ -------------------------------------------------
+    for domain in domain_seq:
+        _emit_row(f"_Σ {domain_name(domain)}_", "_all langs_", by_domain[domain])
+
+    # Visual spacer between the per-domain and per-language groups.
+    out.append("|" + " |" * (len(col_engines) + 3))
+
+    # ---- per-language Σ -----------------------------------------------
+    for language in lang_seq:
+        _emit_row("_Σ all domains_", f"_{language_name(language)}_",
+                  by_language[language])
+
     out.append("")
 
-    # ---- win/loss tally for the anonde anchor -----------------------
-    # Counted over the per-cell rows only (not roll-ups), so it answers
-    # "in how many domain×language cells does anonde lead the field?".
+    # ---- win/loss tally for the anonde anchor -------------------------
+    # Counted over the underlying per-(domain × language) cells (not the
+    # roll-ups above), so it answers "in how many domain × language
+    # cells does production anonde lead the field?". The per-cell grid
+    # itself lives in the Detailed breakdown.
     wins = ties = losses = 0
     for domain, language, corpora in groups:
         rates = {e: _group_leak(rows, corpora, e) for e in col_engines}
@@ -791,13 +771,82 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     n_cells = wins + ties + losses
     out.append(
         f"> **Anonde scoreboard** — across the **{n_cells}** populated "
-        f"`(domain, language)` cells above, `{anchor}` is the "
+        f"`(domain, language)` cells in the matrix, `{anchor}` is the "
         f"**lowest-leak engine in {wins}**, ties in **{ties}**, and is "
         f"beaten in **{losses}**. ✅ = anonde leads · 🟰 = tied · ❌ = a "
-        "baseline leaks less. Read the row to see which baseline, then "
-        "the Detailed breakdown below for severity-weighted leak, "
-        "latency, and strict F1. (The TL;DR's win count is per-corpus, "
-        "a finer split than these per-cell rows.)\n")
+        "baseline leaks less. See the per-cell leak-rate grid in the "
+        "Detailed breakdown below for which baseline wins where. (The "
+        "TL;DR's win count is per-corpus, a finer split than these "
+        "per-cell rows.)\n")
+
+
+def _per_cell_leak_grid(out: list[str], rows: dict, groups: list,
+                        engines: list[str],
+                        domain_name, language_name) -> None:
+    """Append a dense (domain × language) leak-rate grid — one row per
+    populated cell.
+
+    This is the table that used to sit in the scorecard above; the new
+    13-row scorecard keeps only the Σ ALL + per-domain + per-language
+    roll-ups. The detail belongs here, immediately under the Detailed
+    breakdown heading, so a reader who wants to see which baseline
+    actually beats anonde on a specific (domain, language) has one table
+    to scan instead of walking every per-section block.
+
+    `groups` and the column ordering match the scorecard exactly: the
+    anonde columns (SCORECARD_FRONT) lead, anchor first, then the
+    remaining engines in request order, then the Verdict column.
+    """
+    anchor = SCORECARD_ANCHOR
+    front = [e for e in SCORECARD_FRONT if e in engines]
+    others = [e for e in engines if e not in front]
+    col_engines = front + others
+
+    out.append("## Per-cell leak rate · domain × language\n")
+    out.append(
+        "Detail behind the scorecard roll-ups: one row per populated "
+        "`(domain, language)` cell. Same columns, same anchor, same "
+        "verdict glyph — read this to see *which* baseline wins where. "
+        "Pooled leak rate across the cell's corpora.\n")
+
+    header = "| Domain | Language |"
+    for e in col_engines:
+        if e == anchor:
+            tag = " ⬅︎ anonde (FP32, prod)"
+        elif e == "anonde-gliner":
+            tag = " · anonde (INT8, legacy)"
+        elif e == "anonde-gliner-large":
+            tag = " · anonde (LARGE)"
+        else:
+            tag = ""
+        header += f" `{e}`{tag} |"
+    header += " Verdict |"
+    out.append(header)
+    out.append("|---|---|" + "---:|" * len(col_engines) + ":--:|")
+
+    for domain, language, corpora in groups:
+        rates = [_group_leak(rows, corpora, e) for e in col_engines]
+        scorable = [r for r in rates if r is not None]
+        if not scorable:
+            # No scorable engine for this cell — still show the row so
+            # the coverage map and this grid agree.
+            row = f"| **{domain_name(domain)}** | {language_name(language)} |"
+            row += " – |" * len(col_engines) + " – |"
+            out.append(row)
+            continue
+        best = min(scorable)
+        anchor_rate = (rates[col_engines.index(anchor)]
+                       if anchor in col_engines else None)
+        verdict = _anchor_verdict(
+            anchor_rate,
+            [r for e, r in zip(col_engines, rates) if _is_rival(e)])
+        row = f"| **{domain_name(domain)}** | {language_name(language)} |"
+        for r in rates:
+            is_best = r is not None and abs(r - best) < 1e-9
+            row += f" {_fmt_rate(r, is_best)} |"
+        row += f" {verdict} |"
+        out.append(row)
+    out.append("")
 
 
 def _verdict_cards(out: list[str], per_corpus_verdict: list[dict],
@@ -817,11 +866,11 @@ def _verdict_cards(out: list[str], per_corpus_verdict: list[dict],
         gliner_row = v["gliner"]
         baseline_row = v["best_baseline"]
         if gliner_row is None:
-            out.append(f"- ❔ **`{c}`** — `anonde-gliner` did not run on this corpus.")
+            out.append(f"- ❔ **`{c}`** — `{SCORECARD_ANCHOR}` did not run on this corpus.")
             continue
         gliner_rate = gliner_row[1]
         flag = _fmt_leak_bar(gliner_rate)
-        line = f"- {flag} **`{c}`** — `anonde-gliner` leaks **{gliner_rate:.1%}**"
+        line = f"- {flag} **`{c}`** — `{SCORECARD_ANCHOR}` leaks **{gliner_rate:.1%}**"
         if baseline_row is not None:
             be, br, _ = baseline_row
             delta_pp = (br - gliner_rate) * 100
@@ -843,19 +892,21 @@ def _render(rows, label_map, corpora, engines, meta=None):
     Layout (per-entity strict-F1 breakdown lives in results_matrix.csv):
 
       1. TL;DR (one-paragraph headline conclusion)
-      2. Scorecard — THE table: one row per (domain × language) cell,
-         leak rate per engine, anonde-anchored, with per-domain /
-         per-language / overall roll-ups + a win/loss tally
+      2. Scorecard — THE table: 13 rows max (Σ ALL + per-domain Σ +
+         per-language Σ), leak rate per engine, anonde-anchored on the
+         FP32 production engine, plus a win/loss tally
       3. Engine profiles (tier framing)
       4. Domain × language coverage map
-      5. "# Detailed breakdown" — per (domain × language) section, in
-         display order, each with:
-           - per-corpus verdict cards (leak severity flags)
-           - leak-rate grid (production metric)
-           - partial-coverage footnote (if any cell was subsampled)
-           - severity-weighted leak rate (procurement metric)
-           - latency p50 / p95 (operational metric)
-           - strict F1 — overall micro-F1 only (per-entity in CSV)
+      5. "# Detailed breakdown":
+         5a. Per-cell leak-rate grid (the detail demoted off the
+             scorecard — one row per (domain × language) cell)
+         5b. Per (domain × language) section, in display order, each
+             with: per-corpus verdict cards (leak severity flags),
+             leak-rate grid (production metric), partial-coverage
+             footnote (if any cell was subsampled), severity-weighted
+             leak rate (procurement metric), latency p50 / p95
+             (operational metric), strict F1 — overall micro-F1 only
+             (per-entity in CSV)
       6. Cost reference (managed-service anchor; self-hosted framing)
       7. Caveats — training-data overlap
       8. Glossary
@@ -894,14 +945,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
             continue
         engine_leaks.sort(key=lambda x: x[1])
         winner = engine_leaks[0]
-        # gliner_row = the production engine; best_baseline = the best
-        # NON-anonde engine. `anonde-gliner-fp32` is the same model as
-        # production, just a different ONNX quantization — it is a
-        # tracked reference column, not a competing baseline, so
-        # `_is_rival` excludes it here exactly as in the scorecard
-        # verdict. (The verdict card would otherwise quote FP32 as "the
+        # gliner_row = the production engine (FP32); best_baseline = the
+        # best NON-anonde engine. The INT8 legacy column and the LARGE
+        # variant are tracked reference columns, not competing baselines,
+        # so `_is_rival` excludes them here exactly as in the scorecard
+        # verdict. (The card would otherwise quote one of them as "the
         # best baseline", which is misleading.)
-        gliner_row = next((x for x in engine_leaks if x[0] == "anonde-gliner"), None)
+        gliner_row = next((x for x in engine_leaks
+                           if x[0] == SCORECARD_ANCHOR), None)
         baseline_row = next((x for x in engine_leaks if _is_rival(x[0])), None)
         per_corpus_verdict.append({
             "corpus": c,
@@ -913,11 +964,11 @@ def _render(rows, label_map, corpora, engines, meta=None):
         })
 
     scorable = [v for v in per_corpus_verdict if v["scorable"]]
-    # A "win" = the production engine (`anonde-gliner`, INT8) leaks no
-    # more than every NON-anonde baseline on that corpus. Counted against
-    # rivals only — `anonde-gliner-fp32` is the same model at a different
-    # ONNX quantization, so it never costs production a win (mirrors the
-    # scorecard verdict's `_is_rival` rule).
+    # A "win" = the production engine (`anonde-gliner-fp32`, FP32 ONNX)
+    # leaks no more than every NON-anonde baseline on that corpus.
+    # Counted against rivals only — the INT8 legacy column and the LARGE
+    # variant are the same GLiNER PII family, so they never cost
+    # production a win (mirrors the scorecard verdict's `_is_rival` rule).
     gliner_wins = 0
     for v in scorable:
         if v["gliner"] is None:
@@ -939,14 +990,16 @@ def _render(rows, label_map, corpora, engines, meta=None):
         ) if any(v["gliner"] and v["best_baseline"] for v in scorable) else 0.0
 
         tldr = (
-            f"> **TL;DR** — `anonde-gliner` (production, INT8 ONNX) leaks no more than "
-            f"every competing baseline on **{gliner_wins} of {n_scorable}** gold-annotated "
+            f"> **TL;DR** — `anonde-gliner-fp32` (production, FP32 ONNX) is the "
+            f"lowest-leak engine on **{gliner_wins} of {n_scorable}** gold-annotated "
             f"corpora. Biggest absolute improvement over the best baseline: "
-            f"**{biggest_pp * 100:+.1f}pp** in leak rate. The `anonde-gliner-fp32` column is "
-            f"the same GLiNER PII model at FP32 instead of INT8 — it tracks the "
-            f"quantization tradeoff and is not counted as a competitor. Strict F1 trades "
-            f"exact-byte alignment for catching more PHI — the right trade-off for a "
-            f"redactor, not a benchmark gaming exercise.\n"
+            f"**{biggest_pp * 100:+.1f}pp** in leak rate. The `anonde-gliner` column is "
+            f"the same model at INT8 (legacy / memory-constrained reference); "
+            f"`anonde-gliner-large` is the 3-4x-larger GLiNER PII variant at FP32 "
+            f"(scaling probe). Neither is counted as a competitor — both are anonde "
+            f"reference columns. Strict F1 trades exact-byte alignment for catching "
+            f"more PHI — the right trade-off for a redactor, not a benchmark gaming "
+            f"exercise.\n"
         )
         out.append(tldr)
     else:
@@ -956,47 +1009,50 @@ def _render(rows, label_map, corpora, engines, meta=None):
         )
 
     # ---- Headline scorecard -----------------------------------------
-    # The single scannable table: leak rate per engine for every
-    # populated (domain × language) cell, anonde-anchored, with
-    # per-domain / per-language / overall roll-ups. This is THE table a
-    # human reads — everything below it is reference detail.
+    # The single scannable table: 13 rows (Σ ALL + per-domain Σ +
+    # per-language Σ), anonde-anchored on FP32 production. The per-cell
+    # detail moves into the Detailed breakdown below.
     _scorecard(out, rows, groups, engines, _domain_name, _language_name)
 
     # ---- Engine profiles --------------------------------------------
-    # Anonde-patterns and anonde-gliner are NOT two competing tools —
-    # they're two deployment profiles of the same toolkit. Patterns is
-    # the no-ML / no-CGO / 12 MB image baseline; gliner is the +470 MB
-    # ML-backed production stack. Surfacing this up front so a reader
-    # interprets the leak-rate tables as "compare across rows" not
-    # "anonde-patterns ought to beat anonde-gliner".
+    # Anonde-patterns and anonde-gliner-fp32 are NOT two competing tools
+    # — they're two deployment profiles of the same toolkit. Patterns is
+    # the no-ML / no-CGO / 12 MB image baseline; gliner-fp32 is the
+    # +770 MB ML-backed production stack. Surfacing this up front so a
+    # reader interprets the leak-rate tables as "compare across rows"
+    # not "anonde-patterns ought to beat anonde-gliner-fp32".
     out.append("## Engine profiles\n")
     out.append("Engines below are not all competitors. `anonde-patterns` and "
-               "`anonde-gliner` are two deployment tiers of the same anonde "
+               "`anonde-gliner-fp32` are two deployment tiers of the same anonde "
                "binary; compare *across the row* for the trade-off, not against "
-               "each other for "
-               "a winner.\n")
+               "each other for a winner.\n")
     out.append("| Engine | Profile | Image | CGO | Cold start | Best fit |")
     out.append("|---|---|---|---|---|---|")
     out.append("| `anonde-patterns` | regex / no-ML baseline (anonde tier 1) | "
                "~12 MB | not required | <1 s | structured slot-gen text (forms, "
                "logs, finance/legal docs) — wins F1 on PHONE, EMAIL, DATE, "
                "PROFESSION when the regex shape is tight |")
-    out.append("| `anonde-gliner` | GLiNER PII + patterns (anonde tier 2, "
-               "**production**) | ~470 MB | required | 5-30 s warmup | natural "
-               "text + multilingual PHI; wins leak rate on most gold corpora. "
-               "Ships the INT8 ONNX (`model_quint8.onnx`). |")
-    out.append("| `anonde-gliner-fp32` | same GLiNER PII model, FP32 ONNX "
-               "(`model.onnx`) — reference column, not a separate tier | "
-               "~770 MB | required | 5-30 s warmup | not a competitor: tracks the "
-               "INT8-vs-FP32 quantization tradeoff vs production `anonde-gliner`. "
-               "INT8 depresses GLiNER's sigmoid logits ~0.18, costing recall on "
+    out.append("| `anonde-gliner-fp32` | GLiNER PII (FP32 ONNX, `model.onnx`) + "
+               "patterns (anonde tier 2, **production**) | ~770 MB | required | "
+               "5-30 s warmup | natural text + multilingual PHI; the lowest-leak "
+               "engine on most gold corpora. Ships the FP32 ONNX. |")
+    out.append("| `anonde-gliner` | same GLiNER PII model, INT8 ONNX "
+               "(`model_quint8.onnx`) — legacy / memory-constrained reference | "
+               "~530 MB | required | 5-30 s warmup | not a competitor: kept so "
+               "the INT8-vs-FP32 quantization regression stays tracked. INT8 "
+               "depresses GLiNER's sigmoid logits ~0.18, costing recall on "
                "multilingual legal/clinical text — this column quantifies it. |")
+    out.append("| `anonde-gliner-large` | larger GLiNER PII variant "
+               "(`knowledgator/gliner-pii-large-v1.0`, FP32) — reference column, "
+               "not a separate tier | ~1.4 GB | required | 10-60 s warmup | not "
+               "a competitor: scaling probe (3-4x parameters vs the production "
+               "base) for the remaining Romance-language cells. |")
     out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) | "
                "~1 GB | not required | 3-10 s | well-formed English "
                "(strong on EN newswire-shaped text where spaCy was trained) |")
     out.append("| `gliner-py` | GLiNER via PyTorch + safetensors (FP32) | "
                "~3 GB | not required | 10-30 s | reference implementation; "
-               "parity check vs anonde-gliner's INT8 ONNX path |")
+               "parity check vs anonde-gliner-fp32's ONNX path |")
     out.append("")
 
     # ---- Domain × language coverage map -----------------------------
@@ -1038,11 +1094,17 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # metric for a redactor.
     out.append("# Detailed breakdown\n")
     out.append(
-        "Everything below is reference detail behind the scorecard. Each "
-        "`(domain × language)` section carries the per-corpus verdict "
-        "cards, the raw leak-rate grid, the severity-weighted leak rate, "
-        "latency, and strict F1. The scorecard above is the answer; "
+        "Everything below is reference detail behind the scorecard. The "
+        "per-cell grid first (the detail demoted off the 13-row scorecard), "
+        "then each `(domain × language)` section carrying the per-corpus "
+        "verdict cards, the raw leak-rate grid, the severity-weighted leak "
+        "rate, latency, and strict F1. The scorecard above is the answer; "
         "these tables are the working.\n")
+
+    # Per-cell leak-rate grid — the (domain × language) detail demoted
+    # off the scorecard. One single table covering every populated cell,
+    # so a reader can scan "where does anonde lose?" in one place.
+    _per_cell_leak_grid(out, rows, groups, engines, _domain_name, _language_name)
 
     sev = label_map.get("severity") or {}
     section_corpora_global: set[str] = set()
@@ -1055,9 +1117,9 @@ def _render(rows, label_map, corpora, engines, meta=None):
 
         # Verdict cards — production-engine leak severity flags.
         out.append("### Verdict\n")
-        out.append("`🟢/🟡/🟠/🔴/💀` flags `anonde-gliner`'s leak severity. "
-                   "`⚪` corpora produced text but no span-level gold (F1/leak "
-                   "not measurable); `❔` = `anonde-gliner` did not run.\n")
+        out.append(f"`🟢/🟡/🟠/🔴/💀` flags `{SCORECARD_ANCHOR}`'s leak severity. "
+                   f"`⚪` corpora produced text but no span-level gold (F1/leak "
+                   f"not measurable); `❔` = `{SCORECARD_ANCHOR}` did not run.\n")
         _verdict_cards(out, per_corpus_verdict, set(section_corpora))
 
         # Leak rate — the load-bearing metric, leads the section.
@@ -1176,15 +1238,16 @@ matrix:
   reverse: spaCy's `de_core_news_lg` is trained partly on TIGER and
   GermEval data. A high Presidio score here similarly reflects
   training-data adjacency.
-- **`conll2003_en` / `wnut_17` × `anonde-gliner`** — anonde-gliner
-  uses the INT8-quantised ONNX (`model_quint8.onnx`, ~196 MB) while
-  `gliner-py` loads the FP32 safetensors via PyTorch. Both load the
-  same upstream model; quantization appears to bite on noisy English
-  NER even though it's invisible on clean German clinical text. The
-  `anonde-gliner-fp32` column makes this explicit: it is the same
-  model loaded from the FP32 ONNX (`model.onnx`), so the gap
-  between the `anonde-gliner` and `anonde-gliner-fp32` columns
-  isolates the INT8-quantization cost from everything else.
+- **`conll2003_en` / `wnut_17` × `anonde-gliner` (INT8 legacy)** — the
+  INT8-quantised ONNX (`model_quint8.onnx`, ~196 MB) consistently leaks
+  more PII than the FP32 export (`model.onnx`) loaded by production
+  `anonde-gliner-fp32` and the Python `gliner-py` reference. Quantization
+  bites on noisy English NER and on multilingual legal / clinical text;
+  the gap between the `anonde-gliner-fp32` and `anonde-gliner` columns
+  isolates the INT8-quantization cost from everything else. The
+  `anonde-gliner-large` column probes the orthogonal question: does
+  scaling to a 3-4x-larger GLiNER PII variant (still FP32) close the
+  remaining cells where production loses to a baseline.
 
 Held-out corpora with no known overlap for any of the four engines
 listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,

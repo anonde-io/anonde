@@ -35,13 +35,18 @@ state.
 - Two Fly variants share the `anonde-platform` app in `iad`:
   - `fly.toml` → `Dockerfile.anonde` → patterns-only (~12 MB image)
   - `fly.ner.toml` → `Dockerfile.anonde-ner` → GLiNER PII baked in
-    (~470 MB image, CGO_ENABLED=1, distroless/cc-debian12, bundled
+    (~770 MB image, CGO_ENABLED=1, distroless/cc-debian12, bundled
     libonnxruntime.so.1.26.0)
 - The NER variant runs `ANALYZER_BACKEND=gliner` with the English-base
-  model `knowledgator/gliner-pii-base-v1.0` at threshold 0.40. See
+  model `knowledgator/gliner-pii-base-v1.0` at threshold 0.40, loaded
+  from the **FP32** ONNX (`onnx/model.onnx`) by default — the bench
+  matrix proved INT8 leaks ~6pp more PII overall (Σ ALL 20.7% FP32 vs
+  26.6% INT8). Memory-constrained deployments can flip back with
+  `GLINER_QUANT=int8` (saves ~240 MB image at the cost of recall on
+  multilingual legal / clinical text). See
   [`bench_findings_2026_05_13.md`](.claude/memory/bench_findings_2026_05_13.md)
-  for the reasoning (multilingual variant rejected for score-calibration
-  brittleness).
+  for the model-selection reasoning (multilingual variant rejected for
+  score-calibration brittleness).
 - Per-request `disable_ner: true` falls back to patterns-only when NER
   latency isn't wanted.
 

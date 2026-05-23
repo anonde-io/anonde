@@ -61,6 +61,16 @@ GLINER_ONNX_FILE ?= onnx/model_quint8.onnx
 # graph — onnxruntime rejects it on session create — so the matrix uses
 # the FP32 export, which loads cleanly. See bench/probes/fp32_vs_int8/.)
 GLINER_FP32_ONNX_FILE ?= onnx/model.onnx
+# Larger GLiNER PII variant — 3-4x the parameter count of the base model.
+# Same HF org, same task; FP32 ONNX (the matrix already shows INT8
+# uniformly costs recall, so the large variant only runs at FP32). The
+# `anonde-gliner-large` engine column probes whether scale closes the
+# remaining Romance-language cells where production FP32 still loses to
+# a baseline (worst: `mapa_it` 46.6% FP32 vs gliner-py 6.2%). Like the
+# FP32 cell it is gated OUT of the per-push `corpus-%` path and pulled
+# in only by `matrix` / `matrix-*` via the gliner-large-cells target.
+GLINER_LARGE_MODEL     ?= knowledgator/gliner-pii-large-v1.0
+GLINER_LARGE_ONNX_FILE ?= onnx/model.onnx
 GLINER_THRESHOLD ?= 0.40
 HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
@@ -149,7 +159,15 @@ ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORP
 # is a prerequisite of `matrix` / `matrix-*` via the gliner-fp32-cells
 # target below, NOT of `corpus-%`. Unlike openai-pf it is always run when
 # pulled in (no RUN_* gate) — it is a fast in-process Go cell.
-ENGINES := anonde-patterns anonde-gliner anonde-gliner-fp32 presidio gliner-py openai-pf
+#
+# anonde-gliner-large is the third anonde GLiNER column, same wiring
+# pattern as anonde-gliner-fp32: a 3-4x-larger GLiNER PII variant
+# (knowledgator/gliner-pii-large-v1.0) at FP32, probing whether scale
+# closes the remaining Romance-language cells where production FP32
+# still loses (mapa_it 46.6% FP32 vs gliner-py 6.2% is the worst one).
+# Gated OUT of `corpus-%`; pulled in only by `matrix` / `matrix-*` via
+# the gliner-large-cells target below.
+ENGINES := anonde-patterns anonde-gliner anonde-gliner-fp32 anonde-gliner-large presidio gliner-py openai-pf
 
 # openai-pf gating + subsample size. RUN_OPENAI_PF=1 enables the cell;
 # OPENAI_PF_SAMPLE is how many docs (deterministic, sorted by id) the
@@ -220,25 +238,36 @@ $(addprefix data-,$(ALL_CORPORA)):
 # We expand this in $(eval ...) loops below; each generated target
 # depends on the corpus's data target and shells out to the right runner.
 
-# anonde engine name → analyzer backend. Both anonde-gliner (INT8 ONNX)
-# and anonde-gliner-fp32 (FP32 ONNX) run the `gliner` backend — they
-# differ only in which ONNX file the cell passes via --onnx-file (see
-# CELL_anonde + GLINER_ONNX_FILE_FOR).
+# anonde engine name → analyzer backend. All three GLiNER variants —
+# anonde-gliner (INT8 ONNX), anonde-gliner-fp32 (FP32 ONNX), and
+# anonde-gliner-large (larger model, FP32 ONNX) — run the `gliner`
+# backend; they differ in which model id + ONNX file the cell passes
+# via --model / --onnx-file (see CELL_anonde + GLINER_MODEL_FOR +
+# GLINER_ONNX_FILE_FOR).
 define ANONDE_BACKEND_FOR
 $(if $(filter anonde-patterns,$(1)),patterns-only,\
 $(if $(filter anonde-hugot,$(1)),hugot,\
-$(if $(filter anonde-gliner anonde-gliner-fp32,$(1)),gliner,\
+$(if $(filter anonde-gliner anonde-gliner-fp32 anonde-gliner-large,$(1)),gliner,\
 )))
 endef
 
 # anonde-gliner* engine name → ONNX file. anonde-gliner uses the INT8
-# build (production); anonde-gliner-fp32 uses the FP32 build. Any other
+# build (legacy); anonde-gliner-fp32 uses the FP32 build (production);
+# anonde-gliner-large uses the FP32 build of the larger model. Any other
 # engine falls back to ANONDE_ONNX_FILE (the generic override knob).
 # Kept on ONE line on purpose: a multi-line `define` with `\`-continued
 # `$(if ...)` collapses each continuation to a leading space, and this
 # value lands inside a quoted `--onnx-file "..."` arg where that space
 # is not stripped.
-GLINER_ONNX_FILE_FOR = $(if $(filter anonde-gliner,$(1)),$(GLINER_ONNX_FILE),$(if $(filter anonde-gliner-fp32,$(1)),$(GLINER_FP32_ONNX_FILE),$(ANONDE_ONNX_FILE)))
+GLINER_ONNX_FILE_FOR = $(if $(filter anonde-gliner,$(1)),$(GLINER_ONNX_FILE),$(if $(filter anonde-gliner-fp32,$(1)),$(GLINER_FP32_ONNX_FILE),$(if $(filter anonde-gliner-large,$(1)),$(GLINER_LARGE_ONNX_FILE),$(ANONDE_ONNX_FILE))))
+
+# anonde-gliner* engine name → GLiNER model id. anonde-gliner +
+# anonde-gliner-fp32 share the production base model id (GLINER_MODEL,
+# default knowledgator/gliner-pii-base-v1.0); anonde-gliner-large uses
+# the larger sibling (GLINER_LARGE_MODEL, default
+# knowledgator/gliner-pii-large-v1.0). Single-line for the same reason
+# as GLINER_ONNX_FILE_FOR above.
+GLINER_MODEL_FOR = $(if $(filter anonde-gliner-large,$(1)),$(GLINER_LARGE_MODEL),$(GLINER_MODEL))
 
 # Corpus → language code. Defaults to `de` when a corpus is in none of the
 # explicit partitions. en/es/fr/it are matched against their partitions;
@@ -292,17 +321,17 @@ define CELL_anonde
 $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	@echo "[matrix] $(1) x $(2)"
 	cd $(ROOT) && go run \
-	  $(if $(filter $(2),anonde-hugot anonde-gliner anonde-gliner-fp32),-tags hugot,) \
+	  $(if $(filter $(2),anonde-hugot anonde-gliner anonde-gliner-fp32 anonde-gliner-large),-tags hugot,) \
 	  ./bench/runners/anonde.go \
 	    --in  bench/corpora/$(1)/data/corpus.jsonl \
 	    --out bench/corpora/$(1)/data/anonde_$(2).jsonl \
 	    --backend $(call ANONDE_BACKEND_FOR,$(2)) \
 	    --language $(call LANG_FOR_CORPUS,$(1)) \
 	    --ner-score-floor $(NER_SCORE_FLOOR) \
-	    --model "$(if $(filter $(2),anonde-gliner anonde-gliner-fp32),$(GLINER_MODEL),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
+	    --model "$(if $(filter $(2),anonde-gliner anonde-gliner-fp32 anonde-gliner-large),$(call GLINER_MODEL_FOR,$(2)),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
 	    --onnx-file "$(call GLINER_ONNX_FILE_FOR,$(2))" \
-	    --gliner-threshold $(if $(filter $(2),anonde-gliner anonde-gliner-fp32),$(GLINER_THRESHOLD),0) \
-	    $(if $(filter $(2),anonde-gliner anonde-gliner-fp32),--ort-library "$(ORT_LIB)",) \
+	    --gliner-threshold $(if $(filter $(2),anonde-gliner anonde-gliner-fp32 anonde-gliner-large),$(GLINER_THRESHOLD),0) \
+	    $(if $(filter $(2),anonde-gliner anonde-gliner-fp32 anonde-gliner-large),--ort-library "$(ORT_LIB)",) \
 	    $(call FOLD_FOR_CORPUS,$(1))
 endef
 
@@ -401,23 +430,24 @@ endef
 # isn't installed locally the cell is reported as missing rather than
 # crashing the build.
 $(foreach c,$(ALL_CORPORA),\
-  $(foreach e,anonde-patterns anonde-gliner anonde-gliner-fp32,\
+  $(foreach e,anonde-patterns anonde-gliner anonde-gliner-fp32 anonde-gliner-large,\
     $(eval $(call CELL_anonde,$(c),$(e))))\
   $(eval $(call CELL_gliner_py,$(c)))\
   $(eval $(call CELL_presidio,$(c)))\
   $(eval $(call CELL_openai_pf,$(c))))
 
 # Per-corpus convenience target — runs the four always-on engines for one
-# corpus. openai-pf AND anonde-gliner-fp32 are deliberately NOT
-# prerequisites here: this is the target the per-push bench (bench.yml)
-# calls via `corpus-openmed` etc., and the per-push bench stays lean
-# (anonde-patterns + anonde-gliner + gliner-py + presidio). openai-pf at
-# ~80 s/doc would blow the PR budget; anonde-gliner-fp32 is a permanent
-# matrix column but not part of the per-push regression catcher. Both are
-# pulled in only by `matrix` / `matrix-*` (see openai-pf-cells and
-# gliner-fp32-cells below). Presidio runs on every language (en + de + es
-# spaCy models); if a given dev box lacks the matching model the cell
-# warn-and-skips.
+# corpus. openai-pf, anonde-gliner-fp32, AND anonde-gliner-large are
+# deliberately NOT prerequisites here: this is the target the per-push
+# bench (bench.yml) calls via `corpus-openmed` etc., and the per-push
+# bench stays lean (anonde-patterns + anonde-gliner + gliner-py +
+# presidio). openai-pf at ~80 s/doc would blow the PR budget;
+# anonde-gliner-fp32 and anonde-gliner-large are permanent matrix
+# columns but not part of the per-push regression catcher. All three are
+# pulled in only by `matrix` / `matrix-*` (see openai-pf-cells,
+# gliner-fp32-cells, and gliner-large-cells below). Presidio runs on
+# every language (en + de + es spaCy models); if a given dev box lacks
+# the matching model the cell warn-and-skips.
 $(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
     $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
     $(CORPORA_DIR)/%/data/anonde_anonde-gliner.jsonl \
@@ -445,6 +475,21 @@ gliner-fp32-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-g
 $(addprefix gliner-fp32-,$(ALL_CORPORA)): gliner-fp32-%: \
     $(CORPORA_DIR)/%/data/anonde_anonde-gliner-fp32.jsonl
 
+# anonde-gliner-large cells, separated out the same way as gliner-fp32-cells:
+# only the full-matrix targets (`matrix` / `matrix-*`) depend on them, so
+# the per-push `corpus-%` path / bench.yml never build the LARGE cell.
+# The LARGE cell is a fast in-process Go run (no RUN_* gate needed) —
+# keeping it off `corpus-%` is purely to keep the per-push bench scope
+# unchanged.
+.PHONY: gliner-large-cells $(addprefix gliner-large-,$(ALL_CORPORA))
+gliner-large-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-large.jsonl,$(ALL_CORPORA)))
+
+# Per-corpus anonde-gliner-large convenience target — `make
+# gliner-large-openmed`. Used by bench-full.yml so each matrix cell builds
+# only its own corpus's LARGE cell without overriding ALL_CORPORA.
+$(addprefix gliner-large-,$(ALL_CORPORA)): gliner-large-%: \
+    $(CORPORA_DIR)/%/data/anonde_anonde-gliner-large.jsonl
+
 # Per-corpus openai-pf convenience target — `make openai-pf-openmed
 # RUN_OPENAI_PF=1`. Used by bench-full.yml so each matrix cell runs only
 # its own corpus's openai-pf cell without overriding ALL_CORPORA.
@@ -452,10 +497,10 @@ $(addprefix openai-pf-,$(ALL_CORPORA)): openai-pf-%: \
     $(CORPORA_DIR)/%/data/anonde_openai-pf.jsonl
 
 # Materialise the full matrix (four always-on engines + anonde-gliner-fp32
-# + openai-pf), then render the combined report. Run openai-pf with the
-# gate on:
+# + anonde-gliner-large + openai-pf), then render the combined report.
+# Run openai-pf with the gate on:
 #   make matrix RUN_OPENAI_PF=1
-matrix: $(addprefix corpus-,$(ALL_CORPORA)) gliner-fp32-cells openai-pf-cells render
+matrix: $(addprefix corpus-,$(ALL_CORPORA)) gliner-fp32-cells gliner-large-cells openai-pf-cells render
 
 # Per-language subset matrices. Each depends on its corpora's always-on
 # cells plus the openai-pf cells (self-gated on RUN_OPENAI_PF). FR / IT
@@ -463,6 +508,7 @@ matrix: $(addprefix corpus-,$(ALL_CORPORA)) gliner-fp32-cells openai-pf-cells re
 # ai4privacy French / Italian slices.
 matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp32.jsonl,$(DE_CORPORA))) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-large.jsonl,$(DE_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(DE_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -474,6 +520,7 @@ matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
 
 matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp32.jsonl,$(EN_CORPORA))) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-large.jsonl,$(EN_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(EN_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -485,6 +532,7 @@ matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
 
 matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp32.jsonl,$(ES_CORPORA))) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-large.jsonl,$(ES_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ES_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -496,6 +544,7 @@ matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
 
 matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp32.jsonl,$(FR_CORPORA))) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-large.jsonl,$(FR_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(FR_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -507,6 +556,7 @@ matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
 
 matrix-it: $(addprefix corpus-,$(IT_CORPORA)) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-fp32.jsonl,$(IT_CORPORA))) \
+           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-gliner-large.jsonl,$(IT_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(IT_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \

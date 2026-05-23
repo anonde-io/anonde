@@ -1,6 +1,8 @@
 # Dockerfile.anonde-ner — anonde server with the GLiNER NER backend
-# baked in. Larger image (~470 MB) but self-contained: no model download
-# at startup, no outbound network needed, deterministic cold start.
+# baked in. Larger image (~770 MB with the FP32 ONNX; ~530 MB with the
+# INT8 build — see GLINER_QUANT below) but self-contained: no model
+# download at startup, no outbound network needed, deterministic cold
+# start.
 #
 # For lighter deployments serving only structured German clinical text
 # (Patient: …, MRN, etc.), use Dockerfile.anonde instead — that builds
@@ -21,14 +23,18 @@
 #   - libonnxruntime.so.1 (~14 MB) is fetched from the Microsoft release
 #     tarball at build time and COPYed into the runtime image.
 #   - The English-trained PII model (`knowledgator/gliner-pii-base-v1.0`,
-#     ~196 MB int8) is downloaded during the build stage and baked into
-#     /models in the runtime image. The multilingual variant was tried
-#     first but its sigmoid scores ran 4-5x lower than the English base
-#     on identical text (e.g. PERSON@0.17 vs 0.80 on "Elena Rossi"),
-#     making per-deployment threshold tuning brittle. The English base
-#     handles German clinical text well too (bench: 14.62% leak on
-#     GraSCCo, within 0.3pp of the multilingual variant), so we trade
-#     6-language coverage for stable thresholds + 4-5x score confidence.
+#     ~370 MB FP32 ONNX) is downloaded during the build stage and baked
+#     into /models in the runtime image. The matrix proved FP32 leaks
+#     less PII than the INT8 quant (Σ ALL 20.7% vs 26.6% across 30
+#     corpora × 5 languages); INT8 quantization uniformly depresses
+#     GLiNER's sigmoid logits ~0.18, pushing a band of true spans below
+#     the threshold on multilingual legal / clinical text. Memory-
+#     constrained deployments can swap back to INT8 by rebuilding with
+#     `GLINER_ONNX_FILE=onnx/model_quint8.onnx` (saves ~240 MB image
+#     size). The multilingual variant was tried first but its sigmoid
+#     scores ran 4-5x lower than the English base on identical text
+#     (e.g. PERSON@0.17 vs 0.80 on "Elena Rossi"), making per-deployment
+#     threshold tuning brittle.
 
 # Pinned: when bumping, update both the URL and the symlink path below if
 # MSFT changes the tarball layout. Last verified 2026-05-13.
@@ -86,7 +92,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # stage below.
 ENV GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
-    GLINER_ONNX_FILE=onnx/model_quint8.onnx \
+    GLINER_ONNX_FILE=onnx/model.onnx \
     ANALYZER_BACKEND=gliner \
     ORT_SO_PATH=/out/lib/libonnxruntime.so.1 \
     DOWNLOAD_MODELS_ONLY=1
@@ -113,7 +119,7 @@ COPY --from=build /models /models
 ENV ANALYZER_BACKEND=gliner \
     GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
-    GLINER_ONNX_FILE=onnx/model_quint8.onnx \
+    GLINER_ONNX_FILE=onnx/model.onnx \
     GLINER_THRESHOLD=0.40 \
     ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 

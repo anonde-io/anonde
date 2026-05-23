@@ -256,20 +256,18 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 //     match the convenience names below.
 //   - GLINER_QUANT — convenience selector: "int8" | "fp16" | "fp32".
 //     Maps to the conventional filenames in the knowledgator and
-//     onnx-community GLiNER repos. INT8 is the default — the size/speed
-//     pick for the production container.
+//     onnx-community GLiNER repos. FP32 is the default — production
+//     ships full precision because the bench matrix proved INT8
+//     uniformly depresses recall (Σ ALL leak 20.7% FP32 vs 26.6% INT8).
 //
-// Recall caveat: INT8 quantization uniformly depresses GLiNER's span
+// Recall context: INT8 quantization uniformly depresses GLiNER's span
 // logits (~0.18 in sigmoid space vs the FP32 weights). On clean
 // saturated text this is invisible, but on lower-confidence multilingual
 // legal / clinical corpora it pushes a band of true spans below the
-// 0.40 threshold and leaks PII. Deployers with English- or
-// multilingual-heavy traffic where PERSON leak rate is the SLO should
-// set GLINER_QUANT=fp32 (or fp16) and accept the larger image + ~2x
-// inference latency. See bench/probes/fp32_vs_int8/REPORT.md.
-//
-// Default stays INT8 so existing deployments and the ~470 MB NER image
-// are unchanged.
+// 0.40 threshold and leaks PII. Memory-constrained deployments that
+// need to keep the image small (~530 MB instead of ~770 MB) can opt
+// back into INT8 with GLINER_QUANT=int8 and accept the recall cost.
+// See bench/probes/fp32_vs_int8/REPORT.md.
 func glinerOnnxFileFromEnv(modelName string) string {
 	// Explicit path wins outright.
 	if raw := strings.TrimSpace(os.Getenv("GLINER_ONNX_FILE")); raw != "" {
@@ -285,7 +283,18 @@ func glinerOnnxFileFromEnv(modelName string) string {
 
 	quant := strings.ToLower(strings.TrimSpace(os.Getenv("GLINER_QUANT")))
 	switch quant {
-	case "", "int8", "quint8", "quantized":
+	case "", "fp32", "float32", "full":
+		// FP32 is the production default: the matrix proved INT8
+		// uniformly depresses recall vs full precision (Σ ALL leak
+		// 20.7% FP32 vs 26.6% INT8 across 30 corpora × 5 languages).
+		// The image grows from ~530 MB to ~770 MB; small price for
+		// 6pp better leak rate.
+		return "onnx/model.onnx"
+	case "int8", "quint8", "quantized":
+		// Opt-in for memory-constrained deployments: the INT8 build
+		// is ~196 MB on disk vs ~370 MB for FP32, but leaks more PII
+		// on multilingual legal / clinical text. Use only when image
+		// size is the binding constraint.
 		return int8Name
 	case "fp16", "float16":
 		// CAVEAT: knowledgator/gliner-pii-base-v1.0's shipped
@@ -296,14 +305,11 @@ func glinerOnnxFileFromEnv(modelName string) string {
 		// back to patterns-only. The mapping is kept (a future fixed
 		// FP16 export from the upstream repo may load cleanly), but as
 		// of now GLINER_QUANT=fp16 does NOT work for this model — use
-		// fp32 for the full-precision build. The bench matrix's
-		// quantization-tradeoff column uses fp32 for the same reason.
+		// fp32 (the default) for the full-precision build.
 		return "onnx/model_fp16.onnx"
-	case "fp32", "float32", "full":
-		return "onnx/model.onnx"
 	default:
-		log.Printf("GLINER_QUANT=%q not recognised (valid: int8, fp16, fp32); defaulting to int8", quant)
-		return int8Name
+		log.Printf("GLINER_QUANT=%q not recognised (valid: fp32, int8, fp16); defaulting to fp32", quant)
+		return "onnx/model.onnx"
 	}
 }
 

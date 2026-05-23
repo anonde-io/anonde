@@ -102,7 +102,7 @@ docker build -f Dockerfile.anonde -t anonde:patterns .
 docker run --rm -p 8081:8080 anonde:patterns
 ```
 
-The NER variant (GLiNER + libonnxruntime baked in, ~470 MB) builds the same way from `Dockerfile.anonde-ner`. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars, image internals, and Fly.io configs.
+The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default — the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars, image internals, and Fly.io configs.
 
 Hit the running server:
 
