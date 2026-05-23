@@ -44,7 +44,7 @@ func TestDEClinicalIDRecognizer(t *testing.T) {
 		{"Kundennummer dashed", "Kundennummer: KD-6556039\nIBAN:", []string{"KD-6556039"}},
 		{"Kunden-Nr", "Kunden-Nr.: 9988776655", []string{"9988776655"}},
 		{"Kontonummer", "Kontonummer: 100200300", []string{"100200300"}},
-		{"Kontoauszug Nr slash date", "Kontoauszug Nr. K46473874/26.12.2022", []string{"K46473874/26"}},
+		{"Kontoauszug Nr slash date", "Kontoauszug Nr. K46473874/26.12.2022", []string{"K46473874"}},
 		{"Customer EN", "Customer Number: ACC-552211", []string{"ACC-552211"}},
 		{"Rechnungs-Nr", "Rechnungs-Nr.: R-4477", []string{"R-4477"}},
 

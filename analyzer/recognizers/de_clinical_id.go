@@ -87,7 +87,15 @@ var (
 			// Any sequence of separator chars (whitespace, ., :, ;, tab)
 			// — order-agnostic so we match "Nr.: ", "Nr: ", " :", "\t", "-Nr.\t", etc.
 			`[\s.:;,\t]*` +
-			`([A-Z]{0,4}-?\d[\dA-Z/-]{1,14})\b`,
+			// Value: 0-4 leading letters, optional hyphen, then digit
+			// + alphanumeric/hyphen tail. Slash is INTENTIONALLY excluded
+			// from the tail — including it lets the match eat into an
+			// adjacent date ("K46473874/26.12.2022" became
+			// "K46473874/26" which then loses the conflict pass to the
+			// stronger DATE_TIME finding on the date suffix). Slash-
+			// containing IDs are handled by the dedicated histology
+			// regex `deClinicalIDHistRE`.
+			`([A-Z]{0,4}-?\d[\dA-Z-]{1,14})\b`,
 	)
 
 	// German court-case number shape (Aktenzeichen). Examples:

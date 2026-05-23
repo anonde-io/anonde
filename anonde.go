@@ -97,6 +97,7 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewDEOrganizationRecognizer(),
 		recognizers.NewDELegalFinanceOrgRecognizer(),
 		recognizers.NewBICRecognizer(),
+		recognizers.NewISINRecognizer(),
 		recognizers.NewDEProfessionRecognizer(),
 		recognizers.NewDEAnomalyRecognizer(),
 	}

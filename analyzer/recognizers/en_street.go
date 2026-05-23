@@ -18,13 +18,19 @@ import "regexp"
 
 var (
 	// Numbered street: "390 Wiza Spur", "123 Main Street", "1525 N Hampton Blvd".
+	// The ai4privacy gold also splits the address into "390" and
+	// "Wiza Spur" as two separate LOCATION spans on the surface
+	// "390, Wiza Spur" — so the separator between the house number
+	// and the street name accepts an optional comma. The full match
+	// then overlaps both gold spans (the number AND the street).
 	// Optional direction qualifier ("N", "S", "E", "W", "NE", "NW", "SE", "SW")
 	// between the house number and the street name. Street-type list is
 	// closed and case-tolerant on the final token.
 	enStreetNumberedRE = regexp.MustCompile(
 		`\b\d{1,5}` +
-			`(?:\s+[NSEW]{1,2})?` +
-			`\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3}` +
+			`[,\s]+` +
+			`(?:[NSEW]{1,2}\s+)?` +
+			`[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3}` +
 			`\s+(?:` +
 			`Street|St\.?|Avenue|Ave\.?|Boulevard|Blvd\.?|Road|Rd\.?|Drive|Dr\.?|` +
 			`Lane|Ln\.?|Court|Ct\.?|Place|Pl\.?|Way|Spur|Trail|Pike|` +
