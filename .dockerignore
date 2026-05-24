@@ -40,7 +40,6 @@ benchmark/
 Dockerfile.*
 docker-compose.yml
 .dockerignore
-fly.toml
 
 # Planning artifacts (typically untracked / local-only)
 TODO.md

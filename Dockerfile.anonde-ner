@@ -10,8 +10,8 @@
 #
 # Build:
 #   docker build -f Dockerfile.anonde-ner -t anonde-ner .
-# Deploy to fly:
-#   fly deploy -a anonde-platform --dockerfile Dockerfile.anonde-ner
+# Run on any docker-capable host:
+#   docker run -d -p 8080:8080 -e ANALYZER_BACKEND=gliner -e WARMUP_ON_START=1 anonde-ner
 #
 # Why this image is heavier than Dockerfile.anonde:
 #   - CGO_ENABLED=1 is required because the GLiNER recognizer uses

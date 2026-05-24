@@ -1,26 +1,23 @@
 ---
 name: anonde
 description: |
-  Apply when working on the anonde codebase (PII detection + anonymization, German-first, local-first, Fly.io deployed). Loads project-specific facts: production stack, file-path map, current bench snapshot, deploy + CI runbooks. The conceptual / pattern-level material lives in the `pii-engineer` skill — invoke both together when designing or debugging.
+  Apply when working on the anonde codebase (PII detection + anonymization, global PII coverage with strong DE proof points, local-first, OSS + self-hosted). Loads project-specific facts: image variants, file-path map, current bench snapshot, deploy + CI runbooks. PII-engineering concepts live in the `pii-engineer` skill; OSS service + deployment patterns live in the `oss-engineer` skill — invoke alongside when designing or debugging.
 allowed-tools: Read, Bash, Edit, Write, Grep, Glob
 ---
 
 # anonde — repo-specific reference
 
-> Concepts and general PII-engineering patterns live in the **`pii-engineer`** skill. This skill carries only the facts that are anonde-specific and will rot if the codebase changes (file paths, commit hashes, deploy URLs, bench numbers).
+> Concepts and general PII-engineering patterns live in the **`pii-engineer`** skill. OSS service + self-hosting patterns (Dockerfiles, build tags, CI hygiene, release discipline) live in the **`oss-engineer`** skill. This skill carries only the facts that are anonde-specific and will rot if the codebase changes (file paths, commit hashes, reference-deploy URLs, bench numbers).
 
 ## Production stack (verified 2026-05-13)
 
 | | What ships |
 |---|---|
-| **Public URL** | `https://anonde-platform.fly.dev` |
-| **Fly app** | `anonde-platform` in `iad` |
-| **Image** | `Dockerfile.anonde-ner` — `distroless/cc-debian12` base, ~470 MB, CGO=1, libonnxruntime 1.26.0 at `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`, GLiNER model baked into `/models/` |
+| **Image (NER)** | `Dockerfile.anonde-ner` — `distroless/cc-debian12` base, ~470 MB, CGO=1, libonnxruntime 1.26.0 at `/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1`, GLiNER model baked into `/models/` |
 | **Backend** | `ANALYZER_BACKEND=gliner`, model `knowledgator/gliner-pii-base-v1.0`, ONNX `onnx/model_quint8.onnx`, threshold `0.40` |
 | **Build tag** | `-tags hugot` (historical name — enables both Hugot AND GLiNER recognizers) |
 | **Default build** | `Dockerfile.anonde` — pure Go, no CGO, patterns-only (~12 MB) |
-| **Fly config (NER)** | `fly.ner.toml` |
-| **Fly config (patterns)** | `fly.toml` |
+| **Reference-deploy config** | Kept local (gitignored), not part of the OSS surface. |
 
 ## File-path map
 
@@ -121,6 +118,10 @@ rm bench/corpora/<c>/data/anonde_<engine>.jsonl && make -C bench corpus-<c>
 
 ## Deployment runbook (anonde-specific)
 
+The reference deploy is just `docker run` on a single host. Specific
+host configs (compose files, machine configs for a given provider) are
+kept local and gitignored — they're not part of the OSS surface.
+
 ```bash
 # 1. Build + verify locally
 go build ./... && go build -tags hugot ./...
@@ -129,22 +130,23 @@ go test ./analyzer/... ./anonymizer/... ./internal/...
 # 2. Local Docker smoke (slower on Apple Silicon via Rosetta)
 docker build -f Dockerfile.anonde-ner -t anonde-ner:test .
 docker run --rm -d --name anonde-test -e WARMUP_ON_START=1 -p 18080:8080 anonde-ner:test
-sleep 8 && curl -sS http://localhost:18080/healthz
+sleep 8 && curl -sS http://localhost:18080/v1/health
 docker rm -f anonde-test
 
-# 3. Deploy to Fly
-fly deploy --config fly.ner.toml -a anonde-platform
+# 3. Run the image on the target host (any docker-capable host works)
+docker run -d --restart=always \
+  -e ANALYZER_BACKEND=gliner \
+  -e WARMUP_ON_START=1 \
+  -p 8080:8080 \
+  ghcr.io/moogacs/anonde-ner:latest
 
-# 4. Wake the machine (auto-suspend on idle)
-curl -sS https://anonde-platform.fly.dev/healthz
-
-# 5. End-to-end smoke
-curl -sS -X POST https://anonde-platform.fly.dev/v1/anonymizations \
+# 4. End-to-end smoke
+curl -sS -X POST http://<host>:8080/v1/anonymizations \
   -H "Content-Type: application/json" \
   -d '{"tenant_id":"smoke","doc_id":"t1","content":"Patient Herr Müller, geboren 14.03.1962, Hauptstr. 8, 10115 Berlin, Tel 030-12345678","language":"de"}'
 
-# 6. Verify GLiNER actually fired
-fly logs -a anonde-platform | grep "gliner:" | head -5
+# 5. Verify GLiNER actually fired (logs on the target host)
+docker logs <container> 2>&1 | grep "gliner:" | head -5
 # Want: "gliner: ready ..." + "gliner: analyze ... raw_candidates=N" with N>0
 ```
 
