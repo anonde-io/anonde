@@ -37,16 +37,20 @@
 #     threshold tuning brittle.
 
 # Pinned: when bumping, update both the URL and the symlink path below if
-# MSFT changes the tarball layout. Last verified 2026-05-13.
+# MSFT changes the tarball layout. Last verified 2026-05-13. Microsoft
+# publishes both linux-x64 and linux-aarch64 tarballs at the same release
+# URL pattern, so the multi-arch switch in this Dockerfile is a one-line
+# arch-string substitution at fetch time (see ORT_ARCH below).
 ARG ONNXRUNTIME_VERSION=1.26.0
 
-# No `--platform=$BUILDPLATFORM` — we pin the build to linux/amd64 (the
-# target Fly machine class). On an arm64 build host (Apple Silicon),
-# Docker Desktop emulates amd64 via Rosetta/QEMU. Slower locally but
-# matches deploy target exactly, avoids cross-compile-with-CGO pain, and
-# the DOWNLOAD_MODELS_ONLY bake step runs the produced binary in the same
-# stage which only works if the binary is the host arch.
-FROM --platform=linux/amd64 golang:1.26-bookworm AS build
+# Multi-arch via buildx. BUILDPLATFORM = the runner; TARGETPLATFORM = the
+# image arch being produced. The build stage runs in TARGETPLATFORM (via
+# QEMU when cross-building), so the produced binary AND the bake step
+# both land natively for the target arch. This is what lets the
+# DOWNLOAD_MODELS_ONLY=1 RUN below execute the built binary on every
+# target arch.
+FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS build
+ARG TARGETARCH
 WORKDIR /src
 
 # CA certs for HF Hub HTTPS + curl/tar to fetch the libonnxruntime release.
@@ -64,18 +68,26 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # --- fetch libonnxruntime ------------------------------------------------
-# Microsoft publishes signed Linux-x64 release tarballs on GitHub. The
-# `libonnxruntime.so.<ver>` inside is what yalue/onnxruntime_go dlopens at
-# runtime.
+# Microsoft publishes signed Linux release tarballs on GitHub for both
+# x64 (amd64) and aarch64 (arm64). Docker buildx sets TARGETARCH to
+# `amd64` or `arm64`; MSFT uses `x64` and `aarch64` in the tarball name,
+# hence the small translation table below. Both layouts share the same
+# `lib/libonnxruntime.so.${VER}` internal path.
 ARG ONNXRUNTIME_VERSION
-RUN curl -fsSL \
-        "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) ORT_ARCH=x64 ;; \
+        arm64) ORT_ARCH=aarch64 ;; \
+        *) echo "unsupported TARGETARCH=$TARGETARCH"; exit 1 ;; \
+    esac; \
+    curl -fsSL \
+        "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION}.tgz" \
         -o /tmp/ort.tgz && \
     tar -xzf /tmp/ort.tgz -C /tmp && \
     mkdir -p /out/lib && \
-    cp /tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} \
+    cp /tmp/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} \
        /out/lib/libonnxruntime.so.1 && \
-    rm -rf /tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION} /tmp/ort.tgz
+    rm -rf /tmp/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION} /tmp/ort.tgz
 
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -103,25 +115,32 @@ RUN /out/anonde
 # libonnxruntime.so needs to dlopen and link cleanly. No shell, no package
 # manager, no busybox — same hardened posture as distroless/static.
 #
-# Arch pinned to linux/amd64 to match the build stage. Without this,
-# `docker pull` on an arm64 host (Apple Silicon) fetches the arm64
-# variant of the distroless image, leaving an amd64 binary in an arm64
-# runtime → fails at startup with rosetta/ld-linux errors.
-FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12
+# TARGETPLATFORM ensures the distroless variant matches the build-stage
+# arch. Without it, buildx would pick the runner's arch and a cross-arch
+# build would fail at COPY (binary arch ≠ runtime base arch).
+#
+# libonnxruntime.so.1 destination differs by arch — glibc multiarch puts
+# it under x86_64-linux-gnu on amd64 and aarch64-linux-gnu on arm64. We
+# accept whichever path applies and update ORT_SO_PATH accordingly below.
+FROM --platform=$TARGETPLATFORM gcr.io/distroless/cc-debian12
+ARG TARGETARCH
 COPY --from=build /out/anonde /anonde
-COPY --from=build /out/lib/libonnxruntime.so.1 /usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+# Stage the .so in /lib first; the per-arch ENV symlinks ORT_SO_PATH to
+# this canonical location, dodging the x86_64/aarch64 multiarch path
+# divergence entirely.
+COPY --from=build /out/lib/libonnxruntime.so.1 /lib/libonnxruntime.so.1
 COPY --from=build /models /models
 
 # Runtime defaults: gliner backend, model+tokenizer on disk, no download.
 # ORT_SO_PATH is the absolute lookup yalue/onnxruntime_go does at session
-# init; pinned to the COPY target above so it works regardless of
-# LD_LIBRARY_PATH (distroless doesn't set any defaults).
+# init; pinned to the /lib COPY target above so the path is identical
+# across amd64 / arm64 (avoids the glibc-multiarch path split).
 ENV ANALYZER_BACKEND=gliner \
     GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
     GLINER_ONNX_FILE=onnx/model.onnx \
     GLINER_THRESHOLD=0.40 \
-    ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+    ORT_SO_PATH=/lib/libonnxruntime.so.1
 
 EXPOSE 8080
 ENTRYPOINT ["/anonde"]
