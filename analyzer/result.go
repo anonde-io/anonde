@@ -104,6 +104,19 @@ func SortResults(results []RecognizerResult) {
 // desc) this is the documented anonde behavior — flagged here so future
 // maintainers don't expect optimal-cover behavior.
 func RemoveConflicts(results []RecognizerResult) []RecognizerResult {
+	return RemoveConflictsWithCallback(results, nil)
+}
+
+// RemoveConflictsWithCallback is RemoveConflicts with an optional
+// per-conflict observer. The callback fires once per overlapping
+// pair the resolver examines, passing the winner (kept) and loser
+// (discarded) findings in that order. nil cb is identical to
+// RemoveConflicts.
+//
+// Wired through the analyzer engine's metrics Recorder so
+// anonde_conflicts_resolved_total tracks NER-vs-pattern arbitration
+// in production; tests pass nil and ignore the surface.
+func RemoveConflictsWithCallback(results []RecognizerResult, cb func(winner, loser RecognizerResult)) []RecognizerResult {
 	if len(results) == 0 {
 		return results
 	}
@@ -116,7 +129,12 @@ func RemoveConflicts(results []RecognizerResult) []RecognizerResult {
 			continue
 		}
 		if shouldReplace(last, r) {
+			if cb != nil {
+				cb(r, last)
+			}
 			kept[len(kept)-1] = r
+		} else if cb != nil {
+			cb(last, r)
 		}
 	}
 	return kept

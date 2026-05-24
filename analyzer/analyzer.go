@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/anonde-io/anonde/internal/metrics"
 )
 
 // ansiEscapeRE matches ANSI SGR / CSI sequences that real-world log
@@ -139,6 +141,45 @@ type AnalyzerEngine struct {
 	// missed. Fails open: on any error returns nothing, so attaching
 	// an auditor cannot RAISE leak rate vs. not attaching one.
 	Auditor Auditor
+
+	// metrics records per-finding and per-conflict observations. Nil
+	// is safe — the analyzer treats it as a no-op. Set via
+	// SetMetrics(r) from cmd/anonde wiring after the engine is built;
+	// it's separate from the constructor because the constructor sees
+	// fan-out through many helper functions (DefaultAnalyzerEngine,
+	// DefaultAnalyzerEngineWithGLiNERConfig, etc.) and a SetMetrics
+	// hook keeps that fan-out unchanged.
+	metrics metrics.Recorder
+}
+
+// SetMetrics attaches a metrics Recorder for per-finding and
+// per-conflict instrumentation. Pass metrics.NewNoop() to explicitly
+// disable, or just don't call this — nil and noop behave identically.
+// Safe to call once at boot; not goroutine-safe to reassign at
+// runtime (no use case for that yet).
+func (e *AnalyzerEngine) SetMetrics(r metrics.Recorder) {
+	e.metrics = r
+}
+
+// recorder returns the analyzer's Recorder, never nil.
+func (e *AnalyzerEngine) recorder() metrics.Recorder {
+	if e.metrics == nil {
+		return metrics.NewNoop()
+	}
+	return e.metrics
+}
+
+// conflictKind buckets a RecognizerResult into one of the two
+// metric labels for anonde_conflicts_resolved_total: "ner" for
+// findings produced by a model-backed recognizer, "pattern" for
+// everything else (regex, checksum, vocabulary). Keeps the conflict
+// metric's cardinality at 2×2 — the alternative of labelling by
+// recognizer name would explode to 52×52.
+func conflictKind(r RecognizerResult) string {
+	if isNERRecognizer(r) {
+		return "ner"
+	}
+	return "pattern"
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
@@ -346,9 +387,17 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		all = filtered
 	}
 
-	// 8. Conflict resolution.
+	// 8. Conflict resolution. Wire the metrics callback so
+	// anonde_conflicts_resolved_total{winner_kind, loser_kind}
+	// tracks pattern-vs-NER arbitration in production. Cardinality is
+	// 2×2 since the kinds collapse to {"ner","pattern"} regardless of
+	// recognizer name.
+	rec := e.recorder()
+	conflictCB := func(winner, loser RecognizerResult) {
+		rec.ConflictResolved(conflictKind(winner), conflictKind(loser))
+	}
 	if cfg.RemoveConflicts {
-		all = RemoveConflicts(all)
+		all = RemoveConflictsWithCallback(all, conflictCB)
 	} else {
 		SortResults(all)
 	}
@@ -361,11 +410,21 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		if err == nil && len(extra) > 0 {
 			all = append(all, extra...)
 			if cfg.RemoveConflicts {
-				all = RemoveConflicts(all)
+				all = RemoveConflictsWithCallback(all, conflictCB)
 			} else {
 				SortResults(all)
 			}
 		}
+	}
+
+	// Emit per-finding metrics over the surviving set. Done here (vs.
+	// upstream of conflict resolution) because we want the
+	// score histogram + entities counter to reflect what the
+	// anonymizer actually tokenizes — losers in a conflict don't
+	// show up downstream and shouldn't be double-counted as
+	// "detected".
+	for _, r := range all {
+		rec.EntityDetected(r.EntityType, r.RecognizerName, r.Score)
 	}
 
 	// 10. Translate findings from cleanText offsets back to the

@@ -56,6 +56,12 @@ func (v *countingVault) Delete(_ context.Context, tenantID, token string) error 
 	return nil
 }
 
+func (v *countingVault) Stats() core.VaultStats {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return core.VaultStats{Entries: int64(len(v.data))}
+}
+
 // ─── Size zero returns the underlying unchanged ────────────────────
 
 func TestCachedVault_SizeZero_NoWrapper(t *testing.T) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -11,11 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
 	"github.com/anonde-io/anonde/internal/api"
 	"github.com/anonde-io/anonde/internal/core"
+	"github.com/anonde-io/anonde/internal/metrics"
 	"github.com/anonde-io/anonde/internal/policy"
 	"github.com/anonde-io/anonde/internal/store"
 )
@@ -51,12 +56,31 @@ func main() {
 	vault, anonStore, storeName, closeStore := selectStoreBackend(vaultTTL, storeTTL)
 	defer closeStore()
 
+	// Build the metrics surface once. The Recorder is wired into both
+	// the analyzer and the core.Service, and the same private registry
+	// backs the optional second listener below. Opt-out is total: with
+	// METRICS_ENABLED=false the analyzer/Service see a no-op Recorder
+	// and the second listener is suppressed regardless of METRICS_BIND.
+	metricsEnabled := boolFromEnv("METRICS_ENABLED", true)
+	var (
+		metricsReg *prometheus.Registry
+		recorder   metrics.Recorder
+	)
+	if metricsEnabled {
+		metricsReg = prometheus.NewRegistry()
+		recorder = metrics.New(metricsReg)
+	} else {
+		recorder = metrics.NewNoop()
+	}
+	analyzerEngine.SetMetrics(recorder)
+
 	svc := core.NewService(
 		analyzerEngine,
 		anonde.DefaultAnonymizerEngine(),
 		vault,
 		anonStore,
 		&policy.Static{},
+		recorder,
 	)
 	svc.SetVersionInfo(core.VersionInfo{
 		AnalyzerBackend: backendName,
@@ -65,6 +89,31 @@ func main() {
 		GoVersion:       runtime.Version(),
 		APIVersion:      "v1",
 	})
+
+	// Register the scrape-time gauges collector now that vault / store
+	// / analyzer are all known. Each callback is a thin adapter to keep
+	// the metrics package free of internal/core and internal/store
+	// dependencies (and vice versa). Wired only when metrics are on —
+	// otherwise the registry doesn't exist.
+	if metricsEnabled {
+		metrics.RegisterGauges(metricsReg, metrics.GaugesConfig{
+			Vault: func() metrics.Stats {
+				s := vault.Stats()
+				return metrics.Stats{Entries: s.Entries, Bytes: s.Bytes}
+			},
+			Store: func() metrics.Stats {
+				s := anonStore.Stats()
+				return metrics.Stats{Entries: s.Entries, Bytes: s.Bytes}
+			},
+			CustomRecognizers: func() int { return len(analyzerEngine.Registry.All()) },
+			NEREnabled:        func() bool { return backendName != "patterns" && backendName != "" },
+			Build: metrics.BuildInfo{
+				Version:   buildSHA(),
+				BuildTags: buildTagsLabel(),
+				Backend:   backendName,
+			},
+		})
+	}
 
 	httpAPI := api.NewHTTPServer(svc)
 	httpAPI.SetMaxRequestBytes(maxBytes)
@@ -93,10 +142,82 @@ func main() {
 		Protocols:         api.NewServerProtocols(),
 	}
 
+	// Optional second listener for /metrics + /healthz. We keep
+	// Prometheus off the public :8081 surface so an operator can
+	// expose 8081 publicly while leaving the metrics endpoint bound
+	// to localhost (recommended: METRICS_BIND=127.0.0.1:9090) or to a
+	// private network interface. METRICS_BIND empty → no second
+	// listener, no surface change vs. pre-metrics anonde.
+	metricsBind := strings.TrimSpace(os.Getenv("METRICS_BIND"))
+	if metricsEnabled && metricsBind != "" {
+		startMetricsListener(metricsBind, metricsReg)
+	}
+
 	log.Printf("anonde server listening on %s (max_request_bytes=%d backend=%s model=%s store=%s)",
 		addr, maxBytes, backendName, modelName, storeName)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
+	}
+}
+
+// startMetricsListener spawns the second HTTP server in a goroutine.
+// Only /metrics and /healthz are mounted — the public Connect / REST
+// / gRPC routes stay on the primary listener. A non-fatal error on
+// boot is logged but does not kill the main process: metrics being
+// unavailable should not take the data plane down.
+//
+// Operators should bind to 127.0.0.1:9090 by default and let their
+// network policy (or Prometheus scrape config) reach in over the
+// loopback. Binding to :9090 exposes metrics on every interface and
+// is acceptable only on an already-firewalled host.
+func startMetricsListener(bind string, reg *prometheus.Registry) {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+		// Default registry is intentionally NOT used. EnableOpenMetrics
+		// gives us exemplars-capable exposition (Prometheus 2.43+
+		// accepts it transparently).
+		EnableOpenMetrics: true,
+	}))
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	srv := &http.Server{
+		Addr:              bind,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Printf("metrics listener on %s (routes: /metrics, /healthz)", bind)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("metrics listener stopped: %v", err)
+		}
+	}()
+}
+
+// buildTagsLabel reports which optional build tag set the binary was
+// compiled with. Stamped onto anonde_build_info so dashboards can
+// distinguish a patterns-only image (default build) from an NER
+// image (-tags hugot). Set by build_tags_*.go.
+var buildTagsLabel = func() string { return "default" }
+
+// boolFromEnv parses a yes/no/true/false/1/0-style env var with a
+// fallback. Unrecognised values are logged-and-fall-back rather than
+// fatal so a typo in a deploy doesn't gate startup.
+func boolFromEnv(key string, fallback bool) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch raw {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		log.Printf("ignoring %s=%q (use true|false); defaulting to %v", key, raw, fallback)
+		return fallback
 	}
 }
 

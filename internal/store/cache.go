@@ -99,6 +99,11 @@ func (c *CachedVault) Get(ctx context.Context, tenantID, token string) (core.Vau
 	return e, nil
 }
 
+// Stats forwards to the underlying. The cache itself does not add
+// entries to the vault — it only mirrors a subset of them — so the
+// underlying's count is the authoritative value to publish.
+func (c *CachedVault) Stats() core.VaultStats { return c.underlying.Stats() }
+
 func (c *CachedVault) Delete(ctx context.Context, tenantID, token string) error {
 	key := cacheKey(tenantID, token)
 	// Remove from cache first so concurrent Gets don't see a stale

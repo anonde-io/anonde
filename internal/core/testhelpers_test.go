@@ -43,6 +43,12 @@ func (v *testVault) Delete(_ context.Context, tenantID, token string) error {
 	return nil
 }
 
+func (v *testVault) Stats() VaultStats {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return VaultStats{Entries: int64(len(v.m)), Bytes: 0}
+}
+
 type testStore struct {
 	mu sync.Mutex
 	m  map[string]StoreRecord
@@ -76,4 +82,10 @@ func (s *testStore) Delete(_ context.Context, tenantID, id string) (bool, error)
 		delete(s.m, key)
 	}
 	return ok, nil
+}
+
+func (s *testStore) Stats() StoreStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return StoreStats{Entries: int64(len(s.m)), Bytes: 0}
 }
