@@ -37,6 +37,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -95,6 +96,10 @@ func main() {
 		auditorModel    = flag.String("auditor-model", "llama3.1:8b", "Ollama model for the auditor")
 		auditorTimeout  = flag.Int("auditor-timeout-sec", 60, "auditor per-doc timeout")
 		auditorMaxChars = flag.Int("auditor-max-chars", 8000, "auditor truncates docs longer than this")
+
+		flatGLiNERModel = flag.String("flat-gliner-model", "", "additional flat-decoder GLiNER model id (e.g. knowledgator/gliner-pii-large-v1.0); registered alongside the base")
+		flatGLiNEROnnx  = flag.String("flat-gliner-onnx", "", "ONNX file path inside the flat-GLiNER repo (e.g. model.onnx)")
+		flatGLiNERThr   = flag.Float64("flat-gliner-threshold", 0, "flat-GLiNER threshold (0 = recognizer default)")
 	)
 	flag.Parse()
 	if *inPath == "" || *outPath == "" {
@@ -141,6 +146,25 @@ func main() {
 	}
 	if *disableNER {
 		nerOff = true
+	}
+
+	// Optional second-stage GLiNER (token / flat decoder, e.g. LARGE).
+	// Registers alongside the existing recognizers so both inferences
+	// run per doc; the analyzer's RemoveConflicts merges overlaps. Only
+	// wired for the `gliner` backend — patterns-only / hugot ignore it.
+	if *backend == "gliner" && strings.TrimSpace(*flatGLiNERModel) != "" {
+		flatRec := recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
+			ModelsDir:         *modelsDir,
+			ModelName:         *flatGLiNERModel,
+			OnnxFilePath:      *flatGLiNEROnnx,
+			AutoDownload:      *autoDL,
+			Threshold:         *flatGLiNERThr,
+			SharedLibraryPath: *ortLibPath,
+		})
+		engine.Registry.Add(flatRec)
+		engineLabel += "+flat[" + *flatGLiNERModel + "]"
+		log.Printf("flat-gliner: registered alongside base (model=%s onnx=%q threshold=%.2f)",
+			*flatGLiNERModel, *flatGLiNEROnnx, *flatGLiNERThr)
 	}
 
 	var ollamaRec *reconciler.Ollama
