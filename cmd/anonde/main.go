@@ -310,6 +310,21 @@ func listenAddr() string {
 //     Open-set NER, substantially better German clinical recall than hugot
 //     (see bench/corpora/openmed/REPORT_FINAL.md). Requires `-tags hugot` AND
 //     CGO_ENABLED=1 AND libonnxruntime.so reachable at runtime.
+//   - ANALYZER_BACKEND=gliner-flat — single GLiNER recognizer with the
+//     flat / token decoder (knowledgator/gliner-pii-large-v1.0 and other
+//     4-input BIO ONNX exports). Same build / CGO / libonnxruntime
+//     requirements as gliner. Same env knobs (GLINER_MODEL,
+//     GLINER_THRESHOLD, GLINER_MODELS_DIR, ORT_SO_PATH).
+//   - ANALYZER_BACKEND=gliner-stack — registers BOTH the span-decoder
+//     base recognizer AND a flat-decoder recognizer in the same engine
+//     so each doc is scored by both models and the conflict resolver
+//     unions their findings. Configured by the existing GLINER_* env
+//     vars (BASE slot) plus the ANONDE_GLINER_FLAT_* env vars (flat slot,
+//     defaults to knowledgator/gliner-pii-large-v1.0 / model.onnx).
+//     ~2x latency vs gliner alone; pairs with Dockerfile.anonde-ner-stack
+//     which bakes both ONNX exports at build time. This is the lowest-
+//     leak deployment shape (local bench Σ ALL ≈ 9.7% across 30 corpora
+//     vs ~12.9% for gliner alone).
 //   - ANALYZER_BACKEND=ollama — local Ollama daemon for users with an
 //     existing Ollama setup.
 //
@@ -339,17 +354,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 	case "gliner":
 		modelName := getenvDefault("GLINER_MODEL", "onnx-community/gliner_multi_pii-v1")
 		onnxPath := glinerOnnxFileFromEnv(modelName)
-		// Threshold is the most impactful knob — multilingual variants
-		// typically need ~0.25, the English base ~0.40. Override without
-		// rebuilding via GLINER_THRESHOLD. Zero = recognizer default (0.40).
-		threshold := 0.0
-		if raw := strings.TrimSpace(os.Getenv("GLINER_THRESHOLD")); raw != "" {
-			if v, err := strconv.ParseFloat(raw, 64); err == nil {
-				threshold = v
-			} else {
-				log.Printf("GLINER_THRESHOLD=%q ignored: %v", raw, err)
-			}
-		}
+		threshold := glinerThresholdFromEnv()
 		// Multi-model GLiNER stacking: if ANONDE_NER_STACK is set,
 		// build an ensemble across the listed model IDs instead of the
 		// single-model path. Unset → fall through to current behaviour
@@ -373,10 +378,89 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			Threshold:         threshold,
 			// Labels left empty → DefaultPIILabels.
 		}), "gliner", modelName
+	case "gliner-flat":
+		// Single flat / token-decoder GLiNER (4-input BIO ONNX export).
+		// Same knobs as `gliner` — GLINER_MODEL, GLINER_THRESHOLD,
+		// GLINER_MODELS_DIR, ORT_SO_PATH. Defaults aimed at the LARGE PII
+		// model since that's the canonical flat-decoder export today.
+		modelName := getenvDefault("GLINER_MODEL", "knowledgator/gliner-pii-large-v1.0")
+		onnxPath := glinerOnnxFileFromEnv(modelName)
+		threshold := glinerThresholdFromEnv()
+		log.Printf("analyzer backend: gliner-flat (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
+		return anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(recognizers.GLiNERConfig{
+			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
+			ModelName:         modelName,
+			OnnxFilePath:      onnxPath,
+			AutoDownload:      true,
+			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
+			Threshold:         threshold,
+		}), "gliner-flat", modelName
+	case "gliner-stack":
+		// Span-decoder BASE + flat-decoder FLAT in one engine. The local
+		// 30-corpus bench measured Σ ALL ≈ 9.7% with this shape (vs
+		// ~12.9% for `gliner` alone). Two ONNX sessions resident; ~2x
+		// the per-request inference latency. Pair with
+		// Dockerfile.anonde-ner-stack which bakes both ONNX exports.
+		baseModel := getenvDefault("GLINER_MODEL", "knowledgator/gliner-pii-base-v1.0")
+		baseOnnx := glinerOnnxFileFromEnv(baseModel)
+		baseThreshold := glinerThresholdFromEnv()
+		flatModel := getenvDefault("ANONDE_GLINER_FLAT_MODEL", "knowledgator/gliner-pii-large-v1.0")
+		// LARGE export ships model.onnx at the repo root, not under onnx/.
+		// ANONDE_GLINER_FLAT_ONNX_FILE overrides for other flat exports.
+		flatOnnx := getenvDefault("ANONDE_GLINER_FLAT_ONNX_FILE", "model.onnx")
+		flatThreshold := baseThreshold
+		if raw := strings.TrimSpace(os.Getenv("ANONDE_GLINER_FLAT_THRESHOLD")); raw != "" {
+			if v, err := strconv.ParseFloat(raw, 64); err == nil {
+				flatThreshold = v
+			} else {
+				log.Printf("ANONDE_GLINER_FLAT_THRESHOLD=%q ignored: %v", raw, err)
+			}
+		}
+		log.Printf("analyzer backend: gliner-stack (base=%s onnx=%s thr=%.2f) + flat (model=%s onnx=%s thr=%.2f)",
+			baseModel, baseOnnx, baseThreshold, flatModel, flatOnnx, flatThreshold)
+		engine := anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
+			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
+			ModelName:         baseModel,
+			OnnxFilePath:      baseOnnx,
+			AutoDownload:      true,
+			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
+			Threshold:         baseThreshold,
+		})
+		// Register the flat recognizer alongside the base. Same registry
+		// dispatches to both per doc; analyzer.RemoveConflicts merges
+		// overlaps via the NER-preferred rule for PERSON/ORG/LOC/AGE/
+		// PROFESSION/NRP.
+		engine.Registry.Add(recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
+			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
+			ModelName:         flatModel,
+			OnnxFilePath:      flatOnnx,
+			AutoDownload:      true,
+			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
+			Threshold:         flatThreshold,
+		}))
+		return engine, "gliner-stack", baseModel + "+" + flatModel
 	default:
-		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, ollama)", backend)
+		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, gliner-flat, gliner-stack, ollama)", backend)
 		return nil, "", ""
 	}
+}
+
+// glinerThresholdFromEnv parses GLINER_THRESHOLD into a float. Zero means
+// "use the recognizer's compiled-in default" (currently 0.40). Threshold
+// is the highest-impact GLiNER knob — multilingual variants typically
+// need ~0.25, the English base ~0.40. Override without rebuilding via
+// the env var.
+func glinerThresholdFromEnv() float64 {
+	raw := strings.TrimSpace(os.Getenv("GLINER_THRESHOLD"))
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		log.Printf("GLINER_THRESHOLD=%q ignored: %v", raw, err)
+		return 0
+	}
+	return v
 }
 
 // glinerOnnxFileFromEnv resolves which ONNX export of the GLiNER model
