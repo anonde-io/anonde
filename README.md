@@ -17,6 +17,13 @@
   <a href="bench/REPORT_MATRIX.md">Benchmarks</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/anonde-io/anonde/actions/workflows/bench.yml"><img src="https://github.com/anonde-io/anonde/actions/workflows/bench.yml/badge.svg" alt="Bench"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8.svg" alt="Go 1.26">
+  <img src="https://img.shields.io/badge/image-12MB%20(patterns)%20%7C%20~770MB%20(NER)-2496ED.svg" alt="Image size">
+</p>
+
 ---
 
 ## See it in 10 seconds
@@ -102,7 +109,7 @@ docker build -f Dockerfile.anonde -t anonde:patterns .
 docker run --rm -p 8081:8080 anonde:patterns
 ```
 
-The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default — the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars, image internals, and Fly.io configs.
+The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default — the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars and image internals.
 
 Hit the running server:
 
@@ -179,6 +186,40 @@ streaming SSE de-anonymization lands in v0.1.1. Anthropic and Gemini
 upstreams (selected by the `anthropic/` / `gemini/` model prefix) are on
 the roadmap.
 
+## Write your own recognizer
+
+Extensibility is the part Presidio gets right and we copied. A pattern
+recognizer is a regex, a label, a language list, and an optional set of
+context words that boost the score when they appear nearby.
+
+```go
+// analyzer/recognizers/my_id.go
+package recognizers
+
+import "regexp"
+
+var myIDRE = regexp.MustCompile(`\bMID-\d{6,10}\b`)
+
+// NewMyIDRecognizer detects MY_ID entities.
+func NewMyIDRecognizer() *PatternRecognizer {
+	return NewPatternRecognizerWithContext(
+		"MyIDRecognizer",
+		[]string{"MY_ID"},
+		[]string{"*"},                                // languages; "*" runs on all
+		[]namedPattern{{re: myIDRE, score: 1.0}},
+		[]string{"member id", "membership", "mid"},   // context boosts
+	)
+}
+```
+
+Register it in `anonde.go::patternRecognizers()` and it joins the
+parallel-dispatch pipeline. The conflict resolver handles overlap with
+existing recognizers automatically; NER preferences (PERSON / ORG / LOC
+/ AGE / PROFESSION / NRP) and the full pipeline rules live in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The full 52-recognizer
+catalogue + how to add a model-backed (NER) recognizer is in
+[docs/RECOGNIZERS.md](docs/RECOGNIZERS.md).
+
 ## Built for
 
 - **Healthcare.** Chart summaries, discharge letters, clinical Q&A. Keep PHI off the wire to third-party models.
@@ -210,20 +251,28 @@ anonde-gliner has the lowest leak rate on 5 of 6 corpora. On `wikiann_de` it's 2
 
 Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench harness uses its English pipeline only, and OpenAI Privacy Filter is ~80 s/doc on CPU, which makes it impractical on the larger corpora. Both engines can technically run on more languages; the bench numbers reflect what's been measured, not capability ceilings. Full grid (strict / partial / type-agnostic F1, all corpora, all engines) lives in [bench/REPORT_MATRIX.md](bench/REPORT_MATRIX.md).
 
-## Status
-
-- **Live**: <https://anonde-platform.fly.dev> · [Demo UI](https://anonde.io/demo/)
-- **CI**: `.github/workflows/bench.yml` runs the bench matrix on every relevant PR, with a guard rail that fails if the NER backend silently degrades to patterns-only.
-
 ## Docs
 
 - [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
 - [Operators](docs/OPERATORS.md): Replace, Redact, Mask, Hash, Encrypt, Synthesize
-- [Deployment](docs/DEPLOYMENT.md): Docker, Fly.io, env vars, CI
+- [Deployment](docs/DEPLOYMENT.md): Docker, env vars, CI
 - [Benchmark matrix](bench/REPORT_MATRIX.md): full results
+
+## Contributing & community
+
+- **Issues** — bug reports, feature requests, and questions all welcome.
+  The repo has [issue templates](.github/ISSUE_TEMPLATE/) for each.
+- **Pull requests** — start with [CONTRIBUTING.md](CONTRIBUTING.md) for
+  dev setup, recognizer-adding patterns, and bench expectations. No DCO
+  or CLA — Apache 2.0 §5 grants the inbound license automatically.
+- **Code of conduct** — [Contributor Covenant 2.1](CODE_OF_CONDUCT.md).
+  Conduct concerns go to `conduct@anonde.io`.
+- **Security** — vulnerabilities go through the private channels in
+  [SECURITY.md](SECURITY.md), not public issues.
 
 ## License
 
-See [LICENSE](LICENSE).
+[Apache 2.0](LICENSE). See [`NOTICE`](NOTICE) for the attribution
+notice that downstream redistributors are asked to preserve.
