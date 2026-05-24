@@ -16,7 +16,9 @@
 //
 //   patterns-only   no NER (DisableNER=true) — fastest, no model
 //   hugot           hugot/ONNX TokenClassification (XLM-R PII default)
-//   gliner          GLiNER zero-shot NER (knowledgator/gliner-pii-base-v1.0)
+//   gliner          GLiNER zero-shot NER, span decoder (knowledgator/gliner-pii-base-v1.0)
+//   gliner-flat     GLiNER zero-shot NER, flat / token decoder
+//                   (knowledgator/gliner-pii-large-v1.0 and other 4-input exports)
 //
 // Optional fold-for-parity mode (--fold-parity-labels) collapses
 // STREET_ADDRESS / POSTAL_CODE to LOCATION; needed for the ai4privacy
@@ -73,7 +75,7 @@ func main() {
 		outPath    = flag.String("out", "", "output findings jsonl")
 		threshold  = flag.Float64("threshold", 0.3, "score threshold")
 		language   = flag.String("language", "de", "AnalysisConfig.Language")
-		backend    = flag.String("backend", "patterns-only", "hugot|gliner|patterns-only")
+		backend    = flag.String("backend", "patterns-only", "hugot|gliner|gliner-flat|patterns-only")
 		modelsDir  = flag.String("models-dir", "", "hugot models cache (default ~/.cache/anonde/models)")
 		modelName  = flag.String("model", "", "hugot/gliner model id (empty = backend default)")
 		onnxFile   = flag.String("onnx-file", "", "ONNX file path inside the HF repo (e.g. onnx/model_quantized.onnx); empty = repo default")
@@ -137,12 +139,32 @@ func main() {
 		if *modelName != "" {
 			engineLabel = "anonde-gliner[" + *modelName + "]"
 		}
+	case "gliner-flat":
+		// Flat-decoder GLiNER (token-decoder variant — 4 ONNX inputs,
+		// BIO start/end/inside output). Same registry shape as `gliner`
+		// (all pattern recognizers + one NER recognizer), but the NER
+		// slot is GLiNERFlatRecognizer. Used by the bench's
+		// `anonde-gliner-large` column (knowledgator/gliner-pii-large-v1.0
+		// ships a flat decoder; the span-decoder recognizer used by
+		// `gliner` cannot load it).
+		engine = anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(recognizers.GLiNERConfig{
+			ModelsDir:         *modelsDir,
+			ModelName:         *modelName,
+			OnnxFilePath:      *onnxFile,
+			AutoDownload:      *autoDL,
+			Threshold:         *glinerThr,
+			SharedLibraryPath: *ortLibPath,
+		})
+		engineLabel = "anonde-gliner-flat"
+		if *modelName != "" {
+			engineLabel = "anonde-gliner-flat[" + *modelName + "]"
+		}
 	case "patterns-only", "patterns":
 		engine = anonde.DefaultAnalyzerEngine()
 		nerOff = true
 		engineLabel = "anonde-patterns-only"
 	default:
-		log.Fatalf("unknown --backend %q (valid: hugot, gliner, patterns-only)", *backend)
+		log.Fatalf("unknown --backend %q (valid: hugot, gliner, gliner-flat, patterns-only)", *backend)
 	}
 	if *disableNER {
 		nerOff = true

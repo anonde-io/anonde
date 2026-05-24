@@ -65,6 +65,23 @@ func DefaultAnalyzerEngineWithGLiNERConfig(cfg recognizers.GLiNERConfig) *analyz
 	return analyzer.NewAnalyzerEngine(registry)
 }
 
+// DefaultAnalyzerEngineWithGLiNERFlatConfig wires the flat-decoder
+// (token-decoder) GLiNER recognizer into the standard pattern-recognizer
+// registry. Mirror of DefaultAnalyzerEngineWithGLiNERConfig — same
+// GLiNERConfig, same overall analyzer shape — but the NER slot uses
+// NewGLiNERFlatRecognizer for models whose ONNX export takes 4 inputs
+// and emits BIO-style start/end/inside logits (e.g.
+// knowledgator/gliner-pii-large-v1.0). The span-decoder recognizer used
+// by DefaultAnalyzerEngineWithGLiNERConfig cannot load these exports.
+//
+// Real implementation only; hugot_off.go's stub log.Fatalfs.
+func DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg recognizers.GLiNERConfig) *analyzer.AnalyzerEngine {
+	registry := analyzer.NewRecognizerRegistry()
+	registry.Add(recognizers.NewGLiNERFlatRecognizer(cfg))
+	registry.Add(patternRecognizers()...)
+	return analyzer.NewAnalyzerEngine(registry)
+}
+
 // DefaultAnalyzerEngineWithGLiNEREnsemble wires a pre-built
 // EnsembleGLiNERRecognizer into the standard pattern-recognizer
 // registry. The ensemble itself is constructed by

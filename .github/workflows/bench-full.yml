@@ -31,9 +31,10 @@ name: bench-full
 # cells where production FP32 still loses to a baseline. Same gating
 # pattern as fp32 (full matrix only, via `make gliner-large-X`).
 #
-# The seven engines per corpus: anonde-patterns, anonde-gliner (INT8
+# The eight engines per corpus: anonde-patterns, anonde-gliner (INT8
 # legacy), anonde-gliner-fp32 (FP32, production), anonde-gliner-large
-# (FP32, larger model), gliner-py, presidio, openai-pf.
+# (FP32, larger model — flat decoder), anonde-gliner-stack (FP32 BASE +
+# LARGE flat in one engine), gliner-py, presidio, openai-pf.
 #
 # Triggers:
 #   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
@@ -333,6 +334,7 @@ jobs:
           make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
           make -C bench gliner-fp32-${{ matrix.corpus }} PYTHON=python3
           make -C bench gliner-large-${{ matrix.corpus }} PYTHON=python3
+          make -C bench gliner-stack-${{ matrix.corpus }} PYTHON=python3
           make -C bench openai-pf-${{ matrix.corpus }} PYTHON=python3 RUN_OPENAI_PF=1
 
       # Upload the cell's data dir as an artifact. The render job will
@@ -421,12 +423,13 @@ jobs:
           failures = []
           checked = 0
           root = Path("bench/corpora")
-          # The three GLiNER cells the matrix runs: INT8 legacy + FP32 +
-          # the LARGE FP32 variant.
+          # The four GLiNER cells the matrix runs: INT8 legacy + FP32 +
+          # the LARGE FP32 variant + the BASE+LARGE stack.
           gliner_engines = (
               "anonde-gliner",
               "anonde-gliner-fp32",
               "anonde-gliner-large",
+              "anonde-gliner-stack",
           )
           for corpus_dir in sorted(root.iterdir()):
               gold = corpus_dir / "data" / "corpus.jsonl"
@@ -510,7 +513,7 @@ jobs:
             echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines (7): anonde-patterns, anonde-gliner-fp32 (FP32 ONNX, production), anonde-gliner (INT8 — legacy / memory-constrained reference), anonde-gliner-large (FP32, larger model — scaling probe), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
+            echo "_Engines (8): anonde-patterns, anonde-gliner-fp32 (FP32 ONNX, production), anonde-gliner (INT8 — legacy / memory-constrained reference), anonde-gliner-large (FP32, larger model — flat decoder), anonde-gliner-stack (FP32 BASE + LARGE flat stacked), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
             echo "_Corpora in matrix: 30, across 6 domains × 5 languages._"
             echo "_New since Phase 0: ai4privacy de/fr/it/es (Phase 1) · MAPA en/de/es/fr/it legal (Phase 2) · synth_finance en/de/es/fr/it + synth_logs (Phase 3) · synth_clinical en/fr/it + meddocan_es (Phase 4)._"
             echo "_Excluded from the matrix: pmc_de / wiki_de (precision-probe, no gold), conll2003_de (loader-gated), ggponc_de (DUA registration)._"

@@ -47,6 +47,17 @@ func DefaultAnalyzerEngineWithGLiNERConfig(_ recognizers.GLiNERConfig) *analyzer
 	return nil
 }
 
+// DefaultAnalyzerEngineWithGLiNERFlatConfig is the fail-fast stub for the
+// flat-decoder GLiNER recognizer. Same rationale as
+// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// CGO onnxruntime + tokenizers (both pulled in by the `hugot` build tag).
+func DefaultAnalyzerEngineWithGLiNERFlatConfig(_ recognizers.GLiNERConfig) *analyzer.AnalyzerEngine {
+	log.Fatalf("gliner-flat backend not available: this binary was built without -tags hugot. " +
+		"Rebuild with `go build -tags hugot ./...` for the GLiNER flat-decoder variant, " +
+		"or use ANALYZER_BACKEND=patterns / ollama / hugot instead.")
+	return nil
+}
+
 // DefaultAnalyzerEngineWithGLiNEREnsemble is the fail-fast stub for the
 // GLiNER ensemble recognizer. Same rationale as
 // DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
