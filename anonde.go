@@ -42,6 +42,14 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 
 		// Cross-language structured PII
 		recognizers.NewSocialHandleRecognizer(),
+		recognizers.NewUsernameRecognizer(),
+
+		// Romance-language streets (Italian / French / Spanish). German
+		// streets live with the DE block below; English under the US/EN
+		// block above.
+		recognizers.NewFRStreetRecognizer(),
+		recognizers.NewITStreetRecognizer(),
+		recognizers.NewESStreetRecognizer(),
 
 		// United Kingdom
 		recognizers.NewUKNHSRecognizer(),
