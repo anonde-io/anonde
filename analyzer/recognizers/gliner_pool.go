@@ -79,6 +79,15 @@ type GLiNERPool struct {
 	// ctx-cancellable acquisition for free via `select`.
 	instances chan *GLiNERRecognizer
 
+	// recs is a parallel slice holding the same N pointers the channel
+	// buffers. It exists for paths that need to iterate over every
+	// instance WITHOUT draining the channel (Warmup), so concurrent
+	// Analyze() calls can still acquire normally during iteration. The
+	// per-recognizer mutex inside GLiNERRecognizer.Analyze handles the
+	// "Warmup and an external request hit the same instance" race
+	// correctly: they serialise on r.mu, no deadlock.
+	recs []*GLiNERRecognizer
+
 	// destroyOnce ensures Destroy's drain loop runs at most once even
 	// if a caller invokes it from multiple goroutines.
 	destroyOnce sync.Once
@@ -112,11 +121,14 @@ func NewGLiNERPool(cfg GLiNERConfig, size int) (*GLiNERPool, error) {
 	}
 	p := &GLiNERPool{
 		instances: make(chan *GLiNERRecognizer, size),
+		recs:      make([]*GLiNERRecognizer, 0, size),
 		cfg:       cfg,
 		size:      size,
 	}
 	for i := 0; i < size; i++ {
-		p.instances <- NewGLiNERRecognizer(cfg)
+		rec := NewGLiNERRecognizer(cfg)
+		p.recs = append(p.recs, rec)
+		p.instances <- rec
 	}
 	return p, nil
 }
@@ -184,17 +196,17 @@ func (p *GLiNERPool) Analyze(ctx context.Context, text string, entities []string
 // After Warmup returns, every instance has its session resident and
 // the first real /v1/ingest sees ~150 ms latency instead of cold init.
 //
-// CALLER CONTRACT — DEADLOCK WARNING
-// ----------------------------------
-// Warmup occupies EVERY instance in the pool simultaneously. Callers
-// MUST NOT dispatch other Analyze() calls (or invoke
-// SupportedEntities / SupportedLanguages, which also acquire an
-// instance) while Warmup is in flight — there is no instance left for
-// the other caller to acquire, and it will block until one of the
-// warmup goroutines completes. In practice this means: only call
-// Warmup from the bootstrap path BEFORE the HTTP server starts
-// listening. Treat it as a synchronous one-shot, never as a
-// background goroutine.
+// SAFE FOR CONCURRENT TRAFFIC
+// ---------------------------
+// Warmup does NOT acquire from the pool's instance channel. It walks
+// the parallel `recs` slice and calls Analyze directly on each
+// recognizer, in parallel. Concurrent callers using p.Analyze() can
+// still pull from the channel during warmup, so the HTTP server can
+// safely start listening before Warmup returns. The per-recognizer
+// mutex inside GLiNERRecognizer.Analyze serialises any race between
+// the warmup goroutine for instance i and an external request that
+// also lands on instance i — the external request just queues briefly
+// on r.mu and then runs; it never blocks on the pool itself.
 //
 // Error handling: the first non-nil error from any instance is
 // returned; subsequent errors are dropped (matching the "first
@@ -207,11 +219,12 @@ func (p *GLiNERPool) Warmup(ctx context.Context) error {
 		errMu    sync.Mutex
 		firstErr error
 	)
-	wg.Add(p.size)
-	for i := 0; i < p.size; i++ {
+	wg.Add(len(p.recs))
+	for _, rec := range p.recs {
+		rec := rec
 		go func() {
 			defer wg.Done()
-			_, err := p.Analyze(ctx, "John Smith works at Mercy Hospital.", nil, "")
+			_, err := rec.Analyze(ctx, "John Smith works at Mercy Hospital.", nil, "")
 			if err != nil {
 				errMu.Lock()
 				if firstErr == nil {
