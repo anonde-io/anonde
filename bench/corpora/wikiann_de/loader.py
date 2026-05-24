@@ -52,7 +52,29 @@ def main() -> int:
     # `train` is the biggest split. Stream and reservoir-sample to avoid
     # loading the full 20 k sentences into memory.
     rng = random.Random(args.seed)
-    ds = load_dataset("wikiann", "de", split="train", streaming=True)
+    # Repo-id candidates, in preference order. The bare `wikiann` repo
+    # was deprecated upstream and `huggingface_hub >= 0.27` rejects
+    # single-name repo ids outright with `HfUriError: Repository id must
+    # be 'namespace/name'`. Use a namespaced mirror; fall through to
+    # alternates if any single mirror is offline.
+    candidates = [
+        ("unimelb-nlp/wikiann", "de"),
+        ("tner/wikiann", "de"),
+    ]
+    ds = None
+    last_err: Exception | None = None
+    for repo, cfg in candidates:
+        try:
+            ds = load_dataset(repo, cfg, split="train", streaming=True)
+            print(f"wikiann_de: loaded from {repo}({cfg})", file=sys.stderr)
+            break
+        except Exception as err:
+            last_err = err
+            print(f"wikiann_de: {repo}({cfg}) unavailable: {err}", file=sys.stderr)
+    if ds is None:
+        print("wikiann_de: no mirror resolved; cell will be missing", file=sys.stderr)
+        print(f"last error: {last_err}", file=sys.stderr)
+        return 2
 
     # Reservoir sampling.
     reservoir: list = []
