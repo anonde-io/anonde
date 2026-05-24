@@ -9,15 +9,8 @@ each such change is called out under a **Changed** or **Removed** heading.
 
 ## [Unreleased]
 
-### Planned
-
-- Secret recognizers — API keys, tokens, credentials.
-- Streaming SSE support for the OpenAI-compatible proxy (`stream: true`).
-- Anthropic and Gemini upstreams for the proxy, selected by model prefix.
-
-## [0.1.0] - 2026-05-22
-
-First public release.
+Working toward the first tagged release, `v0.1.0`. Everything below is
+in `main` but not yet cut as a release.
 
 ### Added
 
@@ -59,5 +52,10 @@ First public release.
   calls except the upstream provider when the OpenAI-compatible proxy
   is explicitly configured.
 
-[Unreleased]: https://github.com/anonde-io/anonde/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/anonde-io/anonde/releases/tag/v0.1.0
+### Planned (post-v0.1.0)
+
+- Secret recognizers — API keys, tokens, credentials.
+- Streaming SSE support for the OpenAI-compatible proxy (`stream: true`).
+- Anthropic and Gemini upstreams for the proxy, selected by model prefix.
+
+[Unreleased]: https://github.com/anonde-io/anonde/commits/main
