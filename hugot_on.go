@@ -97,3 +97,42 @@ func DefaultAnalyzerEngineWithGLiNEREnsemble(ens *recognizers.EnsembleGLiNERReco
 	registry.Add(patternRecognizers()...)
 	return analyzer.NewAnalyzerEngine(registry)
 }
+
+// DefaultAnalyzerEngineWithGLiNERPool wires a pre-built GLiNERPool
+// (N parallel span-decoder GLiNER instances) into the standard
+// pattern-recognizer registry. Mirror of
+// DefaultAnalyzerEngineWithGLiNEREnsemble — the pool is constructed by
+// recognizers.NewGLiNERPool, so this constructor is intentionally thin.
+//
+// The pool's Name() ("GLiNERPool") is registered in
+// analyzer/result.go::nerRecognizerNames, so the conflict resolver's
+// NER-preferred entity rule applies to pool findings exactly as it
+// does to bare GLiNERRecognizer findings.
+//
+// Real implementation only; hugot_off.go's stub log.Fatalfs.
+func DefaultAnalyzerEngineWithGLiNERPool(pool *recognizers.GLiNERPool) *analyzer.AnalyzerEngine {
+	registry := analyzer.NewRecognizerRegistry()
+	registry.Add(pool)
+	registry.Add(patternRecognizers()...)
+	return analyzer.NewAnalyzerEngine(registry)
+}
+
+// DefaultAnalyzerEngineWithGLiNERFlatPool wires a pre-built
+// GLiNERFlatPool (N parallel flat-decoder GLiNER instances) into the
+// standard pattern-recognizer registry. Mirror of
+// DefaultAnalyzerEngineWithGLiNERPool for the flat / token decoder
+// path used by `knowledgator/gliner-pii-large-v1.0` and other 4-input
+// BIO ONNX exports.
+//
+// The pool's Name() ("GLiNERFlatPool") is registered in
+// analyzer/result.go::nerRecognizerNames, so the conflict resolver's
+// NER-preferred entity rule applies to pool findings exactly as it
+// does to bare GLiNERFlatRecognizer findings.
+//
+// Real implementation only; hugot_off.go's stub log.Fatalfs.
+func DefaultAnalyzerEngineWithGLiNERFlatPool(pool *recognizers.GLiNERFlatPool) *analyzer.AnalyzerEngine {
+	registry := analyzer.NewRecognizerRegistry()
+	registry.Add(pool)
+	registry.Add(patternRecognizers()...)
+	return analyzer.NewAnalyzerEngine(registry)
+}

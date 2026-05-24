@@ -13,17 +13,23 @@ type RecognizerResult struct {
 
 // nerRecognizerNames is the set of recognizer names that produce
 // contextual NER findings (open-set, ML-derived) as opposed to regex /
-// checksum / heuristic pattern findings. Used by RemoveConflicts to
-// prefer NER for unstructured entity types regardless of raw score —
-// pattern scores are deterministic constants (0.85 / 1.0) and would
-// otherwise always beat NER's sigmoid output (typically 0.40 – 0.85),
-// even when the NER span is the more accurate one. Keep in sync with
-// the recognizers package — if a new NER recognizer ships, add its
-// Name() string here.
+// checksum / heuristic pattern findings (or pool / ensemble wrappers
+// around one of those). Used by RemoveConflicts to prefer NER for
+// unstructured entity types regardless of raw score — pattern scores
+// are deterministic constants (0.85 / 1.0) and would otherwise always
+// beat NER's sigmoid output (typically 0.40 – 0.85), even when the
+// NER span is the more accurate one. Keep in sync with the recognizers
+// package — if a new NER recognizer (or a pool wrapping one) ships,
+// add its Name() string here.
 var nerRecognizerNames = map[string]bool{
-	"GLiNERRecognizer":     true,
-	"HugotNERRecognizer":   true,
-	"OllamaNERRecognizer":  true,
+	"GLiNERRecognizer":            true,
+	"GLiNERFlatRecognizer":        true,
+	"GLiNERFlatNERRecognizer":     true,
+	"GLiNEREnsembleNERRecognizer": true,
+	"GLiNERPool":                  true,
+	"GLiNERFlatPool":              true,
+	"HugotNERRecognizer":          true,
+	"OllamaNERRecognizer":         true,
 }
 
 // nerPreferredEntities is the set of entity types where NER is more

@@ -118,6 +118,13 @@ func main() {
 	httpAPI := api.NewHTTPServer(svc)
 	httpAPI.SetMaxRequestBytes(maxBytes)
 
+	// ANONDE_MAX_CONCURRENT_REQUESTS gates total in-flight HTTP work.
+	// Unset / 0 / negative = unlimited (current behaviour).
+	concurrencyCap := concurrencyCapFromEnv()
+	if concurrencyCap > 0 {
+		log.Printf("concurrency budget: max %d in-flight requests", concurrencyCap)
+	}
+
 	// OpenAI-compatible proxy (POST /v1/chat/completions). Always
 	// mounted; upstream defaults to OpenAI. The upstream provider is
 	// chosen in-band by a "provider/model" prefix on the model field
@@ -135,9 +142,14 @@ func main() {
 	}
 	log.Printf("openai-compatible proxy enabled at POST /v1/chat/completions (upstream=%s)", openAIBase)
 
+	// Wrap the routes in the concurrency limiter as the outermost layer
+	// so health checks ARE gated too — that's intentional. An unhealthy
+	// server should signal "busy" so load balancers route elsewhere.
+	handler := newConcurrencyLimiter(concurrencyCap).wrap(httpAPI.Routes())
+
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           httpAPI.Routes(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		Protocols:         api.NewServerProtocols(),
 	}
@@ -260,6 +272,101 @@ func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
 		log.Fatalf("analyzer warmup failed after %s: %v", time.Since(start), err)
 	}
 	log.Printf("analyzer warmup complete in %s", time.Since(start))
+
+	// Pool pre-warm: the single Analyze above only initialised the first
+	// pool instance. Walk the registry and call Warmup on every pool so
+	// every instance pays the model-load cost concurrently NOW instead
+	// of staggered across the first N user requests. The single Analyze
+	// runs FIRST so any model-file download (DOWNLOAD_MODELS_ONLY-style
+	// cold cache) happens once before the N parallel calls hammer the
+	// same model file on disk.
+	for _, rec := range engine.Registry.All() {
+		switch p := rec.(type) {
+		case *recognizers.GLiNERPool:
+			log.Printf("warmup: pre-warming %T (size=%d) ...", p, p.Size())
+			poolStart := time.Now()
+			if err := p.Warmup(ctx); err != nil {
+				log.Printf("warmup: %T failed after %s: %v (server continues; instances retry on first request)",
+					p, time.Since(poolStart), err)
+			} else {
+				log.Printf("warmup: %T ready in %s", p, time.Since(poolStart))
+			}
+		case *recognizers.GLiNERFlatPool:
+			log.Printf("warmup: pre-warming %T (size=%d) ...", p, p.Size())
+			poolStart := time.Now()
+			if err := p.Warmup(ctx); err != nil {
+				log.Printf("warmup: %T failed after %s: %v (server continues; instances retry on first request)",
+					p, time.Since(poolStart), err)
+			} else {
+				log.Printf("warmup: %T ready in %s", p, time.Since(poolStart))
+			}
+		}
+	}
+}
+
+// concurrencyLimiter is a tiny semaphore-style HTTP middleware. Acquire
+// is non-blocking — when the semaphore is full the (N+1)th request is
+// rejected with 429 immediately instead of queueing. Queueing would
+// just convert a throughput problem into a latency problem; backpressure
+// to the caller is the correct shape for a self-hosted server with no
+// idea what the operator's downstream SLO is.
+//
+// `cap <= 0` is the unlimited mode — wrap() returns the handler
+// unchanged so there's zero overhead on the default-unset path.
+type concurrencyLimiter struct {
+	sem chan struct{}
+}
+
+// newConcurrencyLimiter builds a limiter from the configured cap. A cap
+// of 0 or less returns a zero-value limiter (sem is nil) and wrap()
+// becomes a no-op pass-through.
+func newConcurrencyLimiter(cap int) *concurrencyLimiter {
+	if cap <= 0 {
+		return &concurrencyLimiter{}
+	}
+	return &concurrencyLimiter{sem: make(chan struct{}, cap)}
+}
+
+// wrap returns an http.Handler that gates `next` behind the semaphore
+// when one is configured. The unlimited case skips the middleware
+// entirely — identical to the pre-change behaviour.
+func (l *concurrencyLimiter) wrap(next http.Handler) http.Handler {
+	if l == nil || l.sem == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case l.sem <- struct{}{}:
+			defer func() { <-l.sem }()
+			next.ServeHTTP(w, r)
+		default:
+			// Semaphore full. Reject immediately with Retry-After.
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"max concurrent requests reached, retry"}`))
+		}
+	})
+}
+
+// concurrencyCapFromEnv parses ANONDE_MAX_CONCURRENT_REQUESTS. Unset /
+// 0 / negative returns 0 ("unlimited", current behaviour); malformed
+// values are logged and treated as unset. Matches the GLINER_POOL_SIZE
+// precedent — a typo never blocks boot.
+func concurrencyCapFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv("ANONDE_MAX_CONCURRENT_REQUESTS"))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("ANONDE_MAX_CONCURRENT_REQUESTS=%q ignored: %v (no concurrency cap)", raw, err)
+		return 0
+	}
+	if n < 1 {
+		return 0
+	}
+	return n
 }
 
 // downloadModelsAndExit triggers a single inference call so the configured
@@ -330,6 +437,37 @@ func listenAddr() string {
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
 // Presidio, see bench/corpora/ai4privacy_en/.
+//
+// Pool sizing (gliner / gliner-flat / gliner-stack):
+//
+//   - GLINER_POOL_SIZE — integer ≥ 2 builds an N-instance pool for the
+//     base GLiNER recognizer (span decoder for `gliner` / `gliner-stack`,
+//     flat decoder for `gliner-flat`). Unset / 0 / 1 → single recognizer
+//     (current behaviour, no change).
+//   - ANONDE_GLINER_FLAT_POOL_SIZE — integer ≥ 2 builds an N-instance
+//     pool for the FLAT recognizer of `gliner-stack` only. Unset / 0 / 1
+//     → single flat recognizer alongside the base pool.
+//
+// Memory cost is the binding constraint: ~500 MB per BASE quint8
+// instance, ~1.4 GB per LARGE FP32 instance. Size pools against your
+// VM's RAM, not your CPU count. In a `gliner-stack` deployment the
+// LARGE flat pool should usually be smaller than the BASE pool — e.g.
+// GLINER_POOL_SIZE=4 + ANONDE_GLINER_FLAT_POOL_SIZE=2 peaks ~4.8 GB.
+//
+// ONNX Runtime session tuning (all GLiNER backends):
+//
+//   - ANONDE_ORT_INTRA_OP_THREADS — integer ≥ 1. Number of threads
+//     ORT uses INSIDE one op (e.g. a matmul). Unset → ORT default
+//     (num cores). Lower this when stacking pools — e.g. a 4-instance
+//     pool with intra=4 contends for all CPUs; intra=2 may improve
+//     total throughput by reducing thread-pool oversubscription.
+//   - ANONDE_ORT_INTER_OP_THREADS — integer ≥ 1. Number of threads ORT
+//     uses to run independent ops in parallel. Unset → ORT default
+//     (1). Rarely worth raising on transformer graphs.
+//   - ANONDE_ORT_GRAPH_OPT_LEVEL — "disabled" | "basic" | "extended"
+//     | "all". Unset → ORT default ("basic"). "all" can shave a few
+//     percent off latency at the cost of longer session-open time
+//     (which the warmup absorbs).
 func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 	backend := strings.ToLower(strings.TrimSpace(getenvDefault("ANALYZER_BACKEND", "patterns")))
 	switch backend {
@@ -368,8 +506,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 				threshold, modelName)
 			return anonde.DefaultAnalyzerEngineWithGLiNEREnsemble(ens), "gliner-ensemble", os.Getenv("ANONDE_NER_STACK")
 		}
-		log.Printf("analyzer backend: gliner (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
-		return anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
+		cfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         modelName,
 			OnnxFilePath:      onnxPath,
@@ -377,7 +514,17 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
 			// Labels left empty → DefaultPIILabels.
-		}), "gliner", modelName
+		}
+		if poolSize := glinerPoolSizeFromEnv("GLINER_POOL_SIZE"); poolSize >= 2 {
+			pool, err := recognizers.NewGLiNERPool(cfg, poolSize)
+			if err != nil {
+				log.Fatalf("gliner pool init (size=%d): %v", poolSize, err)
+			}
+			log.Printf("analyzer backend: gliner pool (size=%d, model=%s, onnx=%s, threshold=%.2f)", poolSize, modelName, onnxPath, threshold)
+			return anonde.DefaultAnalyzerEngineWithGLiNERPool(pool), "gliner", modelName
+		}
+		log.Printf("analyzer backend: gliner (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
+		return anonde.DefaultAnalyzerEngineWithGLiNERConfig(cfg), "gliner", modelName
 	case "gliner-flat":
 		// Single flat / token-decoder GLiNER (4-input BIO ONNX export).
 		// Same knobs as `gliner` — GLINER_MODEL, GLINER_THRESHOLD,
@@ -386,15 +533,24 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		modelName := getenvDefault("GLINER_MODEL", "knowledgator/gliner-pii-large-v1.0")
 		onnxPath := glinerOnnxFileFromEnv(modelName)
 		threshold := glinerThresholdFromEnv()
-		log.Printf("analyzer backend: gliner-flat (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
-		return anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(recognizers.GLiNERConfig{
+		cfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         modelName,
 			OnnxFilePath:      onnxPath,
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
-		}), "gliner-flat", modelName
+		}
+		if poolSize := glinerPoolSizeFromEnv("GLINER_POOL_SIZE"); poolSize >= 2 {
+			pool, err := recognizers.NewGLiNERFlatPool(cfg, poolSize)
+			if err != nil {
+				log.Fatalf("gliner-flat pool init (size=%d): %v", poolSize, err)
+			}
+			log.Printf("analyzer backend: gliner-flat pool (size=%d, model=%s, onnx=%s, threshold=%.2f)", poolSize, modelName, onnxPath, threshold)
+			return anonde.DefaultAnalyzerEngineWithGLiNERFlatPool(pool), "gliner-flat", modelName
+		}
+		log.Printf("analyzer backend: gliner-flat (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
+		return anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg), "gliner-flat", modelName
 	case "gliner-stack":
 		// Span-decoder BASE + flat-decoder FLAT in one engine. The local
 		// 30-corpus bench measured Σ ALL ≈ 9.7% with this shape (vs
@@ -416,33 +572,85 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 				log.Printf("ANONDE_GLINER_FLAT_THRESHOLD=%q ignored: %v", raw, err)
 			}
 		}
-		log.Printf("analyzer backend: gliner-stack (base=%s onnx=%s thr=%.2f) + flat (model=%s onnx=%s thr=%.2f)",
-			baseModel, baseOnnx, baseThreshold, flatModel, flatOnnx, flatThreshold)
-		engine := anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
+		basePoolSize := glinerPoolSizeFromEnv("GLINER_POOL_SIZE")
+		flatPoolSize := glinerPoolSizeFromEnv("ANONDE_GLINER_FLAT_POOL_SIZE")
+		log.Printf("analyzer backend: gliner-stack (base=%s onnx=%s thr=%.2f base_pool=%d) + flat (model=%s onnx=%s thr=%.2f flat_pool=%d)",
+			baseModel, baseOnnx, baseThreshold, basePoolSize,
+			flatModel, flatOnnx, flatThreshold, flatPoolSize)
+		baseCfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         baseModel,
 			OnnxFilePath:      baseOnnx,
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         baseThreshold,
-		})
-		// Register the flat recognizer alongside the base. Same registry
-		// dispatches to both per doc; analyzer.RemoveConflicts merges
-		// overlaps via the NER-preferred rule for PERSON/ORG/LOC/AGE/
-		// PROFESSION/NRP.
-		engine.Registry.Add(recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
+		}
+		flatCfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         flatModel,
 			OnnxFilePath:      flatOnnx,
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         flatThreshold,
-		}))
+		}
+		// Build the base slot: pool when sized, single recognizer
+		// otherwise. The two helpers register the chosen NER in the same
+		// pattern-recognizer registry shape, so the engine downstream is
+		// indistinguishable from the single-recognizer path.
+		var engine *analyzer.AnalyzerEngine
+		if basePoolSize >= 2 {
+			basePool, err := recognizers.NewGLiNERPool(baseCfg, basePoolSize)
+			if err != nil {
+				log.Fatalf("gliner-stack base pool init (size=%d): %v", basePoolSize, err)
+			}
+			engine = anonde.DefaultAnalyzerEngineWithGLiNERPool(basePool)
+		} else {
+			engine = anonde.DefaultAnalyzerEngineWithGLiNERConfig(baseCfg)
+		}
+		// Register the flat slot alongside the base. Same registry
+		// dispatches to both per doc; analyzer.RemoveConflicts merges
+		// overlaps via the NER-preferred rule for PERSON/ORG/LOC/AGE/
+		// PROFESSION/NRP. LARGE FP32 is ~1.4 GB per instance, so the
+		// flat pool defaults to a single recognizer when
+		// ANONDE_GLINER_FLAT_POOL_SIZE is unset.
+		if flatPoolSize >= 2 {
+			flatPool, err := recognizers.NewGLiNERFlatPool(flatCfg, flatPoolSize)
+			if err != nil {
+				log.Fatalf("gliner-stack flat pool init (size=%d): %v", flatPoolSize, err)
+			}
+			engine.Registry.Add(flatPool)
+		} else {
+			engine.Registry.Add(recognizers.NewGLiNERFlatRecognizer(flatCfg))
+		}
 		return engine, "gliner-stack", baseModel + "+" + flatModel
 	default:
 		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, gliner-flat, gliner-stack, ollama)", backend)
 		return nil, "", ""
 	}
+}
+
+// glinerPoolSizeFromEnv parses an integer pool size from the named env
+// var. Returns 1 (single recognizer, no pool) when unset, malformed,
+// or ≤ 0. A malformed value is logged but does NOT log.Fatalf —
+// matching the GLINER_THRESHOLD precedent so a typo doesn't keep the
+// server from booting; the operator gets the warning in startup logs
+// and falls through to single-recognizer behaviour. Used by both
+// GLINER_POOL_SIZE (BASE slot) and ANONDE_GLINER_FLAT_POOL_SIZE
+// (FLAT slot of gliner-stack).
+func glinerPoolSizeFromEnv(key string) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("%s=%q ignored: %v (falling back to single recognizer)", key, raw, err)
+		return 1
+	}
+	if n <= 0 {
+		return 1
+	}
+	return n
 }
 
 // glinerThresholdFromEnv parses GLINER_THRESHOLD into a float. Zero means

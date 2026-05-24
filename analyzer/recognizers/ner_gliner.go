@@ -520,11 +520,20 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		}
 		r.onnxOutputName = "logits"
 
+		// Optional session tuning from ANONDE_ORT_* env vars. nil
+		// preserves ORT defaults (intra=num cores, inter=1, graph=basic).
+		// MUST be called AFTER initOrtEnvironment — NewSessionOptions
+		// requires IsInitialized() == true.
+		sessionOpts, optsErr := sessionOptionsFromEnv()
+		if optsErr != nil {
+			log.Printf("gliner: sessionOptionsFromEnv: %v (falling through to ORT defaults)", optsErr)
+			sessionOpts = nil
+		}
 		session, sessErr := ort.NewDynamicAdvancedSession(
 			onnxFile,
 			r.onnxInputNames,
 			[]string{r.onnxOutputName},
-			nil, // default session options
+			sessionOpts,
 		)
 		if sessErr != nil {
 			r.initErr = fmt.Errorf("gliner: open onnx session %s: %w", onnxFile, sessErr)
