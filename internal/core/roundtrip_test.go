@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/internal/metrics"
 )
 
 // Ingest → Reveal round-trip tests exercising the line-oriented content
@@ -20,6 +21,7 @@ func newRoundtripService() *Service {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 }
 

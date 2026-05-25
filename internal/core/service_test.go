@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/anonde-io/anonde"
+	"github.com/anonde-io/anonde/internal/metrics"
 )
 
 type allowAllPolicy struct{}
@@ -23,6 +24,7 @@ func TestReveal_NoTokensReturnsInputContent(t *testing.T) {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 
 	const tenantID = "tenant-a"
@@ -63,6 +65,7 @@ func TestIngestReveal_JSONContent(t *testing.T) {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 
 	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
@@ -101,6 +104,7 @@ func TestIngestReveal_JSONFixtureRoundTrip(t *testing.T) {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "testdata", "pii-sample.json"))
@@ -157,6 +161,7 @@ func TestIngest_AutoDetectsJSON(t *testing.T) {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 
 	in := `{"email":"john@example.com","note":"SSN 123-45-6789"}`
@@ -184,6 +189,7 @@ func TestIngest_AutoDetectsText(t *testing.T) {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 
 	in := "Contact john@example.com"
@@ -211,6 +217,7 @@ func TestIngestReveal_AutoWithMixedTextAndJSONSnippet(t *testing.T) {
 		newTestVault(),
 		newTestStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 
 	// Mixed payload in one message: free text plus an embedded JSON-looking snippet.

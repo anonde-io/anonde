@@ -242,6 +242,26 @@ func (v *BoltVault) deleteRaw(tenantID, token string) error {
 	})
 }
 
+// Stats reports entry count from bbolt's KeyN metadata (O(1), no
+// bucket scan) and returns Bytes=-1 because computing the real byte
+// total would require a full bucket walk on every scrape — a non-
+// starter on a multi-MB vault. Operators who want a byte signal can
+// look at the file size on disk, which bbolt grows in page-sized
+// increments and is a strictly better metric than the JSON-payload
+// sum we could compute here.
+func (v *BoltVault) Stats() core.VaultStats {
+	var entries int64
+	_ = v.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketVault))
+		if b == nil {
+			return nil
+		}
+		entries = int64(b.Stats().KeyN)
+		return nil
+	})
+	return core.VaultStats{Entries: entries, Bytes: -1}
+}
+
 // ─── BoltStore implements core.Store ───────────────────────────────
 
 func (s *BoltStore) Put(_ context.Context, record core.StoreRecord) error {
@@ -312,6 +332,20 @@ func (s *BoltStore) deleteRaw(tenantID, id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket([]byte(bucketStore)).Delete(storeKey(tenantID, id))
 	})
+}
+
+// Stats — see BoltVault.Stats for the rationale on Bytes=-1.
+func (s *BoltStore) Stats() core.StoreStats {
+	var entries int64
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketStore))
+		if b == nil {
+			return nil
+		}
+		entries = int64(b.Stats().KeyN)
+		return nil
+	})
+	return core.StoreStats{Entries: entries, Bytes: -1}
 }
 
 // ─── Sweeper ───────────────────────────────────────────────────────
