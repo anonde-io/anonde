@@ -312,6 +312,18 @@ func (r *GLiNERRecognizer) SupportedLanguages() []string {
 // a DynamicAdvancedSession over the ONNX file.
 func (r *GLiNERRecognizer) init(ctx context.Context) error {
 	r.once.Do(func() {
+		// Catch panics so a partially-initialised recognizer (e.g.
+		// tokenizer loaded but ONNX session failed mid-way) becomes a
+		// clean error rather than a never-clearing panic loop. Once
+		// sync.Once.Do() returns, every future init() short-circuits
+		// to the same initErr, and Analyze's `if err := r.init(ctx);
+		// err != nil` guard returns it cleanly.
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.initErr = fmt.Errorf("gliner init panicked: %v", rec)
+				log.Printf("gliner: INIT PANIC: %v", rec)
+			}
+		}()
 		// --- config defaults --------------------------------------
 		r.labels = r.cfg.Labels
 		if len(r.labels) == 0 {

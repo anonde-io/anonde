@@ -330,6 +330,15 @@ func newConcurrencyLimiter(cap int) *concurrencyLimiter {
 // wrap returns an http.Handler that gates `next` behind the semaphore
 // when one is configured. The unlimited case skips the middleware
 // entirely — identical to the pre-change behaviour.
+//
+// Panic discipline: the semaphore is correctly released even if the
+// downstream handler panics (Go runs deferred funcs during unwind),
+// but a bare panic would otherwise propagate up through net/http and
+// drop the connection without a body. We recover here so the process
+// stays alive AND the client sees a 500 — wrapped in a nested
+// defer-recover because writing to a response writer whose headers
+// are already committed is itself an error path we don't want to
+// re-panic from.
 func (l *concurrencyLimiter) wrap(next http.Handler) http.Handler {
 	if l == nil || l.sem == nil {
 		return next
@@ -338,6 +347,22 @@ func (l *concurrencyLimiter) wrap(next http.Handler) http.Handler {
 		select {
 		case l.sem <- struct{}{}:
 			defer func() { <-l.sem }()
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Printf("panic in handler %s %s: %v", r.Method, r.URL.Path, rec)
+					// Best-effort 500. If the writer is already
+					// committed (headers + body sent) WriteHeader
+					// silently no-ops; if Write itself panics
+					// because the connection is gone, the nested
+					// recover swallows it so we still exit cleanly.
+					func() {
+						defer func() { _ = recover() }()
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusInternalServerError)
+						_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+					}()
+				}
+			}()
 			next.ServeHTTP(w, r)
 		default:
 			// Semaphore full. Reject immediately with Retry-After.

@@ -317,35 +317,86 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 			ch <- partial{res, err}
 		}(rec)
 	}
-	wg.Wait()
-	close(ch)
+	// Wait-or-cancel: spawn a sentinel goroutine that closes `done`
+	// once every recognizer has returned. If `ctx` fires first we stop
+	// blocking and harvest whatever results landed on the buffered
+	// channel — partial coverage is still useful (the bench scores
+	// per-recognizer leaks, and an HTTP caller that just timed out
+	// would rather have something than nothing).
+	//
+	// Recognizers SHOULD honour ctx in their inner loops (GLiNER chunk
+	// loop, Ollama HTTP, etc.); the select-on-ctx here is the bounded
+	// guard against the ones that don't — a single hung recognizer
+	// would otherwise stall the whole pipeline forever.
+	//
+	// Note: `ch` is buffered to len(candidates), so the laggard
+	// goroutines can still send their result after we've returned and
+	// will not leak — they exit on their own.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	var ctxErr error
+	select {
+	case <-done:
+		close(ch)
+	case <-ctx.Done():
+		ctxErr = ctx.Err()
+		log.Printf("analyzer: ctx cancelled before all recognizers returned (%v); harvesting partial results", ctxErr)
+		// Do NOT close ch — slow goroutines still hold a send token
+		// and would panic on send-to-closed. Drain non-blocking by
+		// switching to a different receive pattern below.
+	}
 
 	// Per-recognizer failures must not destroy partial results: a flaky NER
 	// backend should not erase findings produced by the pattern recognizers
 	// that ran successfully alongside it. Errors are aggregated and surfaced
 	// only if EVERY recognizer failed.
 	var (
-		all      []RecognizerResult
-		errs     []error
-		okCount  int
+		all     []RecognizerResult
+		errs    []error
+		okCount int
 	)
-	for p := range ch {
-		if p.err != nil {
-			// Per-recognizer failure: log so operators can see when an
-			// expensive backend (GLiNER, hugot, Ollama) is silently
-			// non-contributing. Without this, the engine would return
-			// pattern findings as "success" while NER errors stayed
-			// invisible — the exact failure mode that hid GLiNER's bad
-			// init on the bench for hours.
-			log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
-			errs = append(errs, p.err)
-			continue
+	// Two drain modes:
+	//   * ctxErr == nil: `ch` is closed; classic range drains all results.
+	//   * ctxErr != nil: `ch` is NOT closed (slow goroutines may still
+	//     send later); non-blocking drain collects whatever is in the
+	//     buffer right now and bails.
+	if ctxErr == nil {
+		for p := range ch {
+			if p.err != nil {
+				log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
+				errs = append(errs, p.err)
+				continue
+			}
+			okCount++
+			all = append(all, p.results...)
 		}
-		okCount++
-		all = append(all, p.results...)
+	} else {
+	drain:
+		for {
+			select {
+			case p := <-ch:
+				if p.err != nil {
+					log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
+					errs = append(errs, p.err)
+					continue
+				}
+				okCount++
+				all = append(all, p.results...)
+			default:
+				break drain
+			}
+		}
 	}
 	if okCount == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("all recognizers failed: %v", errs[0])
+	}
+	// If ctx is cancelled and we have nothing to show, surface the ctx
+	// error so the caller can distinguish "no PII" from "we gave up".
+	if ctxErr != nil && okCount == 0 {
+		return nil, ctxErr
 	}
 
 	// 5. Context-keyword score enhancement.

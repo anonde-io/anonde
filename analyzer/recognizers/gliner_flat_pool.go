@@ -101,6 +101,11 @@ type GLiNERFlatPool struct {
 	destroyOnce sync.Once
 	destroyErr  error
 
+	// done is closed by Destroy() before the drain loop starts so
+	// any new Analyze acquirer receives ErrPoolClosed instead of
+	// blocking forever. Same shape as GLiNERPool.done.
+	done chan struct{}
+
 	// cfg is retained for diagnostics; the per-instance recognizers
 	// already hold their own copy.
 	cfg GLiNERConfig
@@ -134,6 +139,7 @@ func NewGLiNERFlatPool(cfg GLiNERConfig, size int) (*GLiNERFlatPool, error) {
 		recs:      make([]*GLiNERFlatRecognizer, 0, size),
 		cfg:       cfg,
 		size:      size,
+		done:      make(chan struct{}),
 	}
 	for i := 0; i < size; i++ {
 		rec := NewGLiNERFlatRecognizer(cfg)
@@ -193,6 +199,9 @@ func (p *GLiNERFlatPool) Analyze(ctx context.Context, text string, entities []st
 	case rec = <-p.instances:
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-p.done:
+		// Pool was Destroy()d while we were waiting for an instance.
+		return nil, ErrPoolClosed
 	}
 	defer func() { p.instances <- rec }()
 	return rec.Analyze(ctx, text, entities, language)
@@ -261,14 +270,17 @@ func (p *GLiNERFlatPool) Warmup(ctx context.Context) error {
 // Destroy is idempotent: subsequent calls return the same error
 // without re-draining.
 //
-// Caller contract: stop dispatching new `Analyze` calls BEFORE
-// invoking Destroy. The drain loop pulls exactly `size` instances out
-// of the channel and will block forever if a goroutine still holds
-// one. There is no "force-destroy with outstanding work" mode by
-// design — silently destroying a session that another goroutine is
-// running through is a crash, not a feature.
+// Graceful shutdown: callers no longer need to stop dispatching new
+// Analyze calls before invoking Destroy. Closing `p.done` is the
+// first thing the function does — after that, any new Analyze
+// acquirer receives ErrPoolClosed instead of blocking on the empty
+// channel. In-flight Analyzes complete normally and return their
+// instance, which the drain loop then picks up. The drain still
+// blocks until exactly `size` instances are recovered, so Destroy
+// will return only once every session is released and Destroyed.
 func (p *GLiNERFlatPool) Destroy() error {
 	p.destroyOnce.Do(func() {
+		close(p.done)
 		var firstErr error
 		for i := 0; i < p.size; i++ {
 			rec := <-p.instances

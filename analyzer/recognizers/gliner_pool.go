@@ -60,11 +60,22 @@ package recognizers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/anonde-io/anonde/analyzer"
 )
+
+// ErrPoolClosed is returned by Analyze when the pool's Destroy() has
+// been invoked. Shared by GLiNERPool and GLiNERFlatPool so callers
+// can dispatch a single errors.Is check against either pool type.
+//
+// Previously a Destroy with outstanding Analyze callers would
+// deadlock the drain loop. New acquirers now receive this sentinel
+// instead of blocking forever; in-flight Analyzes complete normally
+// and the drain loop picks up their instance on release.
+var ErrPoolClosed = errors.New("gliner pool: closed")
 
 // GLiNERPool is an N-instance recognizer pool. Each instance owns its
 // own tokenizer + ONNX session, so up to N `Analyze` calls run truly
@@ -92,6 +103,13 @@ type GLiNERPool struct {
 	// if a caller invokes it from multiple goroutines.
 	destroyOnce sync.Once
 	destroyErr  error
+
+	// done is closed by Destroy() before the drain loop starts so
+	// any new Analyze acquirer receives ErrPoolClosed instead of
+	// blocking forever against an empty channel. In-flight Analyzes
+	// keep their instance and release it normally; the drain loop
+	// then picks it up.
+	done chan struct{}
 
 	// cfg is retained for diagnostics; the per-instance recognizers
 	// already hold their own copy.
@@ -124,6 +142,7 @@ func NewGLiNERPool(cfg GLiNERConfig, size int) (*GLiNERPool, error) {
 		recs:      make([]*GLiNERRecognizer, 0, size),
 		cfg:       cfg,
 		size:      size,
+		done:      make(chan struct{}),
 	}
 	for i := 0; i < size; i++ {
 		rec := NewGLiNERRecognizer(cfg)
@@ -181,6 +200,11 @@ func (p *GLiNERPool) Analyze(ctx context.Context, text string, entities []string
 	case rec = <-p.instances:
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	case <-p.done:
+		// Pool was Destroy()d while we were waiting for an instance.
+		// Return cleanly so the caller can fail-fast instead of
+		// hanging on a channel that will never refill.
+		return nil, ErrPoolClosed
 	}
 	defer func() { p.instances <- rec }()
 	return rec.Analyze(ctx, text, entities, language)
@@ -246,14 +270,17 @@ func (p *GLiNERPool) Warmup(ctx context.Context) error {
 // Destroy is idempotent: subsequent calls return the same error
 // without re-draining.
 //
-// Caller contract: stop dispatching new `Analyze` calls BEFORE
-// invoking Destroy. The drain loop pulls exactly `size` instances out
-// of the channel and will block forever if a goroutine still holds
-// one. There is no "force-destroy with outstanding work" mode by
-// design — silently destroying a session that another goroutine is
-// running through is a crash, not a feature.
+// Graceful shutdown: callers no longer need to stop dispatching new
+// Analyze calls before invoking Destroy. Closing `p.done` is the
+// first thing the function does — after that, any new Analyze
+// acquirer receives ErrPoolClosed instead of blocking on the empty
+// channel. In-flight Analyzes complete normally and return their
+// instance, which the drain loop then picks up. The drain still
+// blocks until exactly `size` instances are recovered, so Destroy
+// will return only once every session is released and Destroyed.
 func (p *GLiNERPool) Destroy() error {
 	p.destroyOnce.Do(func() {
+		close(p.done)
 		var firstErr error
 		for i := 0; i < p.size; i++ {
 			rec := <-p.instances

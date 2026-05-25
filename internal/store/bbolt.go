@@ -157,11 +157,28 @@ func NewBoltStore(db *bolt.DB, ttl time.Duration) *BoltStore {
 	return s
 }
 
-// Close stops the background sweeper. Idempotent. Does NOT close the
-// underlying *bolt.DB — the caller (cmd/anonde/main.go) owns its
-// lifecycle since two adapters share one file.
-func (v *BoltVault) Close() error { v.stopOnce.Do(func() { close(v.stopCh) }); return nil }
-func (s *BoltStore) Close() error { s.stopOnce.Do(func() { close(s.stopCh) }); return nil }
+// Close stops the background sweeper and waits for any in-flight
+// sweep tick to settle. Idempotent. Does NOT close the underlying
+// *bolt.DB — the caller (cmd/anonde/main.go) owns its lifecycle since
+// two adapters share one file.
+//
+// The sweepMu lock-after-stop is what gives the caller a real
+// guarantee: when Close returns, the sweeper goroutine is either
+// exited or no longer touching db. Without it, a sweep transaction
+// could still be running against db when the caller tries to close
+// the file, panicking inside bbolt.
+func (v *BoltVault) Close() error {
+	v.stopOnce.Do(func() { close(v.stopCh) })
+	v.sweepMu.Lock()
+	v.sweepMu.Unlock() //nolint:staticcheck // wait for in-flight tick
+	return nil
+}
+func (s *BoltStore) Close() error {
+	s.stopOnce.Do(func() { close(s.stopCh) })
+	s.sweepMu.Lock()
+	s.sweepMu.Unlock() //nolint:staticcheck // wait for in-flight tick
+	return nil
+}
 
 // ─── BoltVault implements core.Vault ───────────────────────────────
 
@@ -358,6 +375,11 @@ func (v *BoltVault) startSweeperLocked() {
 		return
 	}
 	go runSweeper(v.stopCh, v.sweepInterval, func() {
+		// Hold sweepMu so Close() can synchronously wait for an
+		// in-flight tick to finish before letting its caller close
+		// the underlying *bolt.DB.
+		v.sweepMu.Lock()
+		defer v.sweepMu.Unlock()
 		_ = sweepBucket(v.db, []byte(bucketVault))
 	})
 }
@@ -367,6 +389,8 @@ func (s *BoltStore) startSweeperLocked() {
 		return
 	}
 	go runSweeper(s.stopCh, s.sweepInterval, func() {
+		s.sweepMu.Lock()
+		defer s.sweepMu.Unlock()
 		_ = sweepBucket(s.db, []byte(bucketStore))
 	})
 }

@@ -17,14 +17,18 @@ import (
 
 // Service coordinates recognition, tokenization and controlled reveal.
 type Service struct {
-	analyzer         *analyzer.AnalyzerEngine
-	anonymize        *anonymizer.AnonymizerEngine
-	vault            Vault
-	store            Store
-	policy           PolicyAuthorizer
-	metrics          metrics.Recorder
-	defaultScore     float64
-	defaultLang      string
+	analyzer     *analyzer.AnalyzerEngine
+	anonymize    *anonymizer.AnonymizerEngine
+	vault        Vault
+	store        Store
+	policy       PolicyAuthorizer
+	metrics      metrics.Recorder
+	defaultScore float64
+	defaultLang  string
+	// tokenSeqMu + tokenSeqByTenant back the per-tenant monotonic
+	// counter used by mintToken (see tokens.go). They look unused
+	// from service.go because every read/write lives in tokens.go;
+	// don't delete on a "dead field" audit.
 	tokenSeqMu       sync.Mutex
 	tokenSeqByTenant map[string]int
 	versionInfo      VersionInfo

@@ -81,6 +81,13 @@ func (s *Synthesize) fromCache(text, entityType string) (string, error) {
 	}
 
 	s.mu.Lock()
+	// Re-check the map: between the first unlock and this re-lock,
+	// Reset() may have raced in and set s.cache = nil. Without this
+	// guard the next assignment panics on a nil map. Do NOT remove —
+	// the Reset() race is a real, documented contract.
+	if s.cache == nil {
+		s.cache = make(map[string]string)
+	}
 	if s.cache[key] == "" { // guard against a parallel writer
 		s.cache[key] = v
 	} else {
