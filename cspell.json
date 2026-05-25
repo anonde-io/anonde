@@ -1,0 +1,68 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "anonde",
+    "presidio",
+    "gliner",
+    "hugot",
+    "onnx",
+    "onnxruntime",
+    "bbolt",
+    "grpcurl",
+    "connectrpc",
+    "protoc",
+
+    "openmed",
+    "ggponc",
+    "grascco",
+    "pharmaconer",
+    "ai4privacy",
+    "wnut",
+    "pmc",
+
+    "ner",
+    "pii",
+    "nrp",
+    "iban",
+    "isin",
+    "lei",
+    "steuer",
+    "swissmedic",
+    "bafin",
+
+    "knowledgator",
+    "fastino",
+    "noirdoc",
+    "moogacs",
+
+    "gmap",
+    "pmap",
+    "gset",
+    "pset",
+    "pdoc",
+    "totw",
+    "typeonly",
+
+    "subsampled",
+    "unscored",
+    "unscoreable",
+    "scorable",
+    "summarises",
+    "behaviour",
+
+    "snake",
+    "camelcase",
+    "kebab"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/.venv*/**",
+    "**/.git/**",
+    "**/gen/**",
+    "**/dist/**",
+    "**/build/**",
+    "bench/**/*.jsonl",
+    "bench/**/results*.csv"
+  ]
+}

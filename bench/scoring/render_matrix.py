@@ -34,8 +34,11 @@ then keeps the detailed grids below it as reference:
   * Domain × language coverage map (which cells exist)
   * "# Detailed breakdown" — leads with the dense per-(domain × language)
     leak-rate grid (the rows demoted off the scorecard), then per
-    (domain × language) section with per-corpus verdict cards + leak
-    rate + severity-weighted leak + latency + strict F1.
+    (domain × language) section with the raw leak-rate grid (and a
+    severity-weighted grid only when it diverges >3pp from raw — see
+    `_section_weighted_diverges`). One global latency table sits after
+    the per-section blocks; per-section strict-F1 and per-section
+    latency moved out of the markdown but stay in `results_matrix.csv`.
   * Cost reference (self-hosted vs managed)
   * Caveats — training-data overlap
   * Glossary
@@ -419,6 +422,12 @@ def _leak_grid(out: list[str], rows: dict, corpora: list[str],
     """Append a raw leak-rate grid (one row per corpus) to `out`. Used
     once per (domain × language) section — `corpora` is the section's
     corpus list, not the global one.
+
+    Rows whose every cell is `–` (no scorable gold for any engine) are
+    elided: they convey no information, and a corpus with no span-level
+    gold is already flagged by the coverage map and the (now-removed)
+    verdict cards. The latency grid still surfaces them globally because
+    latency is meaningful even without gold.
     """
     out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
     out.append("|---|" + "---:|" * len(engines))
@@ -426,7 +435,8 @@ def _leak_grid(out: list[str], rows: dict, corpora: list[str],
         scorable_cell = next((rows[(c, e)] for e in engines
                               if (c, e) in rows and rows[(c, e)]["total_gold"] > 0), None)
         if scorable_cell is None:
-            out.append(f"| `{c}` |" + " – |" * len(engines))
+            # All-dash row: every engine is unscoreable here. Elide rather
+            # than print a noise row.
             continue
         cells = [f"| `{c}` |"]
         best_rate = float("inf")
@@ -453,14 +463,17 @@ def _leak_grid(out: list[str], rows: dict, corpora: list[str],
 
 def _weighted_leak_grid(out: list[str], rows: dict, corpora: list[str],
                         engines: list[str]) -> None:
-    """Append a severity-weighted leak-rate grid for one section."""
+    """Append a severity-weighted leak-rate grid for one section.
+
+    Rows that are all `–` (no scorable weighted gold for any engine) are
+    elided — same rationale as `_leak_grid`.
+    """
     out.append("| Corpus | " + " | ".join(f"`{e}`" for e in engines) + " |")
     out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
         scorable_cell = next((rows[(c, e)] for e in engines
                               if (c, e) in rows and rows[(c, e)]["total_gold_weighted"] > 0), None)
         if scorable_cell is None:
-            out.append(f"| `{c}` |" + " – |" * len(engines))
             continue
         cells = [f"| `{c}` |"]
         best_rate = float("inf")
@@ -487,10 +500,23 @@ def _weighted_leak_grid(out: list[str], rows: dict, corpora: list[str],
 
 def _latency_grid(out: list[str], rows: dict, corpora: list[str],
                   engines: list[str]) -> None:
-    """Append a p50 / p95 per-document latency grid for one section."""
+    """Append a p50 / p95 per-document latency grid.
+
+    Now rendered ONCE globally (at the end of the Detailed breakdown)
+    rather than per-(domain × language) section: latency varies with
+    corpus length, not with the domain/language axes, so 24 per-section
+    copies were duplication. The global call passes the full corpus
+    list; rows whose every engine has no recorded duration are elided.
+    """
     out.append("| Corpus | " + " | ".join(f"`{e}` p50 / p95" for e in engines) + " |")
     out.append("|---|" + "---:|" * len(engines))
     for c in corpora:
+        # Skip rows that would be all dashes — no engine recorded any
+        # duration for this corpus. (Realistically a corpus skipped by
+        # every engine; latency itself is the metric where most rows
+        # have at least one populated cell.)
+        if not any(rows.get((c, e)) and rows[(c, e)]["durations"] for e in engines):
+            continue
         cells = [f"| `{c}` |"]
         for e in engines:
             cell = rows.get((c, e))
@@ -501,6 +527,48 @@ def _latency_grid(out: list[str], rows: dict, corpora: list[str],
             cells.append(f"{_fmt_latency(lat['p50'])} / {_fmt_latency(lat['p95'])} |")
         out.append(" ".join(cells))
     out.append("")
+
+
+def _section_weighted_diverges(rows: dict, corpora: list[str],
+                               engines: list[str],
+                               threshold_pp: float = 3.0) -> bool:
+    """True iff the severity-weighted leak rate diverges from the raw
+    leak rate by more than `threshold_pp` percentage points on at least
+    one (corpus, engine) cell in this section.
+
+    The weighted grid is otherwise a near-duplicate of the raw grid
+    (typical divergence is 1-2pp, e.g. openmed 13.4% raw vs 13.3%
+    weighted). Rendering it unconditionally was visual noise; render
+    only when it actually says something different.
+    """
+    thr = threshold_pp / 100.0
+    for c in corpora:
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None:
+                continue
+            if cell["total_gold"] == 0 or cell["total_gold_weighted"] == 0:
+                continue
+            raw = cell["leaked"] / cell["total_gold"]
+            wtd = cell["leaked_weighted"] / cell["total_gold_weighted"]
+            if abs(wtd - raw) > thr:
+                return True
+    return False
+
+
+def _section_has_scorable_leak(rows: dict, corpora: list[str],
+                               engines: list[str]) -> bool:
+    """True iff at least one (corpus, engine) cell in this section has
+    scorable gold for the raw leak grid. Used to skip whole sections
+    where every row would be `–` (e.g. a corpus group of only
+    precision-probe corpora).
+    """
+    for c in corpora:
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is not None and cell["total_gold"] > 0:
+                return True
+    return False
 
 
 def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
@@ -889,27 +957,33 @@ def _render(rows, label_map, corpora, engines, meta=None):
     """rows: dict[(corpus, engine)] = evaluate-result-or-None.
     meta: parsed corpora.yaml (domain/language metadata); may be {}.
 
-    Layout (per-entity strict-F1 breakdown lives in results_matrix.csv):
+    Layout — lightest-touch trim of the verbose pre-2026-05-26 report.
+    Strict-F1 (per-section) and per-section latency have moved out of
+    the markdown but stay intact in `results_matrix.csv`:
 
       1. TL;DR (one-paragraph headline conclusion)
       2. Scorecard — THE table: 13 rows max (Σ ALL + per-domain Σ +
          per-language Σ), leak rate per engine, anonde-anchored on the
          FP32 production engine, plus a win/loss tally
-      3. Engine profiles (tier framing)
+      3. Engine profiles (tier framing, wrapped in collapsed <details>)
       4. Domain × language coverage map
       5. "# Detailed breakdown":
-         5a. Per-cell leak-rate grid (the detail demoted off the
-             scorecard — one row per (domain × language) cell)
+         5a. Per-cell leak-rate grid (one row per (domain × language)
+             cell — the detail demoted off the scorecard)
          5b. Per (domain × language) section, in display order, each
-             with: per-corpus verdict cards (leak severity flags),
-             leak-rate grid (production metric), partial-coverage
+             with: raw leak-rate grid (always), partial-coverage
              footnote (if any cell was subsampled), severity-weighted
-             leak rate (procurement metric), latency p50 / p95
-             (operational metric), strict F1 — overall micro-F1 only
-             (per-entity in CSV)
-      6. Cost reference (managed-service anchor; self-hosted framing)
-      7. Caveats — training-data overlap
-      8. Glossary
+             leak rate (only when it diverges >3pp from raw on at least
+             one cell). Verdict cards and per-section strict-F1 /
+             latency tables removed — they were restatement and
+             noise-vs-signal duplicates of the per-cell grid / global
+             latency table.
+         5c. ONE global latency p50 / p95 table — latency tracks corpus
+             length, not the (domain, language) axes, so 24 per-section
+             copies were collapsed into one.
+      6. Cost reference (collapsed <details>; static)
+      7. Caveats — training-data overlap (collapsed <details>; static)
+      8. Glossary (collapsed <details>; static)
     """
     meta = meta or {}
     out: list[str] = []
@@ -1018,9 +1092,11 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # Anonde-patterns and anonde-gliner-fp32 are NOT two competing tools
     # — they're two deployment profiles of the same toolkit. Patterns is
     # the no-ML / no-CGO / 12 MB image baseline; gliner-fp32 is the
-    # +770 MB ML-backed production stack. Surfacing this up front so a
-    # reader interprets the leak-rate tables as "compare across rows"
-    # not "anonde-patterns ought to beat anonde-gliner-fp32".
+    # +770 MB ML-backed production stack. Wrapped in a collapsed
+    # <details> block because the table is static between runs — a
+    # reader who wants the tier framing can expand it, the default view
+    # leads with the live numbers.
+    out.append("<details><summary>Engine profiles · what each column means</summary>\n")
     out.append("## Engine profiles\n")
     out.append("Engines below are not all competitors. `anonde-patterns` and "
                "`anonde-gliner-fp32` are two deployment tiers of the same anonde "
@@ -1054,6 +1130,7 @@ def _render(rows, label_map, corpora, engines, meta=None):
                "~3 GB | not required | 10-30 s | reference implementation; "
                "parity check vs anonde-gliner-fp32's ONNX path |")
     out.append("")
+    out.append("</details>\n")
 
     # ---- Domain × language coverage map -----------------------------
     # The matrix now spans ~30 corpora across 6 domains and 5 languages.
@@ -1096,10 +1173,12 @@ def _render(rows, label_map, corpora, engines, meta=None):
     out.append(
         "Everything below is reference detail behind the scorecard. The "
         "per-cell grid first (the detail demoted off the 13-row scorecard), "
-        "then each `(domain × language)` section carrying the per-corpus "
-        "verdict cards, the raw leak-rate grid, the severity-weighted leak "
-        "rate, latency, and strict F1. The scorecard above is the answer; "
-        "these tables are the working.\n")
+        "then each `(domain × language)` section with its raw leak-rate "
+        "grid (and severity-weighted leak only when it actually diverges "
+        ">3pp from raw — otherwise the two tracked within noise). One "
+        "global latency table follows. Strict-F1 and per-entity-type "
+        "breakdowns live in `results_matrix.csv`. The scorecard above is "
+        "the answer; these tables are the working.\n")
 
     # Per-cell leak-rate grid — the (domain × language) detail demoted
     # off the scorecard. One single table covering every populated cell,
@@ -1110,17 +1189,19 @@ def _render(rows, label_map, corpora, engines, meta=None):
     section_corpora_global: set[str] = set()
     for domain, language, section_corpora in groups:
         section_corpora_global.update(section_corpora)
+        # Auto-elide whole sections with no scorable gold anywhere. A
+        # group whose only corpora are precision-probes (e.g. pmc_de /
+        # wiki_de) would otherwise render an empty leak grid and an
+        # empty heading; the coverage map already lists the corpora.
+        if not _section_has_scorable_leak(rows, section_corpora, engines):
+            continue
         heading = f"{_domain_name(domain)} · {_language_name(language)}"
         out.append(f"## {heading}\n")
         out.append(f"Corpora in this group: "
                    + ", ".join(f"`{c}`" for c in section_corpora) + ".\n")
 
-        # Verdict cards — production-engine leak severity flags.
-        out.append("### Verdict\n")
-        out.append(f"`🟢/🟡/🟠/🔴/💀` flags `{SCORECARD_ANCHOR}`'s leak severity. "
-                   f"`⚪` corpora produced text but no span-level gold (F1/leak "
-                   f"not measurable); `❔` = `{SCORECARD_ANCHOR}` did not run.\n")
-        _verdict_cards(out, per_corpus_verdict, set(section_corpora))
+        # Verdict cards removed — the per-cell leak-rate grid two lines
+        # below already states the same verdict; the cards restated it.
 
         # Leak rate — the load-bearing metric, leads the section.
         out.append("### Leak rate · lower is better\n")
@@ -1154,30 +1235,50 @@ def _render(rows, label_map, corpora, engines, meta=None):
                 out.append("> " + note)
             out.append("")
 
-        # Severity-weighted leak rate — procurement metric.
-        if sev:
+        # Severity-weighted leak rate — procurement metric. Render only
+        # when it actually diverges from raw leak by >3pp on at least
+        # one cell; otherwise it's a near-duplicate table (e.g. openmed
+        # 13.4% raw vs 13.3% weighted) that adds no signal. The metric
+        # stays in `results_matrix.csv` regardless.
+        if sev and _section_weighted_diverges(rows, section_corpora, engines):
             out.append("### Severity-weighted leak rate · lower is better\n")
             out.append("Each leaked span weighted by compliance tier — direct "
                        "identifiers (PERSON, EMAIL, PHONE, ADDRESS, DOB) = 5, "
                        "high-stakes IDs (SSN/MRN/IBAN) = 10, quasi-identifiers "
                        "(LOCATION, ORG, PROFESSION) = 1. Defaults in "
-                       "`label_map.yaml::severity`.\n")
+                       "`label_map.yaml::severity`. Shown only because at least "
+                       "one cell here moves >3pp from raw leak; otherwise the "
+                       "two tables tracked within noise.\n")
             _weighted_leak_grid(out, rows, section_corpora, engines)
 
-        # Latency — operational metric.
-        out.append("### Latency · per-document p50 / p95\n")
-        out.append("Wall-clock per `engine.Analyze(doc)` call. p50 = steady-state, "
-                   "p95 = tail (the SLO knob). Mean + p99 in `results_matrix.csv`.\n")
-        _latency_grid(out, rows, section_corpora, engines)
+        # Latency moved to a single global table after this loop —
+        # latency varies with corpus length, not with the
+        # (domain, language) axes, so a per-section copy was duplication.
 
-        # Strict F1 — academic-comparison metric.
-        out.append("### Strict F1 · CoNLL exact span + type\n")
-        out.append("Predicted span counts only on an exact `(start, end, type)` match "
-                   "after label normalisation. Useful for academic comparison, less so "
-                   "as a production metric (it penalises broader-or-narrower spans that "
-                   "still redact the PHI). Per-entity-type breakdown in "
-                   "`results_matrix.csv`.\n")
-        _strict_f1_grid(out, rows, section_corpora, engines)
+        # Strict F1 removed from per-section blocks — the full per-cell
+        # numbers (and the per-entity-type breakdown) stay in
+        # `results_matrix.csv`. Strict F1 over-penalises spans that
+        # redact the PHI but don't byte-align, so it's the wrong metric
+        # to drive a redactor decision from anyway.
+
+    # ---- Latency · single global table -----------------------------
+    # One latency table for the whole report. Latency depends on
+    # corpus length (token count per doc), not on the (domain,
+    # language) axes, so the per-section copies were 24-way duplication.
+    # The numbers themselves are unchanged; this is purely a layout
+    # move. Rows are pooled across all sections in the order corpora
+    # were requested.
+    all_corpora_in_order: list[str] = []
+    for _d, _l, cs in groups:
+        for c in cs:
+            if c not in all_corpora_in_order:
+                all_corpora_in_order.append(c)
+    out.append("## Latency · per-document p50 / p95\n")
+    out.append("Wall-clock per `engine.Analyze(doc)` call. p50 = steady-state, "
+               "p95 = tail (the SLO knob). Mean + p99 in `results_matrix.csv`. "
+               "One table across every corpus — latency tracks corpus length, "
+               "not domain or language.\n")
+    _latency_grid(out, rows, all_corpora_in_order, engines)
 
     # ---- Cost reference ---------------------------------------------
     # All engines we benchmark are self-hostable, so per-cell cost columns
@@ -1185,6 +1286,7 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # bench to managed-service market prices so a reader can compare what
     # they'd otherwise be paying. Prices are pinned with a "verified as of"
     # date; vendor pricing pages change, so re-verify before quoting.
+    out.append("<details><summary>Cost reference · USD per million characters</summary>\n")
     out.append("## Cost reference · USD per million characters\n")
     out.append("All engines in this matrix run on your hardware — no per-call charge. "
                "For procurement context, here is what the closest managed-service "
@@ -1216,12 +1318,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
                "characters** than the managed alternatives — and the data never leaves "
                "your network. The leak-rate and F1 numbers in the tables above are how "
                "you tell if the quality tradeoff is acceptable.\n")
+    out.append("</details>\n")
 
     # ---- Caveats / training-data biases ----------------------------
     # Some corpora are training-data-adjacent to the NLP backends we
     # bench. Calling that out keeps the matrix honest: a high score
     # on a corpus the engine was trained on is not the same as a
     # high score on a held-out one.
+    out.append("<details><summary>Caveats — training-data overlap</summary>\n")
     out.append("## Caveats — training-data overlap\n")
     out.append("""\
 A "win" on a corpus an engine was trained on (or trained near) is
@@ -1254,8 +1358,10 @@ listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
 `finance_de`, `legal_de`, `adversarial_de`, `ai4privacy_en`,
 `pharmaconer_es`. Numbers there transfer most cleanly.
 """)
+    out.append("</details>\n")
 
     # ---- Glossary ---------------------------------------------------
+    out.append("<details><summary>What does this mean? (glossary)</summary>\n")
     out.append("## What does this mean?\n")
     out.append("""\
 - **Leak rate** = the fraction of gold PHI spans no predicted span overlaps. The single most
@@ -1285,6 +1391,7 @@ listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
   logs, general PII, academic NER, adversarial) and language within each. The mapping lives in
   `bench/scoring/corpora.yaml`; a corpus missing from it renders under an `uncategorized` group.
 """)
+    out.append("</details>\n")
 
     out.append(f"---\n*Generated by `bench/scoring/render_matrix.py` over "
                f"{len(rows)} cells. Full per-entity-type breakdown in `results_matrix.csv`.*\n")
