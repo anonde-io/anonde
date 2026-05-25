@@ -92,6 +92,21 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		// Korea
 		recognizers.NewKRRRNRecognizer(),
 
+		// Romania.
+		// Money values intentionally NOT included — user policy says
+		// monetary amounts (fine values, line-item amounts on
+		// receipts/invoices/garnishment notices) are not PII. The
+		// Romanian MoneyRecognizer is still defined in ro_patterns.go
+		// for callers who want it, but it's omitted from the default
+		// kernel.
+		recognizers.NewRomanianPhoneRecognizer(),
+		recognizers.NewRomanianCNPRecognizer(),
+		recognizers.NewRomanianVehicleRegRecognizer(),
+		recognizers.NewRomanianTreasuryAccountRecognizer(),
+		recognizers.NewRomanianStreetRecognizer(),
+		recognizers.NewRomanianObservationRecognizer(),
+		recognizers.NewTimeOfDayRecognizer(),
+
 		// Germany
 		recognizers.NewDEDateTimeRecognizer(),
 		recognizers.NewDEDateContextRecognizer(),
