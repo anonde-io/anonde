@@ -13,9 +13,17 @@
 #     -v anonde-models:/root/.cache/anonde \
 #     anonymize-pdf /data/in.pdf /data/out.pdf
 #
-# The first run downloads ~640 MB of models (GLiNER PII ~390 MB, YOLOS
-# signature ~248 MB) into the `anonde-models` named volume. Subsequent
-# runs reuse the cache and are instantaneous.
+# The first run downloads ~880 MB of models (GLiNER PII ~390 MB, YOLOS
+# signature FP32 ~487 MB) into the `anonde-models` named volume.
+# Subsequent runs reuse the cache and are instantaneous.
+#
+# Signature-model size is configurable at runtime via SIGNATURE_QUANT:
+#   fp32 (default) → ~487 MB — full precision; recommended.
+#   fp16           → ~318 MB — half precision.
+#   int8           → ~236 MB — smaller but measurably worse recall
+#                    (more missed signatures = privacy regression).
+# To use a smaller variant:
+#   docker run -e SIGNATURE_QUANT=int8 -v anonde-models:/root/.cache/anonde …
 #
 # Why this image isn't tiny: the runtime needs CGO + libonnxruntime +
 # tesseract + 6 language packs. Patterns-only PDF redaction (without

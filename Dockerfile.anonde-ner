@@ -99,26 +99,45 @@ ENV GLINER_MODELS_DIR=/models \
 RUN /out/anonde
 
 # --- bake the YOLOS signature-detection model -----------------------------
-# Optional but useful: pre-download the ~248 MB INT8 ONNX so the
-# `POST /v1/anonymizations/pdf` endpoint doesn't pay a first-request
-# download. Skip this layer with `--build-arg PDF_VISION_MODEL=0` for
-# a slimmer image (then the endpoint downloads on first request to a
-# writable volume).
+# Pre-download the ONNX so the `POST /v1/anonymizations/pdf` endpoint
+# doesn't pay a first-request download. Skip with
+# `--build-arg PDF_VISION_MODEL=0` for a slimmer image (the endpoint
+# then downloads on first request to a writable volume).
+#
+# Quantization variant via `--build-arg SIGNATURE_QUANT=fp32|fp16|int8`.
+# Default is FP32 — the bench matrix on GLiNER showed INT8 leaks
+# measurably more PII (Σ ALL 26.6% vs 20.7% FP32); we apply the same
+# precision-by-default policy here because a missed signature is a
+# privacy leak. Memory-constrained deployments can flip to INT8 with
+# the build-arg AND must also set SIGNATURE_QUANT=int8 at runtime so
+# the loader picks the matching cache filename. Size deltas:
+#   fp32: ~487 MB  (default)
+#   fp16: ~318 MB  (-170 MB)
+#   int8: ~236 MB  (-250 MB, recall regression)
 ARG PDF_VISION_MODEL=1
+ARG SIGNATURE_QUANT=fp32
 RUN if [ "$PDF_VISION_MODEL" = "1" ]; then \
         mkdir -p /models/signature && \
+        case "$SIGNATURE_QUANT" in \
+            fp32) REMOTE=model.onnx       LOCAL=yolos-base-signature-fp32.onnx ;; \
+            fp16) REMOTE=model_fp16.onnx  LOCAL=yolos-base-signature-fp16.onnx ;; \
+            int8) REMOTE=model_int8.onnx  LOCAL=yolos-base-signature-int8.onnx ;; \
+            *) echo "SIGNATURE_QUANT must be one of fp32|fp16|int8" >&2; exit 1 ;; \
+        esac && \
         curl -fsSL -A "anonde-build" \
-            "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/model_int8.onnx" \
-            -o /models/signature/yolos-base-signature-int8.onnx ; \
+            "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/$REMOTE" \
+            -o "/models/signature/$LOCAL" ; \
     fi
 
 # --- runtime --------------------------------------------------------------
 # debian:bookworm-slim (not distroless/cc as before) — the PDF endpoint
 # shells out to pdftoppm (poppler) and tesseract for OCR on scanned
 # PDFs, both of which need a real package manager to install cleanly.
-# Image size: ~870 MB with the signature model baked, ~620 MB without
-# (vs ~770 MB for the previous distroless variant — net +100 MB for
-# the OCR + vision capability).
+# Image size (with the signature model baked):
+#   SIGNATURE_QUANT=fp32 (default) → ~1.13 GB
+#   SIGNATURE_QUANT=fp16           → ~960 MB
+#   SIGNATURE_QUANT=int8           → ~870 MB
+# PDF_VISION_MODEL=0               → ~620 MB (download on first request)
 FROM --platform=linux/amd64 debian:bookworm-slim
 
 # poppler-utils → pdftoppm for PDF page rasterisation.
@@ -143,6 +162,11 @@ COPY --from=build /out/anonde /anonde
 COPY --from=build /out/lib/libonnxruntime.so.1 /usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 COPY --from=build /models /models
 
+# SIGNATURE_QUANT must be re-declared in the runtime stage — Docker
+# ARGs don't cross FROM boundaries. Same default as the build arg
+# (fp32) so the runtime ENV defaults align with what got baked.
+ARG SIGNATURE_QUANT=fp32
+
 # Runtime defaults: gliner backend, model+tokenizer on disk, PDF
 # endpoint enabled with vision model loaded at startup. ORT_SO_PATH
 # is the absolute lookup yalue/onnxruntime_go does at session init.
@@ -152,7 +176,8 @@ COPY --from=build /models /models
 #                                  + GET /v1/anonymizations/{id}/reveal-pdf
 #   ANONDE_PDF_VISION_MODEL=1    → load the YOLOS signature detector
 #   ANONDE_SIGNATURE_MODEL_PATH  → override (defaults to the baked
-#                                  copy at /models/signature/...)
+#                                  copy at /models/signature/yolos-…-${SIGNATURE_QUANT}.onnx)
+#   SIGNATURE_QUANT              → fp32|fp16|int8; must match the bake
 #   ANONDE_OCR_LANGS             → tesseract language string
 #
 # To run text-PII-only (smaller RAM, no vision):
@@ -165,7 +190,8 @@ ENV ANALYZER_BACKEND=gliner \
     ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1 \
     ANONDE_PDF_ENABLED=1 \
     ANONDE_PDF_VISION_MODEL=1 \
-    ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-int8.onnx \
+    SIGNATURE_QUANT=${SIGNATURE_QUANT} \
+    ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx \
     ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
 
 EXPOSE 8080
