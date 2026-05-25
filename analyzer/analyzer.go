@@ -125,20 +125,6 @@ type AnalysisConfig struct {
 // AnalyzerEngine detects PII entities in text.
 type AnalyzerEngine struct {
 	Registry *RecognizerRegistry
-
-	// Reconciler, if non-nil, post-processes the candidate spans after
-	// context-keyword score enhancement and before threshold filtering.
-	// Typical use: gate an LLM call on borderline-confidence candidates
-	// to kill false positives. See the Reconciler interface for the
-	// fail-open contract.
-	Reconciler Reconciler
-
-	// Auditor, if non-nil, runs one final LLM pass on the document
-	// AFTER all other stages (recognizers, reconciler, threshold,
-	// conflicts). It returns ADDITIONAL findings the rest of the stack
-	// missed. Fails open: on any error returns nothing, so attaching
-	// an auditor cannot RAISE leak rate vs. not attaching one.
-	Auditor Auditor
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
@@ -317,16 +303,6 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		all = EnhanceWithContext(text, all, keywords, ctxCfg)
 	}
 
-	// 5a. Reconciler (optional). Gated LLM disambiguation on borderline
-	// candidates. Fail-open contract: on error we keep the original
-	// candidates, so the reconciler can never raise leak rate.
-	if e.Reconciler != nil && len(all) > 0 {
-		reconciled, err := e.Reconciler.Reconcile(ctx, text, all)
-		if err == nil {
-			all = reconciled
-		}
-	}
-
 	// 6. DenyList (forced redaction) and AllowList (drop false positives).
 	if len(cfg.DenyList) > 0 {
 		all = append(all, scanDenyList(text, cfg.DenyList)...)
@@ -353,22 +329,7 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		SortResults(all)
 	}
 
-	// 9. Final-audit-pass auditor (optional, recall-focused). Appends
-	// any PII the rest of the pipeline missed. Fail-open in the recall
-	// direction: errors return nothing, never modify existing findings.
-	if e.Auditor != nil {
-		extra, err := e.Auditor.Audit(ctx, text, all)
-		if err == nil && len(extra) > 0 {
-			all = append(all, extra...)
-			if cfg.RemoveConflicts {
-				all = RemoveConflicts(all)
-			} else {
-				SortResults(all)
-			}
-		}
-	}
-
-	// 10. Translate findings from cleanText offsets back to the
+	// 9. Translate findings from cleanText offsets back to the
 	// original input. No-op when stripANSI found no escape sequences
 	// (offsetMap == nil). Must be the last step so every downstream
 	// consumer (anonymizer, vault, audit log) sees positions that

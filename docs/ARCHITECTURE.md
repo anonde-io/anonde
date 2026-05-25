@@ -25,8 +25,6 @@ anonde/
 ├── analyzer/                  # recognizer registry + parallel dispatch
 │   ├── analyzer.go            # AnalyzerEngine.Analyze: filter → dispatch → conflict resolve
 │   ├── result.go              # RecognizerResult + RemoveConflicts (NER-preference rule)
-│   ├── reconciler/            # optional LLM disambiguation stage (Ollama)
-│   ├── auditor/               # post-anonymization LLM audit (Ollama)
 │   └── recognizers/           # 52 pattern + 3 NER recognizers
 │       ├── *Recognizer.go     # per-region pattern recognizers
 │       ├── ner_hugot.go       # `-tags hugot`: in-process ONNX TokenClassification
