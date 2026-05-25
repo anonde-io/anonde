@@ -44,6 +44,7 @@ type HTTPServer struct {
 	connectServer   *ConnectServer
 	grpcServer      *GRPCServer
 	proxy           *openAIProxy
+	pdfRedactor     PDFRedactor
 	maxRequestBytes int64
 }
 
@@ -91,6 +92,18 @@ func (s *HTTPServer) Routes() http.Handler {
 	// path reads r.Body directly.
 	proxyHandler := http.HandlerFunc(s.proxy.chatCompletions)
 	mux.Handle(chatCompletionsPath, s.limitBody(proxyHandler))
+
+	// PDF anonymization. POST /v1/anonymizations/pdf accepts raw
+	// application/pdf or multipart/form-data (file=...); returns the
+	// redacted PDF bytes. Path is the sub-resource form parallel to
+	// the existing POST /v1/anonymizations (text) so the URL grammar
+	// stays consistent. Wrapped in the body cap because we read
+	// r.Body directly. Go 1.22 mux picks the more-specific
+	// "POST /v1/anonymizations/pdf" over the "/v1/" catch-all.
+	mux.Handle("POST /v1/anonymizations/pdf", s.limitBody(http.HandlerFunc(s.anonymizePDF)))
+	// PDF reveal: returns the original bytes stored at anonymize time.
+	// Tenant-scoped via X-Anonde-Tenant header or ?tenant=… query.
+	mux.HandleFunc("GET /v1/anonymizations/{id}/reveal-pdf", s.revealPDF)
 
 	connectOpts := []connect.HandlerOption{
 		// Replace Connect's default JSON codec with one that uses

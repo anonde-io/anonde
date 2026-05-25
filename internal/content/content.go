@@ -128,6 +128,11 @@ func ExtractAnalyzable(content, format string) (string, error) {
 		reader := bytes.NewReader(raw)
 		pdfReader, err := pdf.NewReader(reader, int64(len(raw)))
 		if err != nil {
+			// Some MFP-scanned PDFs have layouts ledongthuc/pdf can't
+			// parse. Try OCR before giving up.
+			if ocrText, ocrErr := OCRPDFBytes(raw); ocrErr == nil && ocrText != "" {
+				return ocrText, nil
+			}
 			return "", fmt.Errorf("read pdf content: %w", err)
 		}
 		var out strings.Builder
@@ -146,7 +151,18 @@ func ExtractAnalyzable(content, format string) (string, error) {
 			}
 			out.WriteString(text)
 		}
-		return strings.TrimSpace(out.String()), nil
+		extracted := strings.TrimSpace(out.String())
+		// Scanned PDFs (image-only, no text layer) come back empty or
+		// near-empty here. Fall back to OCR so the analyzer has
+		// something to see. The OCR helper is a no-op when pdftoppm /
+		// tesseract aren't installed, so this is safe in the
+		// patterns-only image too.
+		if len(extracted) < ocrTextFloor() {
+			if ocrText, err := OCRPDFBytes(raw); err == nil && ocrText != "" {
+				return ocrText, nil
+			}
+		}
+		return extracted, nil
 	default:
 		return "", fmt.Errorf("unsupported content_format %q", format)
 	}
