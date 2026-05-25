@@ -165,7 +165,7 @@ func main() {
 			opts.VisualDetector = detector
 			log.Printf("pdf endpoint: signature detector loaded")
 		}
-		httpAPI.SetPDFRedactor(api.NewPDFRedactor(opts))
+		svc.SetPDFRedactor(core.NewPDFRedactor(opts))
 		log.Printf("pdf endpoint enabled at POST /v1/anonymizations/pdf + GET /v1/anonymizations/{id}/reveal-pdf (vision_model=%s)",
 			strings.TrimSpace(os.Getenv("ANONDE_PDF_VISION_MODEL")))
 	}

@@ -32,6 +32,10 @@ type Service struct {
 	tokenSeqMu       sync.Mutex
 	tokenSeqByTenant map[string]int
 	versionInfo      VersionInfo
+	// pdfRedactor backs Service.RedactPDF. nil = the binary endpoint
+	// returns ErrPDFRedactorUnconfigured (HTTP 501). Wired by cmd/anonde
+	// when ANONDE_PDF_ENABLED=1.
+	pdfRedactor PDFRedactor
 }
 
 var ErrPolicyDenied = errors.New("policy denied")

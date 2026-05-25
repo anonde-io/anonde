@@ -130,7 +130,7 @@ The same server speaks three transports on one port:
 
 Plus two optional surfaces:
 
-- **PDF redaction (raw bytes in, raw bytes out)** — `POST /v1/anonymizations/pdf` accepts an `application/pdf` body (or a multipart `file` field) and returns a redacted PDF; `GET /v1/anonymizations/{id}/reveal-pdf` returns the original. Tenant via the `X-Anonde-Tenant` header or `?tenant=` query. Opt-in via `ANONDE_PDF_ENABLED=1`. See [PDFs, including scans (OCR fallback)](#pdfs-including-scans-ocr-fallback) below.
+- **PDF redaction (raw bytes in, raw bytes out)** — `POST /v1/anonymizations/pdf` accepts a raw `application/pdf` body and returns a redacted PDF; `GET /v1/anonymizations/{id}/reveal-pdf` returns the original. Tenant via the `X-Anonde-Tenant` header or `?tenantId=` query. Opt-in via `ANONDE_PDF_ENABLED=1`. Defined in the proto (`AnonymizePDF` / `RevealPDF` RPCs) — also callable over gRPC / Connect, with `pdf_content` and `redacted_pdf` as base64-encoded `bytes` fields. See [PDFs, including scans (OCR fallback)](#pdfs-including-scans-ocr-fallback) below.
 - **OpenAI-compatible proxy** at `POST /v1/chat/completions` — see [Use anonde as an OpenAI proxy](#use-anonde-as-an-openai-proxy) below.
 
 Source of truth: [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).

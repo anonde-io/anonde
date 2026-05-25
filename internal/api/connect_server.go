@@ -79,9 +79,11 @@ func (h *ConnectServer) HealthCheck(_ context.Context, _ *connect.Request[anonde
 }
 
 // connectErrFor maps a Service error to a connect.Error. Policy denials
-// map to PermissionDenied (HTTP 403 in Connect/JSON). Everything else
-// uses the supplied fallback code (typically InvalidArgument for
-// validation failures in the caller).
+// map to PermissionDenied (HTTP 403 in Connect/JSON); unconfigured PDF
+// redactor maps to Unimplemented (HTTP 501) so callers see the same
+// signal across REST and Connect. Everything else uses the supplied
+// fallback code (typically InvalidArgument for validation failures in
+// the caller).
 func connectErrFor(err error, fallback connect.Code) *connect.Error {
 	if err == nil {
 		return nil
@@ -89,5 +91,24 @@ func connectErrFor(err error, fallback connect.Code) *connect.Error {
 	if errors.Is(err, core.ErrPolicyDenied) {
 		return connect.NewError(connect.CodePermissionDenied, err)
 	}
+	if errors.Is(err, core.ErrPDFRedactorUnconfigured) {
+		return connect.NewError(connect.CodeUnimplemented, err)
+	}
 	return connect.NewError(fallback, err)
+}
+
+func (h *ConnectServer) AnonymizePDF(ctx context.Context, req *connect.Request[anondev1.AnonymizePDFRequest]) (*connect.Response[anondev1.AnonymizePDFResponse], error) {
+	resp, err := executeAnonymizePDF(ctx, h.svc, req.Msg)
+	if err != nil {
+		return nil, connectErrFor(err, connect.CodeInvalidArgument)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (h *ConnectServer) RevealPDF(ctx context.Context, req *connect.Request[anondev1.RevealPDFRequest]) (*connect.Response[anondev1.RevealPDFResponse], error) {
+	resp, err := executeRevealPDF(ctx, h.svc, req.Msg)
+	if err != nil {
+		return nil, connectErrFor(err, connect.CodeInvalidArgument)
+	}
+	return connect.NewResponse(resp), nil
 }

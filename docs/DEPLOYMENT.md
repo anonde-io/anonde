@@ -132,10 +132,13 @@ the language packs you need; nothing else changes in the server.
 
 ### `POST /v1/anonymizations/pdf` shape
 
-- Request: `application/pdf` body (raw bytes) **or** `multipart/form-data`
-  with a `file` field — matches the Private AI / Limina shape so callers
-  can swap base URLs without rewriting their integration. Tenant via the
-  `X-Anonde-Tenant: <id>` header (preferred) or `?tenant=<id>` query.
+- Request: raw `application/pdf` body. (Earlier ad-hoc handler also
+  accepted `multipart/form-data` with a `file` field; that was dropped
+  when the endpoint moved into the proto-defined `AnonymizePDF` RPC so
+  the gRPC / Connect / REST surfaces share one canonical shape. Wrap
+  the file in a raw POST body to keep wire-compat.) Tenant via the
+  `X-Anonde-Tenant: <id>` header (preferred) or `?tenantId=<id>` query
+  (the same convention as `DELETE /v1/anonymizations/{id}?tenantId=…`).
 - Response: `application/pdf` body (the redacted PDF) plus these response
   headers:
   - `X-Anonde-Id` — the minted anonymization id (`anon_<hex>`), needed

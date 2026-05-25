@@ -69,6 +69,10 @@ const (
 	ServiceGetVersionProcedure = "/anonde.v1.Service/GetVersion"
 	// ServiceHealthCheckProcedure is the fully-qualified name of the Service's HealthCheck RPC.
 	ServiceHealthCheckProcedure = "/anonde.v1.Service/HealthCheck"
+	// ServiceAnonymizePDFProcedure is the fully-qualified name of the Service's AnonymizePDF RPC.
+	ServiceAnonymizePDFProcedure = "/anonde.v1.Service/AnonymizePDF"
+	// ServiceRevealPDFProcedure is the fully-qualified name of the Service's RevealPDF RPC.
+	ServiceRevealPDFProcedure = "/anonde.v1.Service/RevealPDF"
 )
 
 // ServiceClient is a client for the anonde.v1.Service service.
@@ -115,6 +119,36 @@ type ServiceClient interface {
 	//
 	// REST: GET /v1/health (the plain /healthz endpoint also stays).
 	HealthCheck(context.Context, *connect.Request[v1.HealthCheckRequest]) (*connect.Response[v1.HealthCheckResponse], error)
+	// AnonymizePDF runs the visual PDF redactor over a raw PDF body and
+	// returns a redacted PDF. The server stores both the original and
+	// redacted bytes keyed by (tenant_id, minted id) so RevealPDF can
+	// return the original later. Opt-in at server boot via
+	// ANONDE_PDF_ENABLED=1 — without that the RPC returns Unimplemented
+	// (HTTP 501).
+	//
+	// Body binding: `body: "pdf_content"` makes the request body the raw
+	// bytes of the bytes field; the REST gateway uses a custom
+	// `application/pdf` marshaler so callers send raw PDF, not
+	// base64-in-JSON. tenant_id is bound from `?tenant=` / `?tenantId=`
+	// query OR from the `X-Anonde-Tenant` header (forwarded via the
+	// gateway metadata annotator). gRPC / Connect callers populate it on
+	// the message directly.
+	//
+	// The response's id / counts / by-type map are also emitted as
+	// `X-Anonde-Id`, `X-Anonde-Entities`, `X-Anonde-Entity-Types`, and
+	// repeated `X-Anonde-Entity-Count: TYPE=N` headers via the gateway's
+	// ForwardResponseOption, so REST clients can log without parsing the
+	// PDF body.
+	//
+	// REST: POST /v1/anonymizations/pdf
+	AnonymizePDF(context.Context, *connect.Request[v1.AnonymizePDFRequest]) (*connect.Response[v1.AnonymizePDFResponse], error)
+	// RevealPDF returns the original bytes the server stashed at
+	// AnonymizePDF time. 404 when the record is missing, expired, or was
+	// not created via the PDF endpoint (i.e. no OriginalBytes on the
+	// store record). Same tenant binding as AnonymizePDF.
+	//
+	// REST: GET /v1/anonymizations/{id}/reveal-pdf
+	RevealPDF(context.Context, *connect.Request[v1.RevealPDFRequest]) (*connect.Response[v1.RevealPDFResponse], error)
 }
 
 // NewServiceClient constructs a client for the anonde.v1.Service service. By default, it uses the
@@ -170,6 +204,18 @@ func NewServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...con
 			connect.WithSchema(serviceMethods.ByName("HealthCheck")),
 			connect.WithClientOptions(opts...),
 		),
+		anonymizePDF: connect.NewClient[v1.AnonymizePDFRequest, v1.AnonymizePDFResponse](
+			httpClient,
+			baseURL+ServiceAnonymizePDFProcedure,
+			connect.WithSchema(serviceMethods.ByName("AnonymizePDF")),
+			connect.WithClientOptions(opts...),
+		),
+		revealPDF: connect.NewClient[v1.RevealPDFRequest, v1.RevealPDFResponse](
+			httpClient,
+			baseURL+ServiceRevealPDFProcedure,
+			connect.WithSchema(serviceMethods.ByName("RevealPDF")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -182,6 +228,8 @@ type serviceClient struct {
 	deleteAnonymization *connect.Client[v1.DeleteAnonymizationRequest, v1.DeleteAnonymizationResponse]
 	getVersion          *connect.Client[v1.GetVersionRequest, v1.GetVersionResponse]
 	healthCheck         *connect.Client[v1.HealthCheckRequest, v1.HealthCheckResponse]
+	anonymizePDF        *connect.Client[v1.AnonymizePDFRequest, v1.AnonymizePDFResponse]
+	revealPDF           *connect.Client[v1.RevealPDFRequest, v1.RevealPDFResponse]
 }
 
 // CreateAnonymization calls anonde.v1.Service.CreateAnonymization.
@@ -217,6 +265,16 @@ func (c *serviceClient) GetVersion(ctx context.Context, req *connect.Request[v1.
 // HealthCheck calls anonde.v1.Service.HealthCheck.
 func (c *serviceClient) HealthCheck(ctx context.Context, req *connect.Request[v1.HealthCheckRequest]) (*connect.Response[v1.HealthCheckResponse], error) {
 	return c.healthCheck.CallUnary(ctx, req)
+}
+
+// AnonymizePDF calls anonde.v1.Service.AnonymizePDF.
+func (c *serviceClient) AnonymizePDF(ctx context.Context, req *connect.Request[v1.AnonymizePDFRequest]) (*connect.Response[v1.AnonymizePDFResponse], error) {
+	return c.anonymizePDF.CallUnary(ctx, req)
+}
+
+// RevealPDF calls anonde.v1.Service.RevealPDF.
+func (c *serviceClient) RevealPDF(ctx context.Context, req *connect.Request[v1.RevealPDFRequest]) (*connect.Response[v1.RevealPDFResponse], error) {
+	return c.revealPDF.CallUnary(ctx, req)
 }
 
 // ServiceHandler is an implementation of the anonde.v1.Service service.
@@ -263,6 +321,36 @@ type ServiceHandler interface {
 	//
 	// REST: GET /v1/health (the plain /healthz endpoint also stays).
 	HealthCheck(context.Context, *connect.Request[v1.HealthCheckRequest]) (*connect.Response[v1.HealthCheckResponse], error)
+	// AnonymizePDF runs the visual PDF redactor over a raw PDF body and
+	// returns a redacted PDF. The server stores both the original and
+	// redacted bytes keyed by (tenant_id, minted id) so RevealPDF can
+	// return the original later. Opt-in at server boot via
+	// ANONDE_PDF_ENABLED=1 — without that the RPC returns Unimplemented
+	// (HTTP 501).
+	//
+	// Body binding: `body: "pdf_content"` makes the request body the raw
+	// bytes of the bytes field; the REST gateway uses a custom
+	// `application/pdf` marshaler so callers send raw PDF, not
+	// base64-in-JSON. tenant_id is bound from `?tenant=` / `?tenantId=`
+	// query OR from the `X-Anonde-Tenant` header (forwarded via the
+	// gateway metadata annotator). gRPC / Connect callers populate it on
+	// the message directly.
+	//
+	// The response's id / counts / by-type map are also emitted as
+	// `X-Anonde-Id`, `X-Anonde-Entities`, `X-Anonde-Entity-Types`, and
+	// repeated `X-Anonde-Entity-Count: TYPE=N` headers via the gateway's
+	// ForwardResponseOption, so REST clients can log without parsing the
+	// PDF body.
+	//
+	// REST: POST /v1/anonymizations/pdf
+	AnonymizePDF(context.Context, *connect.Request[v1.AnonymizePDFRequest]) (*connect.Response[v1.AnonymizePDFResponse], error)
+	// RevealPDF returns the original bytes the server stashed at
+	// AnonymizePDF time. 404 when the record is missing, expired, or was
+	// not created via the PDF endpoint (i.e. no OriginalBytes on the
+	// store record). Same tenant binding as AnonymizePDF.
+	//
+	// REST: GET /v1/anonymizations/{id}/reveal-pdf
+	RevealPDF(context.Context, *connect.Request[v1.RevealPDFRequest]) (*connect.Response[v1.RevealPDFResponse], error)
 }
 
 // NewServiceHandler builds an HTTP handler from the service implementation. It returns the path on
@@ -314,6 +402,18 @@ func NewServiceHandler(svc ServiceHandler, opts ...connect.HandlerOption) (strin
 		connect.WithSchema(serviceMethods.ByName("HealthCheck")),
 		connect.WithHandlerOptions(opts...),
 	)
+	serviceAnonymizePDFHandler := connect.NewUnaryHandler(
+		ServiceAnonymizePDFProcedure,
+		svc.AnonymizePDF,
+		connect.WithSchema(serviceMethods.ByName("AnonymizePDF")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serviceRevealPDFHandler := connect.NewUnaryHandler(
+		ServiceRevealPDFProcedure,
+		svc.RevealPDF,
+		connect.WithSchema(serviceMethods.ByName("RevealPDF")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/anonde.v1.Service/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ServiceCreateAnonymizationProcedure:
@@ -330,6 +430,10 @@ func NewServiceHandler(svc ServiceHandler, opts ...connect.HandlerOption) (strin
 			serviceGetVersionHandler.ServeHTTP(w, r)
 		case ServiceHealthCheckProcedure:
 			serviceHealthCheckHandler.ServeHTTP(w, r)
+		case ServiceAnonymizePDFProcedure:
+			serviceAnonymizePDFHandler.ServeHTTP(w, r)
+		case ServiceRevealPDFProcedure:
+			serviceRevealPDFHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -365,4 +469,12 @@ func (UnimplementedServiceHandler) GetVersion(context.Context, *connect.Request[
 
 func (UnimplementedServiceHandler) HealthCheck(context.Context, *connect.Request[v1.HealthCheckRequest]) (*connect.Response[v1.HealthCheckResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("anonde.v1.Service.HealthCheck is not implemented"))
+}
+
+func (UnimplementedServiceHandler) AnonymizePDF(context.Context, *connect.Request[v1.AnonymizePDFRequest]) (*connect.Response[v1.AnonymizePDFResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("anonde.v1.Service.AnonymizePDF is not implemented"))
+}
+
+func (UnimplementedServiceHandler) RevealPDF(context.Context, *connect.Request[v1.RevealPDFRequest]) (*connect.Response[v1.RevealPDFResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("anonde.v1.Service.RevealPDF is not implemented"))
 }
