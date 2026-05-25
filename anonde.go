@@ -4,7 +4,9 @@ package anonde
 
 import (
 	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/auditor"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/reconciler"
 	"github.com/anonde-io/anonde/anonymizer"
 )
 
@@ -155,6 +157,38 @@ func DefaultAnalyzerEngineWithOllama(endpoint, model string) *analyzer.AnalyzerE
 // log.Fatalfs on call. This keeps the hugot transitive dependency graph
 // (onnxruntime-go, tokenizers, …) out of patterns-only and Ollama-only
 // builds.
+
+// WithOllamaReconciler attaches a local-Ollama LLM reconciler to the given
+// engine. The reconciler gates an LLM call on borderline-confidence
+// candidates (score in [LowGate, HighGate)) and drops those the model
+// classifies as false positives.
+//
+// Returns the same engine for chaining. Pass a zero OllamaConfig for
+// production defaults (llama3.2:3b, endpoint localhost:11434, 4 workers,
+// 5 s per-span timeout).
+//
+// Fail-open: on any LLM error the reconciler keeps the candidate, so
+// attaching it CANNOT raise the leak rate vs not attaching it.
+func WithOllamaReconciler(e *analyzer.AnalyzerEngine, cfg reconciler.OllamaConfig) *analyzer.AnalyzerEngine {
+	e.Reconciler = reconciler.NewOllama(cfg)
+	return e
+}
+
+// WithOllamaAuditor attaches a local-Ollama LLM final-audit-pass to the
+// given engine. After all other recognizers run, the auditor reviews the
+// document for PII the rest of the pipeline missed and appends its
+// findings.
+//
+// Fails open: on any LLM error the auditor returns nothing, so attaching
+// it CANNOT raise leak rate vs. not attaching it.
+//
+// Use a 7B+ instruction-following model for usable quality on German
+// clinical text; smaller models produce unreliable JSON. Pass a zero
+// OllamaAuditorConfig for defaults (llama3.1:8b, 60s timeout).
+func WithOllamaAuditor(e *analyzer.AnalyzerEngine, cfg auditor.OllamaConfig) *analyzer.AnalyzerEngine {
+	e.Auditor = auditor.NewOllama(cfg)
+	return e
+}
 
 // DefaultAnonymizerEngine returns a new AnonymizerEngine.
 func DefaultAnonymizerEngine() *anonymizer.AnonymizerEngine {

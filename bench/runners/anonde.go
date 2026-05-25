@@ -32,10 +32,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -43,7 +45,9 @@ import (
 
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/analyzer"
+	"github.com/anonde-io/anonde/analyzer/auditor"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
+	"github.com/anonde-io/anonde/analyzer/reconciler"
 )
 
 type goldDoc struct {
@@ -71,7 +75,7 @@ func main() {
 		outPath    = flag.String("out", "", "output findings jsonl")
 		threshold  = flag.Float64("threshold", 0.3, "score threshold")
 		language   = flag.String("language", "de", "AnalysisConfig.Language")
-		backend    = flag.String("backend", "patterns-only", "hugot|gliner|gliner-flat|ollama|patterns-only")
+		backend    = flag.String("backend", "patterns-only", "hugot|gliner|gliner-flat|patterns-only")
 		modelsDir  = flag.String("models-dir", "", "hugot models cache (default ~/.cache/anonde/models)")
 		modelName  = flag.String("model", "", "hugot/gliner model id (empty = backend default)")
 		onnxFile   = flag.String("onnx-file", "", "ONNX file path inside the HF repo (e.g. onnx/model_quantized.onnx); empty = repo default")
@@ -82,8 +86,18 @@ func main() {
 		disableNER = flag.Bool("disable-ner", false, "force DisableNER=true regardless of backend")
 		foldParity = flag.Bool("fold-parity-labels", false, "fold STREET_ADDRESS + POSTAL_CODE to LOCATION (ai4privacy gold schema)")
 
-		ollamaEndpoint = flag.String("ollama-endpoint", "http://localhost:11434", "Ollama base URL (used by --backend ollama)")
-		ollamaModel    = flag.String("ollama-model", "llama3.2:3b", "Ollama model tag (used by --backend ollama)")
+		reconcilerKind = flag.String("reconciler", "none", "none|ollama")
+		ollamaEndpoint = flag.String("ollama-endpoint", "http://localhost:11434", "Ollama base URL")
+		ollamaModel    = flag.String("ollama-model", "llama3.2:3b", "Ollama model tag for reconciler")
+		recLow         = flag.Float64("reconciler-low", 0.40, "reconciler low gate")
+		recHigh        = flag.Float64("reconciler-high", 0.85, "reconciler high gate")
+		recWorkers     = flag.Int("reconciler-workers", 4, "max concurrent LLM requests")
+		recTimeoutSec  = flag.Int("reconciler-timeout-sec", 5, "per-span LLM call timeout")
+
+		auditorKind     = flag.String("auditor", "none", "none|ollama")
+		auditorModel    = flag.String("auditor-model", "llama3.1:8b", "Ollama model for the auditor")
+		auditorTimeout  = flag.Int("auditor-timeout-sec", 60, "auditor per-doc timeout")
+		auditorMaxChars = flag.Int("auditor-max-chars", 8000, "auditor truncates docs longer than this")
 
 		flatGLiNERModel = flag.String("flat-gliner-model", "", "additional flat-decoder GLiNER model id (e.g. knowledgator/gliner-pii-large-v1.0); registered alongside the base")
 		flatGLiNEROnnx  = flag.String("flat-gliner-onnx", "", "ONNX file path inside the flat-GLiNER repo (e.g. model.onnx)")
@@ -149,21 +163,8 @@ func main() {
 		engine = anonde.DefaultAnalyzerEngine()
 		nerOff = true
 		engineLabel = "anonde-patterns-only"
-	case "ollama":
-		// Ollama as the NER backend. Pure-Go path (no CGO, no
-		// libonnxruntime), uses a local Ollama daemon over HTTP.
-		// Reuses the --ollama-endpoint / --ollama-model flags that
-		// were previously reconciler-only. ONLY emits PERSON /
-		// LOCATION / ORGANIZATION / NRP — pattern recognizers cover
-		// the rest of the entity surface.
-		ollMod := strings.TrimSpace(*ollamaModel)
-		if ollMod == "" {
-			ollMod = "llama3.2:3b"
-		}
-		engine = anonde.DefaultAnalyzerEngineWithOllama(*ollamaEndpoint, ollMod)
-		engineLabel = "anonde-ollama[" + ollMod + "]"
 	default:
-		log.Fatalf("unknown --backend %q (valid: hugot, gliner, gliner-flat, ollama, patterns-only)", *backend)
+		log.Fatalf("unknown --backend %q (valid: hugot, gliner, gliner-flat, patterns-only)", *backend)
 	}
 	if *disableNER {
 		nerOff = true
@@ -186,6 +187,44 @@ func main() {
 		engineLabel += "+flat[" + *flatGLiNERModel + "]"
 		log.Printf("flat-gliner: registered alongside base (model=%s onnx=%q threshold=%.2f)",
 			*flatGLiNERModel, *flatGLiNEROnnx, *flatGLiNERThr)
+	}
+
+	var ollamaRec *reconciler.Ollama
+	switch *reconcilerKind {
+	case "", "none":
+	case "ollama":
+		ollamaRec = reconciler.NewOllama(reconciler.OllamaConfig{
+			Endpoint:      *ollamaEndpoint,
+			Model:         *ollamaModel,
+			LowGate:       *recLow,
+			HighGate:      *recHigh,
+			MaxConcurrent: *recWorkers,
+			Timeout:       time.Duration(*recTimeoutSec) * time.Second,
+		})
+		engine.Reconciler = ollamaRec
+		engineLabel += "+ollama-reconciler"
+		log.Printf("reconciler=ollama model=%s gates=[%.2f,%.2f) workers=%d timeout=%ds",
+			*ollamaModel, *recLow, *recHigh, *recWorkers, *recTimeoutSec)
+		warmupOllama(*ollamaEndpoint, *ollamaModel)
+	default:
+		log.Fatalf("unknown --reconciler %q (valid: none, ollama)", *reconcilerKind)
+	}
+
+	switch *auditorKind {
+	case "", "none":
+	case "ollama":
+		anonde.WithOllamaAuditor(engine, auditor.OllamaConfig{
+			Endpoint:      *ollamaEndpoint,
+			Model:         *auditorModel,
+			Timeout:       time.Duration(*auditorTimeout) * time.Second,
+			MaxInputChars: *auditorMaxChars,
+		})
+		engineLabel += "+ollama-auditor"
+		log.Printf("auditor=ollama model=%s timeout=%ds max-chars=%d",
+			*auditorModel, *auditorTimeout, *auditorMaxChars)
+		warmupOllama(*ollamaEndpoint, *auditorModel)
+	default:
+		log.Fatalf("unknown --auditor %q (valid: none, ollama)", *auditorKind)
 	}
 
 	in, err := os.Open(*inPath)
@@ -253,6 +292,38 @@ func main() {
 		log.Fatalf("scan: %v", err)
 	}
 	log.Printf("processed %d docs (engine=%s, language=%s)", docs, engineLabel, *language)
+
+	if ollamaRec != nil {
+		s := ollamaRec.Stats()
+		log.Printf("reconciler stats: total=%d kept_high=%d dropped_low=%d llm_band=%d llm_keep=%d llm_drop=%d llm_error=%d cache_hit=%d",
+			s.Total, s.KeptHigh, s.DroppedLow, s.LLMBand, s.LLMKeep, s.LLMDrop, s.LLMError, s.CacheHit)
+	}
+}
+
+// warmupOllama makes one trivial chat request so the model is loaded
+// into Ollama's memory before the bench loop's concurrent calls. Without
+// this, the first batch of reconciler / auditor calls all wait for a
+// cold load (10–30 s) and time out together.
+func warmupOllama(endpoint, model string) {
+	body := []byte(`{"model":"` + model + `","stream":false,` +
+		`"options":{"num_predict":1,"temperature":0},` +
+		`"messages":[{"role":"user","content":"ok"}]}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("warmup: build request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	t0 := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("warmup: %v (continuing — calls will fail-open until model is loaded)", err)
+		return
+	}
+	_ = resp.Body.Close()
+	log.Printf("warmup: model %s loaded in %dms", model, time.Since(t0).Milliseconds())
 }
 
 // foldForParity normalises anonde's address-bucket entity types to LOCATION
