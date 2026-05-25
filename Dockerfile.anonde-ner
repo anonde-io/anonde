@@ -98,30 +98,75 @@ ENV GLINER_MODELS_DIR=/models \
     DOWNLOAD_MODELS_ONLY=1
 RUN /out/anonde
 
+# --- bake the YOLOS signature-detection model -----------------------------
+# Optional but useful: pre-download the ~248 MB INT8 ONNX so the
+# `POST /v1/anonymizations/pdf` endpoint doesn't pay a first-request
+# download. Skip this layer with `--build-arg PDF_VISION_MODEL=0` for
+# a slimmer image (then the endpoint downloads on first request to a
+# writable volume).
+ARG PDF_VISION_MODEL=1
+RUN if [ "$PDF_VISION_MODEL" = "1" ]; then \
+        mkdir -p /models/signature && \
+        curl -fsSL -A "anonde-build" \
+            "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/model_int8.onnx" \
+            -o /models/signature/yolos-base-signature-int8.onnx ; \
+    fi
+
 # --- runtime --------------------------------------------------------------
-# distroless/cc includes glibc + libgcc + libstdc++ — the minimum that
-# libonnxruntime.so needs to dlopen and link cleanly. No shell, no package
-# manager, no busybox — same hardened posture as distroless/static.
-#
-# Arch pinned to linux/amd64 to match the build stage. Without this,
-# `docker pull` on an arm64 host (Apple Silicon) fetches the arm64
-# variant of the distroless image, leaving an amd64 binary in an arm64
-# runtime → fails at startup with rosetta/ld-linux errors.
-FROM --platform=linux/amd64 gcr.io/distroless/cc-debian12
+# debian:bookworm-slim (not distroless/cc as before) — the PDF endpoint
+# shells out to pdftoppm (poppler) and tesseract for OCR on scanned
+# PDFs, both of which need a real package manager to install cleanly.
+# Image size: ~870 MB with the signature model baked, ~620 MB without
+# (vs ~770 MB for the previous distroless variant — net +100 MB for
+# the OCR + vision capability).
+FROM --platform=linux/amd64 debian:bookworm-slim
+
+# poppler-utils → pdftoppm for PDF page rasterisation.
+# tesseract-ocr + lang packs → OCR fallback for scanned PDFs.
+# ca-certificates → first-run model download HTTPS when
+# PDF_VISION_MODEL build arg is 0 and the model is fetched at
+# request time.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-deu \
+        tesseract-ocr-ron \
+        tesseract-ocr-fra \
+        tesseract-ocr-spa \
+        tesseract-ocr-ita && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out/anonde /anonde
 COPY --from=build /out/lib/libonnxruntime.so.1 /usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
 COPY --from=build /models /models
 
-# Runtime defaults: gliner backend, model+tokenizer on disk, no download.
-# ORT_SO_PATH is the absolute lookup yalue/onnxruntime_go does at session
-# init; pinned to the COPY target above so it works regardless of
-# LD_LIBRARY_PATH (distroless doesn't set any defaults).
+# Runtime defaults: gliner backend, model+tokenizer on disk, PDF
+# endpoint enabled with vision model loaded at startup. ORT_SO_PATH
+# is the absolute lookup yalue/onnxruntime_go does at session init.
+#
+# PDF endpoint:
+#   ANONDE_PDF_ENABLED=1         → mount POST /v1/anonymizations/pdf
+#                                  + GET /v1/anonymizations/{id}/reveal-pdf
+#   ANONDE_PDF_VISION_MODEL=1    → load the YOLOS signature detector
+#   ANONDE_SIGNATURE_MODEL_PATH  → override (defaults to the baked
+#                                  copy at /models/signature/...)
+#   ANONDE_OCR_LANGS             → tesseract language string
+#
+# To run text-PII-only (smaller RAM, no vision):
+#   docker run -e ANONDE_PDF_VISION_MODEL=0 -p 8080:8080 anonde-ner
 ENV ANALYZER_BACKEND=gliner \
     GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
     GLINER_ONNX_FILE=onnx/model.onnx \
     GLINER_THRESHOLD=0.40 \
-    ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1
+    ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1 \
+    ANONDE_PDF_ENABLED=1 \
+    ANONDE_PDF_VISION_MODEL=1 \
+    ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-int8.onnx \
+    ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
 
 EXPOSE 8080
 ENTRYPOINT ["/anonde"]
