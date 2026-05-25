@@ -104,6 +104,21 @@ ENV ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1 \
 #   -v anonde-models:/root/.cache/anonde
 VOLUME ["/root/.cache/anonde"]
 
+# OCI image annotations — see Dockerfile.anonde-ner for the rationale.
+ARG IMAGE_REVISION=
+ARG IMAGE_CREATED=
+ARG IMAGE_VERSION=dev
+LABEL org.opencontainers.image.title="anonymize-pdf" \
+      org.opencontainers.image.description="anonde anonymize-pdf CLI — one-shot PDF redaction (OCR + GLiNER NER + YOLOS signature). docker run -v PWD:/data anonymize-pdf /data/in.pdf /data/out.pdf" \
+      org.opencontainers.image.source="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.url="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.documentation="https://github.com/anonde-io/anonde#readme" \
+      org.opencontainers.image.vendor="anonde-io" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision=$IMAGE_REVISION \
+      org.opencontainers.image.created=$IMAGE_CREATED \
+      org.opencontainers.image.version=$IMAGE_VERSION
+
 # Binary takes positional args: <input.pdf> <output.pdf>. Mount /data and
 # pass /data-relative paths.
 ENTRYPOINT ["/usr/local/bin/anonymize-pdf"]

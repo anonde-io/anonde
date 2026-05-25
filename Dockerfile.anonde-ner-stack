@@ -19,13 +19,17 @@
 # Run:
 #   docker run -d -p 8080:8080 -e WARMUP_ON_START=1 anonde-ner-stack
 #
-# Image-size budget (~2.1 GB total):
+# Image-size budget (~2.65 GB total at default SIGNATURE_QUANT=fp32):
 #   - BASE FP32 ONNX  (knowledgator/gliner-pii-base-v1.0/onnx/model.onnx)
 #                     ~370 MB
 #   - LARGE FP32 ONNX (knowledgator/gliner-pii-large-v1.0/model.onnx)
 #                     ~1.4 GB
+#   - YOLOS signature FP32 ONNX                  ~487 MB
+#                     (--build-arg SIGNATURE_QUANT=int8 → ~236 MB)
+#                     (--build-arg PDF_VISION_MODEL=0 → 0 MB, runtime download)
 #   - Tokenizers + configs                       ~50 MB total
-#   - distroless/cc-debian12 base + libonnxruntime + Go binary ~300 MB
+#   - debian:bookworm-slim base + tesseract + poppler + libonnxruntime
+#     + Go binary                                ~350 MB
 #
 # Why not run them in parallel goroutines:
 #   - Each session is internally serialised by its own recognizer mutex
@@ -100,21 +104,95 @@ ENV GLINER_MODELS_DIR=/models \
     DOWNLOAD_MODELS_ONLY=1
 RUN /out/anonde
 
+# --- bake the YOLOS signature-detection model -----------------------------
+# Mirrors Dockerfile.anonde-ner. Pre-downloads the YOLOS ONNX so the
+# POST /v1/anonymizations/pdf endpoint doesn't pay a first-request
+# download. Skip with `--build-arg PDF_VISION_MODEL=0` (the endpoint
+# then downloads on first request to a writable volume).
+#
+# Quantization variant via `--build-arg SIGNATURE_QUANT=fp32|fp16|int8`.
+# Default is FP32 — same INT8-vs-FP32 policy as GLiNER (the bench matrix
+# showed INT8 leaks measurably more PII; the same recall regression on
+# a signature detector means missed signatures = privacy leak).
+# Size deltas vs the default:
+#   fp32: ~487 MB  (default)
+#   fp16: ~318 MB  (-170 MB)
+#   int8: ~236 MB  (-250 MB, recall regression)
+ARG PDF_VISION_MODEL=1
+ARG SIGNATURE_QUANT=fp32
+RUN if [ "$PDF_VISION_MODEL" = "1" ]; then \
+        mkdir -p /models/signature && \
+        case "$SIGNATURE_QUANT" in \
+            fp32) REMOTE=model.onnx       LOCAL=yolos-base-signature-fp32.onnx ;; \
+            fp16) REMOTE=model_fp16.onnx  LOCAL=yolos-base-signature-fp16.onnx ;; \
+            int8) REMOTE=model_int8.onnx  LOCAL=yolos-base-signature-int8.onnx ;; \
+            *) echo "SIGNATURE_QUANT must be one of fp32|fp16|int8" >&2; exit 1 ;; \
+        esac && \
+        curl -fsSL -A "anonde-build" \
+            "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/$REMOTE" \
+            -o "/models/signature/$LOCAL" ; \
+    fi
+
 # --- runtime --------------------------------------------------------------
-# TARGETPLATFORM keeps the runtime image arch in lockstep with the build
-# stage. libonnxruntime lands in /lib (arch-neutral path) to dodge the
+# debian:bookworm-slim — switched from distroless/cc to gain apt so the
+# PDF endpoint can install pdftoppm (poppler) and tesseract for the OCR
+# pass on scanned PDFs. Debian-slim is multi-arch-ready (amd64 + arm64),
+# so the buildx multi-arch story carries over via $TARGETPLATFORM.
+# libonnxruntime lands in /lib (arch-neutral path) to dodge the
 # glibc-multiarch x86_64 vs aarch64 split — see Dockerfile.anonde-ner.
-FROM --platform=$TARGETPLATFORM gcr.io/distroless/cc-debian12
+#
+# Image size (with the signature model baked at default fp32):
+#   ~2.65 GB total (was ~2.1 GB on distroless without the PDF stack).
+# Override with --build-arg SIGNATURE_QUANT=int8 (~2.4 GB) or
+# --build-arg PDF_VISION_MODEL=0 (~2.16 GB, first-request download).
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 ARG TARGETARCH
+
+# poppler-utils → pdftoppm for PDF page rasterisation.
+# tesseract-ocr + lang packs → OCR fallback for scanned PDFs.
+# ca-certificates → first-run model download HTTPS when
+# PDF_VISION_MODEL build arg is 0 and the model is fetched at
+# request time.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-deu \
+        tesseract-ocr-ron \
+        tesseract-ocr-fra \
+        tesseract-ocr-spa \
+        tesseract-ocr-ita && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out/anonde /anonde
 COPY --from=build /out/lib/libonnxruntime.so.1 /lib/libonnxruntime.so.1
 COPY --from=build /models /models
 
-# Runtime defaults: stack backend, both models on disk, no download. Match
-# the ANONDE_GLINER_FLAT_* env spelling exactly with cmd/anonde/main.go's
+# SIGNATURE_QUANT must be re-declared here — Docker ARGs don't cross
+# FROM boundaries. Default matches the build arg (fp32) so the runtime
+# ENV ANONDE_SIGNATURE_MODEL_PATH points at whatever got baked.
+ARG SIGNATURE_QUANT=fp32
+
+# Runtime defaults: stack backend, both models on disk, no download. PDF
+# endpoint enabled with vision model loaded at startup. Match the
+# ANONDE_GLINER_FLAT_* env spelling exactly with cmd/anonde/main.go's
 # analyzerFromEnv — those are the canonical names and they default to
 # these same values in the binary, but spelling them here makes the
 # container's behaviour obvious from `docker inspect` without reading Go.
+#
+# PDF endpoint:
+#   ANONDE_PDF_ENABLED=1         → mount POST /v1/anonymizations/pdf
+#                                  + GET /v1/anonymizations/{id}/reveal-pdf
+#   ANONDE_PDF_VISION_MODEL=1    → load the YOLOS signature detector
+#   ANONDE_SIGNATURE_MODEL_PATH  → override (defaults to the baked
+#                                  copy at /models/signature/yolos-…-${SIGNATURE_QUANT}.onnx)
+#   SIGNATURE_QUANT              → fp32|fp16|int8; must match the bake
+#   ANONDE_OCR_LANGS             → tesseract language string
+#
+# To run text-PII-only (smaller RAM, no vision):
+#   docker run -e ANONDE_PDF_VISION_MODEL=0 -p 8080:8080 anonde-ner-stack
 ENV ANALYZER_BACKEND=gliner-stack \
     GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
@@ -122,7 +200,27 @@ ENV ANALYZER_BACKEND=gliner-stack \
     GLINER_THRESHOLD=0.40 \
     ANONDE_GLINER_FLAT_MODEL=knowledgator/gliner-pii-large-v1.0 \
     ANONDE_GLINER_FLAT_ONNX_FILE=model.onnx \
-    ORT_SO_PATH=/lib/libonnxruntime.so.1
+    ORT_SO_PATH=/lib/libonnxruntime.so.1 \
+    ANONDE_PDF_ENABLED=1 \
+    ANONDE_PDF_VISION_MODEL=1 \
+    SIGNATURE_QUANT=${SIGNATURE_QUANT} \
+    ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx \
+    ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
+
+# OCI image annotations — see Dockerfile.anonde-ner for the rationale.
+ARG IMAGE_REVISION=
+ARG IMAGE_CREATED=
+ARG IMAGE_VERSION=dev
+LABEL org.opencontainers.image.title="anonde-ner-stack" \
+      org.opencontainers.image.description="anonde server with the BASE+LARGE GLiNER stack + tesseract OCR + YOLOS signature detector. Lowest-leak deployment tier; same HTTP surface as anonde-ner." \
+      org.opencontainers.image.source="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.url="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.documentation="https://github.com/anonde-io/anonde#readme" \
+      org.opencontainers.image.vendor="anonde-io" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision=$IMAGE_REVISION \
+      org.opencontainers.image.created=$IMAGE_CREATED \
+      org.opencontainers.image.version=$IMAGE_VERSION
 
 EXPOSE 8080
 ENTRYPOINT ["/anonde"]

@@ -215,5 +215,22 @@ ENV ANALYZER_BACKEND=gliner \
     ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx \
     ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
 
+# OCI image annotations — populated at build time by GitHub Actions
+# (or any caller that passes the args). Defaults are sensible enough
+# that a hand-built image still gets reasonable metadata.
+ARG IMAGE_REVISION=
+ARG IMAGE_CREATED=
+ARG IMAGE_VERSION=dev
+LABEL org.opencontainers.image.title="anonde-ner" \
+      org.opencontainers.image.description="anonde server with GLiNER PII NER + tesseract OCR + YOLOS signature detector. POST /v1/anonymizations (text) and /v1/anonymizations/pdf (PDF in / redacted PDF out)." \
+      org.opencontainers.image.source="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.url="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.documentation="https://github.com/anonde-io/anonde#readme" \
+      org.opencontainers.image.vendor="anonde-io" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision=$IMAGE_REVISION \
+      org.opencontainers.image.created=$IMAGE_CREATED \
+      org.opencontainers.image.version=$IMAGE_VERSION
+
 EXPOSE 8080
 ENTRYPOINT ["/anonde"]

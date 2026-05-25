@@ -14,6 +14,22 @@ COPY --from=build /out/anonde /anonde
 #   docker run -e ANALYZER_BACKEND=hugot -v <models>:/cache <image>
 # to enable in-process ONNX NER.
 ENV ANALYZER_BACKEND=patterns
+
+# OCI image annotations — see Dockerfile.anonde-ner for the rationale.
+ARG IMAGE_REVISION=
+ARG IMAGE_CREATED=
+ARG IMAGE_VERSION=dev
+LABEL org.opencontainers.image.title="anonde" \
+      org.opencontainers.image.description="anonde server — patterns-only PII detection + anonymisation. ~12 MB distroless image, no model downloads, no CGO. Use Dockerfile.anonde-ner for NER + PDF redaction." \
+      org.opencontainers.image.source="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.url="https://github.com/anonde-io/anonde" \
+      org.opencontainers.image.documentation="https://github.com/anonde-io/anonde#readme" \
+      org.opencontainers.image.vendor="anonde-io" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision=$IMAGE_REVISION \
+      org.opencontainers.image.created=$IMAGE_CREATED \
+      org.opencontainers.image.version=$IMAGE_VERSION
+
 EXPOSE 8080
 ENTRYPOINT ["/anonde"]
 
