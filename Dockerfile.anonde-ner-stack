@@ -205,6 +205,7 @@ ENV ANALYZER_BACKEND=gliner-stack \
     ANONDE_PDF_VISION_MODEL=1 \
     SIGNATURE_QUANT=${SIGNATURE_QUANT} \
     ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx \
+    SIGNATURE_THRESHOLD=0.20 \
     ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
 
 # OCI image annotations — see Dockerfile.anonde-ner for the rationale.
