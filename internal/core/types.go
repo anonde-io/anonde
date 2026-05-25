@@ -46,13 +46,28 @@ type TokenRef struct {
 }
 
 // StoreRecord is the persisted anonymization: the anonymized blob plus
-// the token offsets needed to reveal it.
+// the token offsets needed to reveal it. For binary formats (PDF) the
+// OriginalBytes and AnonymizedBytes fields hold the round-trippable
+// data; AnonymizedContent stays empty in that case. JSON encoding of
+// the byte fields uses base64 — fine for the bbolt backend, cheap
+// in-memory.
 type StoreRecord struct {
 	TenantID          string     `json:"tenant_id"`
 	ID                string     `json:"id"`
 	ContentFormat     string     `json:"content_format,omitempty"`
 	AnonymizedContent string     `json:"anonymized_content"`
 	Tokens            []TokenRef `json:"tokens"`
+
+	// OriginalBytes is populated for binary formats so reveal can
+	// return the exact pre-anonymisation artefact (e.g. the original
+	// PDF). Empty for text/json/ndjson/logs paths where reveal
+	// reconstructs from tokens.
+	OriginalBytes []byte `json:"original_bytes,omitempty"`
+	// AnonymizedBytes is the post-redaction binary artefact for the
+	// same. Returned by Ingest as the response body for binary
+	// formats; cached here so subsequent calls don't have to
+	// re-render.
+	AnonymizedBytes []byte `json:"anonymized_bytes,omitempty"`
 }
 
 // VaultEntry stores one token mapping.
