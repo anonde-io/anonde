@@ -1,14 +1,10 @@
 package main
 
-import (
-	"fmt"
+import "github.com/anonde-io/anonde/internal/content"
 
-	"github.com/anonde-io/anonde/internal/content"
-)
-
-// loadSignatureDetector returns a "not yet wired" error in this PR.
-// The real implementation lands in the next PR of the stack, which
-// adds content.LoadSignatureDetector (YOLOS via onnxruntime_go).
-func loadSignatureDetector(_ string) (content.VisualDetector, error) {
-	return nil, fmt.Errorf("--signature-model is not wired in this build (see next PR in the stack)")
+// loadSignatureDetector is now a thin wrapper around the shared
+// content.LoadSignatureDetector so the CLI and the HTTP server share
+// the same model loader and cache directory.
+func loadSignatureDetector(overridePath string) (content.VisualDetector, error) {
+	return content.LoadSignatureDetector(overridePath)
 }
