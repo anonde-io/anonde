@@ -36,7 +36,10 @@ in `main` but not yet cut as a release.
   de-anonymizes the response in OpenAI shape. v0.1 proxies OpenAI only,
   non-streaming only.
 - **Content formats** — text, JSON, NDJSON, logs, and PDF, with
-  format negotiation.
+  format negotiation. Scanned (image-only) PDFs are OCR'd via
+  `pdftoppm` + `tesseract` when both are on `PATH`; bundled in the
+  NER image variants, no-op fallback in the patterns-only image.
+  Tunable via `ANONDE_OCR_*` env vars.
 - **Docker images** — patterns-only (~12 MB, pure Go) and NER
   (~470 MB, GLiNER + libonnxruntime baked in) variants.
 - **Public benchmark matrix** — leak-rate and F1 scoring across

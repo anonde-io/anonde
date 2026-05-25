@@ -1,6 +1,6 @@
 # anonde top-level dev Makefile.
 #
-# Day-to-day developer workflow targets — codegen, build, test, local
+# Day-to-day developer workflow targets: codegen, build, test, local
 # run, Docker. The benchmark matrix lives under bench/Makefile (run via
 # `make -C bench help`) and is intentionally separate; corpus downloads
 # are heavy and not part of the inner loop.
@@ -44,7 +44,7 @@ tools: ## Install/refresh protoc-gen-* plugins used by buf generate
 .PHONY: proto
 proto: ## Regenerate proto Go code (run after editing proto/)
 	buf generate
-	@echo "regenerated gen/ — don't forget go test ./internal/..."
+	@echo "regenerated gen/; don't forget go test ./internal/..."
 
 .PHONY: proto-lint
 proto-lint: ## buf lint
@@ -66,6 +66,10 @@ build: ## go build ./...
 .PHONY: build-ner
 build-ner: ## Build with -tags hugot (GLiNER + libonnxruntime required)
 	go build -tags hugot ./...
+
+.PHONY: build-pdf-cli
+build-pdf-cli: ## Build the one-shot anonymize-pdf CLI binary (needs -tags hugot)
+	go build -tags hugot -o bin/anonymize-pdf ./cmd/anonymize-pdf
 
 .PHONY: test
 test: ## Run the whole test suite
@@ -93,6 +97,13 @@ run: ## Run the anonde server on :$(PORT) (patterns backend, no NER)
 run-ner: ## Run the anonde server on :$(PORT) with GLiNER NER (needs libonnxruntime)
 	ANALYZER_BACKEND=gliner ANONDE_ADDR=:$(PORT) go run -tags hugot ./cmd/anonde/
 
+.PHONY: run-ner-pdf
+run-ner-pdf: ## Run NER server on :$(PORT) with PDF redaction + Prometheus on :9090 (host needs pdftoppm + tesseract)
+	ANALYZER_BACKEND=gliner ANONDE_ADDR=:$(PORT) \
+		ANONDE_PDF_ENABLED=1 \
+		METRICS_BIND=127.0.0.1:9090 \
+		go run -tags hugot ./cmd/anonde/
+
 ##@ Docker
 
 .PHONY: docker-build
@@ -100,11 +111,19 @@ docker-build: ## Build the patterns-only image ($(IMAGE):patterns)
 	docker build -f Dockerfile.anonde -t $(IMAGE):patterns .
 
 .PHONY: docker-build-ner
-docker-build-ner: ## Build the NER image (~470 MB, $(IMAGE):ner)
+docker-build-ner: ## Build the NER image (~770 MB, $(IMAGE):ner, GLiNER base + tesseract + poppler)
 	docker build -f Dockerfile.anonde-ner -t $(IMAGE):ner .
 
+.PHONY: docker-build-ner-stack
+docker-build-ner-stack: ## Build the lowest-leak image (~2.1 GB, GLiNER base+LARGE, $(IMAGE):ner-stack)
+	docker build -f Dockerfile.anonde-ner-stack -t $(IMAGE):ner-stack .
+
+.PHONY: docker-build-pdf-cli
+docker-build-pdf-cli: ## Build the one-shot anonymize-pdf CLI image (tesseract + 6 lang packs)
+	docker build -f Dockerfile.anonymize-pdf -t anonymize-pdf .
+
 .PHONY: docker-run
-docker-run: docker-build ## Build + start the patterns container on :$(PORT)
+docker-run: docker-build ## Build + start the patterns container on :$(PORT) (text/JSON only, no PDF, no metrics)
 	-docker rm -f $(CONTAINER) >/dev/null 2>&1
 	docker run -d --name $(CONTAINER) -p $(PORT):8080 \
 		-e ANALYZER_BACKEND=patterns $(IMAGE):patterns
@@ -112,12 +131,15 @@ docker-run: docker-build ## Build + start the patterns container on :$(PORT)
 	@echo "→ http://localhost:$(PORT)"
 
 .PHONY: docker-run-ner
-docker-run-ner: docker-build-ner ## Build + start the NER container on :$(PORT)
+docker-run-ner: docker-build-ner ## Build + start the NER container on :$(PORT), PDF endpoint + metrics on :9090
 	-docker rm -f $(CONTAINER) >/dev/null 2>&1
-	docker run -d --name $(CONTAINER) -p $(PORT):8080 \
-		-e ANALYZER_BACKEND=gliner $(IMAGE):ner
+	docker run -d --name $(CONTAINER) -p $(PORT):8080 -p 9090:9090 \
+		-e ANALYZER_BACKEND=gliner \
+		-e ANONDE_PDF_ENABLED=1 \
+		-e METRICS_BIND=0.0.0.0:9090 \
+		$(IMAGE):ner
 	@sleep 1 && docker ps --filter name=$(CONTAINER) --format "  {{.Names}}\t{{.Status}}\t{{.Ports}}"
-	@echo "→ http://localhost:$(PORT)"
+	@echo "→ http://localhost:$(PORT)  (metrics: http://localhost:9090/metrics)"
 
 .PHONY: docker-logs
 docker-logs: ## Tail logs from the running smoke container

@@ -28,7 +28,7 @@
 
 ## See it in 10 seconds
 
-**Your input** (text, JSON, NDJSON, logs, or PDF):
+**Your input** (text, JSON, NDJSON, logs, or PDF — scanned PDFs are OCR'd automatically):
 
 ```text
 From: sarah.chen@acme.example
@@ -128,9 +128,103 @@ The same server speaks three transports on one port:
 - **Connect** (Connect/JSON, Connect/Protobuf, gRPC-Web): `POST /anonde.v1.Service/<Method>`.
 - **Native gRPC** over HTTP/2 cleartext: same `/anonde.v1.Service/<Method>` path.
 
-Plus an **OpenAI-compatible proxy** at `POST /v1/chat/completions` — see [Use anonde as an OpenAI proxy](#use-anonde-as-an-openai-proxy) below.
+Plus two optional surfaces:
+
+- **PDF redaction (raw bytes in, raw bytes out)** — `POST /v1/anonymizations/pdf` accepts an `application/pdf` body (or a multipart `file` field) and returns a redacted PDF; `GET /v1/anonymizations/{id}/reveal-pdf` returns the original. Tenant via the `X-Anonde-Tenant` header or `?tenant=` query. Opt-in via `ANONDE_PDF_ENABLED=1`. See [PDFs, including scans (OCR fallback)](#pdfs-including-scans-ocr-fallback) below.
+- **OpenAI-compatible proxy** at `POST /v1/chat/completions` — see [Use anonde as an OpenAI proxy](#use-anonde-as-an-openai-proxy) below.
 
 Source of truth: [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+## PDFs, including scans (OCR fallback)
+
+anonde has two PDF surfaces — pick by use case:
+
+1. **Text PDFs through the normal anonymize endpoint.** Send a
+   base64-encoded PDF with `content_format: "pdf"` to
+   `POST /v1/anonymizations`. The text layer is extracted via
+   `ledongthuc/pdf`, fed into the same analyzer pipeline as text input,
+   and you get the standard tokenised text + vault back. Reversible
+   via `/v1/anonymizations/{id}/reveal`.
+2. **PDF in → redacted PDF out via `POST /v1/anonymizations/pdf`.**
+   Send the raw PDF body (Private AI / Limina shape, so you can swap
+   their base URL for anonde's). Server returns a redacted PDF with
+   black boxes drawn over each PII span on the original page rasters.
+   Reversible via `GET /v1/anonymizations/{id}/reveal-pdf`, which
+   returns the original PDF bytes. Opt-in: start the server with
+   `ANONDE_PDF_ENABLED=1` (requires the `anonde-ner` image or a local
+   `-tags hugot` build with `pdftoppm` + `tesseract` on `PATH`).
+
+When the PDF text layer is empty or shorter than
+`ANONDE_OCR_TEXT_FLOOR` bytes (default 64) — i.e. an image-only scan
+from an MFP or a photo-to-PDF — both surfaces transparently
+rasterise each page with `pdftoppm` and OCR it with `tesseract`
+before running the analyzer. No code change on the caller side.
+
+```bash
+# 1) Text PDF via the normal endpoint
+B64=$(base64 -i invoice.pdf)
+curl -sS -X POST http://localhost:8081/v1/anonymizations \
+  -H "Content-Type: application/json" \
+  -d "{\"tenant_id\":\"demo\",\"content_format\":\"pdf\",\"content\":\"$B64\"}"
+
+# 2) Raw PDF body → redacted PDF body
+curl -sS -X POST http://localhost:8081/v1/anonymizations/pdf \
+  -H "Content-Type: application/pdf" \
+  -H "X-Anonde-Tenant: demo" \
+  --data-binary @scan.pdf \
+  -D /tmp/headers.txt -o redacted.pdf
+# /tmp/headers.txt carries X-Anonde-Id, X-Anonde-Entities,
+# X-Anonde-Entity-Types, X-Anonde-Entity-Count (per-type) so you
+# can log counts without a second request.
+
+# Reveal the original bytes for that anonymization id
+curl -sS -H "X-Anonde-Tenant: demo" \
+  "http://localhost:8081/v1/anonymizations/$ANON_ID/reveal-pdf" \
+  -o original.pdf
+```
+
+The `anonde-ner` and `anonde-ner-stack` images bundle `poppler-utils`
++ `tesseract-ocr` with `eng+deu+fra+spa+ita+ron` language packs, so
+OCR is on by default there. The patterns-only image (`anonde`) does
+not bundle them — `ExtractAnalyzable` silently skips the OCR fallback
+when the binaries aren't on `PATH`, so the patterns-only image stays
+~12 MB.
+
+Optionally, `ANONDE_PDF_VISION_MODEL=1` loads a YOLOS signature
+detector and lets the visual redactor cover signatures, stamps, and
+logos that no OCR will see. The model is baked into `anonde-ner` (FP32
+by default; flip with the `SIGNATURE_QUANT={fp16,int8}` build arg).
+
+Tune via env: `ANONDE_OCR_ENABLED`, `ANONDE_OCR_LANGS`,
+`ANONDE_OCR_DPI`, `ANONDE_OCR_TEXT_FLOOR`, `ANONDE_PDF_ENABLED`,
+`ANONDE_PDF_VISION_MODEL`, `ANONDE_SIGNATURE_MODEL_PATH`. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#pdf--ocr) for the full table.
+
+## Anonymize PDFs from the command line
+
+For batch / offline workflows there's a one-shot CLI,
+[`cmd/anonymize-pdf`](cmd/anonymize-pdf/main.go), with the same UX as
+Private AI / Limina (`anonymize-pdf in.pdf out.pdf`):
+
+```bash
+# Bundled image — first run downloads ~880 MB of models into a named
+# volume; reuse the volume to avoid re-downloading.
+docker run --rm \
+  -v "$PWD:/data" \
+  -v anonde-models:/root/.cache/anonde \
+  ghcr.io/anonde-io/anonymize-pdf:latest /data/in.pdf /data/out.pdf
+
+# Common flags
+anonymize-pdf --mode=visual    in.pdf out.pdf   # default; black boxes on page rasters
+anonymize-pdf --mode=text      in.pdf out.pdf   # rerendered text PDF with '#' substitutions
+anonymize-pdf --signature-model in.pdf out.pdf  # also cover signatures / stamps / logos
+anonymize-pdf --langs=eng+deu  in.pdf out.pdf   # restrict OCR languages
+anonymize-pdf --entities=PERSON,LOCATION in.pdf out.pdf  # detector allow-list
+```
+
+`Dockerfile.anonymize-pdf` builds the image locally. The CLI uses the
+same `internal/content` redaction primitives as the HTTP endpoint, so
+output is byte-identical for the same input.
 
 ## Use anonde as an OpenAI proxy
 
@@ -254,6 +348,7 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 ## Docs
 
 - [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
+- [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, the `anonymize-pdf` CLI, Prometheus metrics
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
 - [Operators](docs/OPERATORS.md): Replace, Redact, Mask, Hash, Encrypt, Synthesize
