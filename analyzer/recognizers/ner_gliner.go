@@ -202,7 +202,16 @@ func initOrtEnvironment(libPath string) error {
 			ort.SetSharedLibraryPath(libPath)
 		}
 		if err := ort.InitializeEnvironment(); err != nil {
-			glinerOrtInitErr = fmt.Errorf("gliner: initialize onnxruntime environment: %w", err)
+			// "already initialized" is benign when another component
+			// in the same binary (e.g. the PDF-redaction signature
+			// detector) initialised the ORT environment first. The
+			// environment is process-wide, so subsequent NewSession
+			// calls still work — no need to fail this recognizer.
+			msg := err.Error()
+			if !strings.Contains(msg, "already been initialized") &&
+				!strings.Contains(msg, "already initialized") {
+				glinerOrtInitErr = fmt.Errorf("gliner: initialize onnxruntime environment: %w", err)
+			}
 		}
 	})
 	return glinerOrtInitErr
