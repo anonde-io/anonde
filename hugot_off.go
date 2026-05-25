@@ -68,3 +68,25 @@ func DefaultAnalyzerEngineWithGLiNEREnsemble(_ *recognizers.EnsembleGLiNERRecogn
 		"or unset ANONDE_NER_STACK to use the single-model path.")
 	return nil
 }
+
+// DefaultAnalyzerEngineWithGLiNERPool is the fail-fast stub for the
+// span-decoder GLiNER pool. Same rationale as
+// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// `-tags hugot`.
+func DefaultAnalyzerEngineWithGLiNERPool(_ *recognizers.GLiNERPool) *analyzer.AnalyzerEngine {
+	log.Fatalf("gliner pool not available: this binary was built without -tags hugot. " +
+		"Rebuild with `go build -tags hugot ./...` for the GLiNER pool, " +
+		"or unset GLINER_POOL_SIZE to use the single-recognizer path.")
+	return nil
+}
+
+// DefaultAnalyzerEngineWithGLiNERFlatPool is the fail-fast stub for the
+// flat-decoder GLiNER pool. Same rationale as
+// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// `-tags hugot`.
+func DefaultAnalyzerEngineWithGLiNERFlatPool(_ *recognizers.GLiNERFlatPool) *analyzer.AnalyzerEngine {
+	log.Fatalf("gliner flat pool not available: this binary was built without -tags hugot. " +
+		"Rebuild with `go build -tags hugot ./...` for the GLiNER flat pool, " +
+		"or unset GLINER_POOL_SIZE / ANONDE_GLINER_FLAT_POOL_SIZE to use the single-recognizer path.")
+	return nil
+}

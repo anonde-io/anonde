@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/anonde-io/anonde/internal/metrics"
 )
 
 // ansiEscapeRE matches ANSI SGR / CSI sequences that real-world log
@@ -139,6 +141,45 @@ type AnalyzerEngine struct {
 	// missed. Fails open: on any error returns nothing, so attaching
 	// an auditor cannot RAISE leak rate vs. not attaching one.
 	Auditor Auditor
+
+	// metrics records per-finding and per-conflict observations. Nil
+	// is safe — the analyzer treats it as a no-op. Set via
+	// SetMetrics(r) from cmd/anonde wiring after the engine is built;
+	// it's separate from the constructor because the constructor sees
+	// fan-out through many helper functions (DefaultAnalyzerEngine,
+	// DefaultAnalyzerEngineWithGLiNERConfig, etc.) and a SetMetrics
+	// hook keeps that fan-out unchanged.
+	metrics metrics.Recorder
+}
+
+// SetMetrics attaches a metrics Recorder for per-finding and
+// per-conflict instrumentation. Pass metrics.NewNoop() to explicitly
+// disable, or just don't call this — nil and noop behave identically.
+// Safe to call once at boot; not goroutine-safe to reassign at
+// runtime (no use case for that yet).
+func (e *AnalyzerEngine) SetMetrics(r metrics.Recorder) {
+	e.metrics = r
+}
+
+// recorder returns the analyzer's Recorder, never nil.
+func (e *AnalyzerEngine) recorder() metrics.Recorder {
+	if e.metrics == nil {
+		return metrics.NewNoop()
+	}
+	return e.metrics
+}
+
+// conflictKind buckets a RecognizerResult into one of the two
+// metric labels for anonde_conflicts_resolved_total: "ner" for
+// findings produced by a model-backed recognizer, "pattern" for
+// everything else (regex, checksum, vocabulary). Keeps the conflict
+// metric's cardinality at 2×2 — the alternative of labelling by
+// recognizer name would explode to 52×52.
+func conflictKind(r RecognizerResult) string {
+	if isNERRecognizer(r) {
+		return "ner"
+	}
+	return "pattern"
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
@@ -276,35 +317,86 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 			ch <- partial{res, err}
 		}(rec)
 	}
-	wg.Wait()
-	close(ch)
+	// Wait-or-cancel: spawn a sentinel goroutine that closes `done`
+	// once every recognizer has returned. If `ctx` fires first we stop
+	// blocking and harvest whatever results landed on the buffered
+	// channel — partial coverage is still useful (the bench scores
+	// per-recognizer leaks, and an HTTP caller that just timed out
+	// would rather have something than nothing).
+	//
+	// Recognizers SHOULD honour ctx in their inner loops (GLiNER chunk
+	// loop, Ollama HTTP, etc.); the select-on-ctx here is the bounded
+	// guard against the ones that don't — a single hung recognizer
+	// would otherwise stall the whole pipeline forever.
+	//
+	// Note: `ch` is buffered to len(candidates), so the laggard
+	// goroutines can still send their result after we've returned and
+	// will not leak — they exit on their own.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	var ctxErr error
+	select {
+	case <-done:
+		close(ch)
+	case <-ctx.Done():
+		ctxErr = ctx.Err()
+		log.Printf("analyzer: ctx cancelled before all recognizers returned (%v); harvesting partial results", ctxErr)
+		// Do NOT close ch — slow goroutines still hold a send token
+		// and would panic on send-to-closed. Drain non-blocking by
+		// switching to a different receive pattern below.
+	}
 
 	// Per-recognizer failures must not destroy partial results: a flaky NER
 	// backend should not erase findings produced by the pattern recognizers
 	// that ran successfully alongside it. Errors are aggregated and surfaced
 	// only if EVERY recognizer failed.
 	var (
-		all      []RecognizerResult
-		errs     []error
-		okCount  int
+		all     []RecognizerResult
+		errs    []error
+		okCount int
 	)
-	for p := range ch {
-		if p.err != nil {
-			// Per-recognizer failure: log so operators can see when an
-			// expensive backend (GLiNER, hugot, Ollama) is silently
-			// non-contributing. Without this, the engine would return
-			// pattern findings as "success" while NER errors stayed
-			// invisible — the exact failure mode that hid GLiNER's bad
-			// init on the bench for hours.
-			log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
-			errs = append(errs, p.err)
-			continue
+	// Two drain modes:
+	//   * ctxErr == nil: `ch` is closed; classic range drains all results.
+	//   * ctxErr != nil: `ch` is NOT closed (slow goroutines may still
+	//     send later); non-blocking drain collects whatever is in the
+	//     buffer right now and bails.
+	if ctxErr == nil {
+		for p := range ch {
+			if p.err != nil {
+				log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
+				errs = append(errs, p.err)
+				continue
+			}
+			okCount++
+			all = append(all, p.results...)
 		}
-		okCount++
-		all = append(all, p.results...)
+	} else {
+	drain:
+		for {
+			select {
+			case p := <-ch:
+				if p.err != nil {
+					log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
+					errs = append(errs, p.err)
+					continue
+				}
+				okCount++
+				all = append(all, p.results...)
+			default:
+				break drain
+			}
+		}
 	}
 	if okCount == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("all recognizers failed: %v", errs[0])
+	}
+	// If ctx is cancelled and we have nothing to show, surface the ctx
+	// error so the caller can distinguish "no PII" from "we gave up".
+	if ctxErr != nil && okCount == 0 {
+		return nil, ctxErr
 	}
 
 	// 5. Context-keyword score enhancement.
@@ -346,9 +438,17 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		all = filtered
 	}
 
-	// 8. Conflict resolution.
+	// 8. Conflict resolution. Wire the metrics callback so
+	// anonde_conflicts_resolved_total{winner_kind, loser_kind}
+	// tracks pattern-vs-NER arbitration in production. Cardinality is
+	// 2×2 since the kinds collapse to {"ner","pattern"} regardless of
+	// recognizer name.
+	rec := e.recorder()
+	conflictCB := func(winner, loser RecognizerResult) {
+		rec.ConflictResolved(conflictKind(winner), conflictKind(loser))
+	}
 	if cfg.RemoveConflicts {
-		all = RemoveConflicts(all)
+		all = RemoveConflictsWithCallback(all, conflictCB)
 	} else {
 		SortResults(all)
 	}
@@ -361,11 +461,21 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		if err == nil && len(extra) > 0 {
 			all = append(all, extra...)
 			if cfg.RemoveConflicts {
-				all = RemoveConflicts(all)
+				all = RemoveConflictsWithCallback(all, conflictCB)
 			} else {
 				SortResults(all)
 			}
 		}
+	}
+
+	// Emit per-finding metrics over the surviving set. Done here (vs.
+	// upstream of conflict resolution) because we want the
+	// score histogram + entities counter to reflect what the
+	// anonymizer actually tokenizes — losers in a conflict don't
+	// show up downstream and shouldn't be double-counted as
+	// "detected".
+	for _, r := range all {
+		rec.EntityDetected(r.EntityType, r.RecognizerName, r.Score)
 	}
 
 	// 10. Translate findings from cleanText offsets back to the

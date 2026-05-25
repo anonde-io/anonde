@@ -1,0 +1,86 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none"
+     xmlns="http://www.w3.org/2000/svg" role="img" aria-label="anonde animated brand mark">
+  <!--
+    anonde animated brand mark.
+    Self-contained, resolution-independent: scale by setting width/height
+    or via CSS — the viewBox keeps it crisp at any size.
+    Marks are white-on-transparent (same convention as brand.svg / favicon.svg);
+    place on a dark background. Orbit speed: the "dur" custom property below.
+    Honors prefers-reduced-motion (freezes to the static ring).
+  -->
+  <style>
+    svg { --dur: 5.4s; }
+
+    .ring-bright { stroke: #fff; }
+    .ring-dim    { stroke: #fff; opacity: .4; }
+    .dot         { fill: #fff; }
+
+    .pulse-glow, .pulse-dot, .pulse-square, .pulse-tri {
+      offset-path: path("M60 20C37.9086 20 20 37.9086 20 60C20 82.0914 37.9086 100 60 100C82.0914 100 100 82.0914 100 60C100 37.9086 82.0914 20 60 20");
+      offset-rotate: 0deg;
+      transform-box: fill-box;
+      transform-origin: center;
+      fill: #fff;
+    }
+
+    @keyframes orbit { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+
+    /* LEFT arc (0%-50%): a clean dot — original data. */
+    @keyframes morphDot {
+      0%   { opacity: 0; transform: scale(0); }
+      5%   { opacity: 1; transform: scale(1); }
+      45%  { opacity: 1; transform: scale(1); }
+      50%  { opacity: 0; transform: scale(0); }
+      100% { opacity: 0; transform: scale(0); }
+    }
+    /* RIGHT arc (50%-100%): token reshapes square -> triangle -> square. */
+    @keyframes morphSquare {
+      0%   { opacity: 0; transform: scale(0); }
+      50%  { opacity: 0; transform: scale(0); }
+      54%  { opacity: 1; transform: scale(1); }
+      64%  { opacity: 1; transform: scale(1); }
+      67%  { opacity: 0; transform: scale(0); }
+      83%  { opacity: 0; transform: scale(0); }
+      86%  { opacity: 1; transform: scale(1); }
+      96%  { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(0); }
+    }
+    @keyframes morphTri {
+      0%   { opacity: 0; transform: scale(0); }
+      67%  { opacity: 0; transform: scale(0); }
+      70%  { opacity: 1; transform: scale(1); }
+      80%  { opacity: 1; transform: scale(1); }
+      83%  { opacity: 0; transform: scale(0); }
+      100% { opacity: 0; transform: scale(0); }
+    }
+
+    .pulse-glow   { opacity: .22; filter: blur(4px);
+                    animation: orbit var(--dur) linear infinite; }
+    .pulse-dot    { animation: orbit var(--dur) linear infinite,
+                               morphDot var(--dur) linear infinite; }
+    .pulse-square { animation: orbit var(--dur) linear infinite,
+                               morphSquare var(--dur) linear infinite; }
+    .pulse-tri    { animation: orbit var(--dur) linear infinite,
+                               morphTri var(--dur) linear infinite; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .pulse-glow, .pulse-dot, .pulse-square, .pulse-tri {
+        animation: none; opacity: 0;
+      }
+    }
+  </style>
+
+  <!-- static ring -->
+  <path class="ring-bright" d="M60 20C37.9086 20 20 37.9086 20 60C20 82.0914 37.9086 100 60 100"
+        stroke-width="3" stroke-linecap="round"/>
+  <path class="ring-dim" d="M60 100C82.0914 100 100 82.0914 100 60C100 37.9086 82.0914 20 60 20"
+        stroke-width="3" stroke-linecap="round"/>
+  <circle class="dot" cx="60" cy="20" r="5"/>
+  <circle class="dot" cx="60" cy="100" r="5"/>
+
+  <!-- orbiting pulse: dot on the bright arc, square/triangle token on the faded arc -->
+  <circle class="pulse-glow" r="6.5"/>
+  <circle class="pulse-dot" r="3.9"/>
+  <rect class="pulse-square" x="-3.4" y="-3.4" width="6.8" height="6.8"/>
+  <path class="pulse-tri" d="M0 -3.375L3.9 3.375L-3.9 3.375Z"/>
+</svg>

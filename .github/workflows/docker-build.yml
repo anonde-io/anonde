@@ -1,0 +1,147 @@
+name: docker-build
+
+# Build-only CI for the three image variants the repo ships:
+#
+#   - Dockerfile.anonde             patterns only, pure Go,    ~12 MB
+#   - Dockerfile.anonde-ner         BASE GLiNER, CGO,          ~770 MB
+#   - Dockerfile.anonde-ner-stack   BASE + LARGE GLiNER, CGO,  ~2.1 GB
+#
+# No push to any registry — this workflow's job is to catch Dockerfile
+# regressions early, not to publish artifacts. Releasing images is a
+# separate decision (tag policy, registry permissions, signing) that
+# this workflow does NOT take on.
+#
+# Architecture coverage: linux/amd64 + linux/arm64 for all three images
+# via buildx + QEMU. All three Dockerfiles consume $TARGETARCH so the
+# arch-dependent steps (libonnxruntime tarball URL for the NER images,
+# distroless base image) resolve per arch. The build stage runs on
+# TARGETPLATFORM, so the produced binary AND the in-build
+# DOWNLOAD_MODELS_ONLY=1 bake step both execute natively for each arch
+# (under QEMU when cross-building — slower for arm64 on amd64 runners
+# but it works for CGO binaries the same way it does for amd64).
+#
+# Trigger: manual workflow_dispatch only. The multi-arch NER builds run
+# the CGO image stack under QEMU for arm64 and can stretch past an hour
+# on a cold cache, so this workflow is deliberately not wired to every
+# push or PR — run it when you actually want to verify the Dockerfiles
+# (e.g. before cutting a release or after editing them) by hitting
+# "Run workflow" in the Actions tab.
+
+on:
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same branch when a new dispatch lands —
+# build-only CI has no produced artifact worth preserving across pushes.
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- patterns-only image: pure Go, cheap multi-arch ---------------
+  anonde:
+    name: build anonde (patterns, multi-arch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.anonde
+          platforms: linux/amd64,linux/arm64
+          push: false
+          # Cache Go module download + build cache across runs of this
+          # job. Keyed on go.sum so a deps change invalidates cleanly.
+          cache-from: type=gha,scope=anonde
+          cache-to: type=gha,scope=anonde,mode=max
+
+  # ---- BASE GLiNER image: multi-arch, CGO + libonnxruntime ----------
+  anonde-ner:
+    name: build anonde-ner (amd64 + arm64)
+    runs-on: ubuntu-latest
+    # NER builds download the ~370 MB FP32 ONNX model from HF Hub inside
+    # the build stage (the DOWNLOAD_MODELS_ONLY=1 bake) AND run the
+    # produced CGO binary under QEMU for arm64. The arm64 leg in
+    # particular is slow — a CGO build under x86_64-host QEMU is roughly
+    # 4-6x native. 70 min covers the worst case (cold cache, both
+    # tarballs, both model downloads, both bakes).
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # ~14 GB free on stock ubuntu-latest is tight with two arch
+        # images + GLiNER model + Docker cache all resident. Same cleanup
+        # as bench-full.yml.
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.anonde-ner
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=anonde-ner
+          cache-to: type=gha,scope=anonde-ner,mode=max
+
+  # ---- BASE + LARGE stack image: multi-arch, biggest build ----------
+  anonde-ner-stack:
+    name: build anonde-ner-stack (amd64 + arm64)
+    runs-on: ubuntu-latest
+    # Same DOWNLOAD_MODELS_ONLY=1 pattern as anonde-ner but bakes BOTH
+    # the BASE FP32 (~370 MB) AND the LARGE FP32 (~1.4 GB) into /models —
+    # done once per arch. The arm64 leg is the long pole (QEMU CGO build
+    # + LARGE model bake under emulation). 120 min ceiling.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.anonde-ner-stack
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=anonde-ner-stack
+          cache-to: type=gha,scope=anonde-ner-stack,mode=max

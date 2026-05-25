@@ -6,22 +6,29 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/anonymizer"
 	"github.com/anonde-io/anonde/anonymizer/operators"
 	"github.com/anonde-io/anonde/internal/content"
+	"github.com/anonde-io/anonde/internal/metrics"
 )
 
 // Service coordinates recognition, tokenization and controlled reveal.
 type Service struct {
-	analyzer         *analyzer.AnalyzerEngine
-	anonymize        *anonymizer.AnonymizerEngine
-	vault            Vault
-	store            Store
-	policy           PolicyAuthorizer
-	defaultScore     float64
-	defaultLang      string
+	analyzer     *analyzer.AnalyzerEngine
+	anonymize    *anonymizer.AnonymizerEngine
+	vault        Vault
+	store        Store
+	policy       PolicyAuthorizer
+	metrics      metrics.Recorder
+	defaultScore float64
+	defaultLang  string
+	// tokenSeqMu + tokenSeqByTenant back the per-tenant monotonic
+	// counter used by mintToken (see tokens.go). They look unused
+	// from service.go because every read/write lives in tokens.go;
+	// don't delete on a "dead field" audit.
 	tokenSeqMu       sync.Mutex
 	tokenSeqByTenant map[string]int
 	versionInfo      VersionInfo
@@ -29,19 +36,28 @@ type Service struct {
 
 var ErrPolicyDenied = errors.New("policy denied")
 
+// NewService wires the orchestration spine. The metrics Recorder is
+// the last parameter so callers that don't care can pass
+// metrics.NewNoop() — that's also what the no-instrumentation library
+// path uses. Breaking constructor changes are still acceptable pre-1.0.
 func NewService(
 	analyzerEngine *analyzer.AnalyzerEngine,
 	anonymizerEngine *anonymizer.AnonymizerEngine,
 	vault Vault,
 	store Store,
 	policy PolicyAuthorizer,
+	recorder metrics.Recorder,
 ) *Service {
+	if recorder == nil {
+		recorder = metrics.NewNoop()
+	}
 	return &Service{
 		analyzer:         analyzerEngine,
 		anonymize:        anonymizerEngine,
 		vault:            vault,
 		store:            store,
 		policy:           policy,
+		metrics:          recorder,
 		defaultScore:     0.3,
 		defaultLang:      "en",
 		tokenSeqByTenant: map[string]int{},
@@ -55,10 +71,28 @@ func (s *Service) SetVersionInfo(info VersionInfo) {
 	s.versionInfo = info
 }
 
+// statusFromErr maps a Service-method error into the canonical
+// metric label value. Three buckets only — anything else would blow
+// up cardinality. The denied bucket is reserved for the policy
+// surface; all other errors (validation, vault I/O, anonymizer
+// failure, …) fold into "error".
+func statusFromErr(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, ErrPolicyDenied):
+		return "denied"
+	default:
+		return "error"
+	}
+}
+
 // GetVersion returns the stamped VersionInfo. Always nil error; the
 // signature matches the RPC shape for forward-compat with a future
 // backend that genuinely needs to probe state.
 func (s *Service) GetVersion(_ context.Context) (VersionInfo, error) {
+	span := s.metrics.Request("get_version")
+	defer span.Done("ok")
 	return s.versionInfo, nil
 }
 
@@ -96,7 +130,9 @@ func (s *Service) NewAnonymizationID() string {
 // and every vault entry it references. Idempotent: a missing record
 // returns Deleted=false, nil error. Token vault errors are surfaced so
 // the caller can detect partial-cleanup states.
-func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) (DeleteResult, error) {
+func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) (_ DeleteResult, err error) {
+	span := s.metrics.Request("delete")
+	defer func() { span.Done(statusFromErr(err)) }()
 	if tenantID == "" || id == "" {
 		return DeleteResult{}, fmt.Errorf("tenant_id and id are required")
 	}
@@ -118,6 +154,7 @@ func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) 
 			continue
 		}
 		seen[tokenRef.Token] = struct{}{}
+		s.metrics.VaultOp("delete")
 		if err := s.vault.Delete(ctx, tenantID, tokenRef.Token); err != nil {
 			return DeleteResult{Deleted: false, TokensDeleted: deleted},
 				fmt.Errorf("delete vault entry %q: %w", tokenRef.Token, err)
@@ -133,7 +170,10 @@ func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) 
 	return DeleteResult{Deleted: existed, TokensDeleted: deleted}, nil
 }
 
-func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*SynthesizeResponse, error) {
+func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (_ *SynthesizeResponse, err error) {
+	span := s.metrics.Request("synthesize")
+	span.BytesIn(len(req.Content))
+	defer func() { span.Done(statusFromErr(err)) }()
 	if req.Content == "" {
 		return nil, fmt.Errorf("content is required")
 	}
@@ -180,7 +220,9 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 		if strings.TrimSpace(input) == "" {
 			return input, nil
 		}
+		anlStart := time.Now()
 		findings, err := s.analyzer.Analyze(ctx, input, analysisCfg)
+		span.AnalyzeDuration(s.versionInfo.AnalyzerBackend, time.Since(anlStart).Seconds())
 		if err != nil {
 			return "", fmt.Errorf("analyze: %w", err)
 		}
@@ -216,13 +258,17 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (*Synth
 		return nil, err
 	}
 
+	span.BytesOut(len(synthesized))
 	return &SynthesizeResponse{
 		Content:  synthesized,
 		Findings: allFindings,
 	}, nil
 }
 
-func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestResponse, error) {
+func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestResponse, err error) {
+	span := s.metrics.Request("ingest")
+	span.BytesIn(len(req.Content))
+	defer func() { span.Done(statusFromErr(err)) }()
 	if req.TenantID == "" || req.Content == "" {
 		return nil, fmt.Errorf("tenant_id and content are required")
 	}
@@ -287,7 +333,9 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		if strings.TrimSpace(input) == "" {
 			return input, nil, nil
 		}
+		anlStart := time.Now()
 		localFindings, err := s.analyzer.Analyze(ctx, input, analysisCfg)
+		span.AnalyzeDuration(s.versionInfo.AnalyzerBackend, time.Since(anlStart).Seconds())
 		if err != nil {
 			return "", nil, fmt.Errorf("analyze content: %w", err)
 		}
@@ -325,6 +373,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 			if !hit {
 				token = s.mintToken(req.TenantID, finding.EntityType)
 				docTokenByKey[cacheKey] = token
+				s.metrics.VaultOp("put")
 				if err := s.vault.Put(ctx, req.TenantID, VaultEntry{
 					Token:      token,
 					EntityType: finding.EntityType,
@@ -412,6 +461,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 		return nil, fmt.Errorf("store anonymization: %w", err)
 	}
 
+	span.BytesOut(len(anonymizedContent))
 	return &IngestResponse{
 		TenantID:           req.TenantID,
 		ID:                 id,
@@ -422,7 +472,9 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (*IngestRespons
 	}, nil
 }
 
-func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*DetokenizeResponse, error) {
+func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (_ *DetokenizeResponse, err error) {
+	span := s.metrics.Request("detokenize")
+	defer func() { span.Done(statusFromErr(err)) }()
 	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" {
 		return nil, fmt.Errorf("tenant_id, id, actor and purpose are required")
 	}
@@ -431,6 +483,7 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*Detok
 	}
 
 	if err := s.policy.AllowDetokenize(ctx, req); err != nil {
+		s.metrics.PolicyDenied("authorizer_denied")
 		return nil, fmt.Errorf("%w: %v", ErrPolicyDenied, err)
 	}
 
@@ -449,6 +502,7 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*Detok
 		if _, ok := allowed[token]; !ok {
 			return nil, fmt.Errorf("token %q not linked to anonymization %q", token, req.ID)
 		}
+		s.metrics.VaultOp("get")
 		entry, err := s.vault.Get(ctx, req.TenantID, token)
 		if err != nil {
 			return nil, fmt.Errorf("lookup token %q: %w", token, err)
@@ -463,7 +517,10 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (*Detok
 	}, nil
 }
 
-func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealResponse, error) {
+func (s *Service) Reveal(ctx context.Context, req RevealRequest) (_ *RevealResponse, err error) {
+	span := s.metrics.Request("reveal")
+	span.BytesIn(len(req.Content))
+	defer func() { span.Done(statusFromErr(err)) }()
 	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" || req.Content == "" {
 		return nil, fmt.Errorf("tenant_id, id, actor, purpose and content are required")
 	}
@@ -484,6 +541,7 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 	}
 
 	if len(orderedTokens) == 0 {
+		span.BytesOut(len(req.Content))
 		return &RevealResponse{
 			TenantID:            req.TenantID,
 			ID:                  req.ID,
@@ -548,6 +606,7 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (*RevealRespons
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
 
+	span.BytesOut(len(out))
 	return &RevealResponse{
 		TenantID:            req.TenantID,
 		ID:                  req.ID,

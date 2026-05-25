@@ -157,11 +157,28 @@ func NewBoltStore(db *bolt.DB, ttl time.Duration) *BoltStore {
 	return s
 }
 
-// Close stops the background sweeper. Idempotent. Does NOT close the
-// underlying *bolt.DB — the caller (cmd/anonde/main.go) owns its
-// lifecycle since two adapters share one file.
-func (v *BoltVault) Close() error { v.stopOnce.Do(func() { close(v.stopCh) }); return nil }
-func (s *BoltStore) Close() error { s.stopOnce.Do(func() { close(s.stopCh) }); return nil }
+// Close stops the background sweeper and waits for any in-flight
+// sweep tick to settle. Idempotent. Does NOT close the underlying
+// *bolt.DB — the caller (cmd/anonde/main.go) owns its lifecycle since
+// two adapters share one file.
+//
+// The sweepMu lock-after-stop is what gives the caller a real
+// guarantee: when Close returns, the sweeper goroutine is either
+// exited or no longer touching db. Without it, a sweep transaction
+// could still be running against db when the caller tries to close
+// the file, panicking inside bbolt.
+func (v *BoltVault) Close() error {
+	v.stopOnce.Do(func() { close(v.stopCh) })
+	v.sweepMu.Lock()
+	v.sweepMu.Unlock() //nolint:staticcheck // wait for in-flight tick
+	return nil
+}
+func (s *BoltStore) Close() error {
+	s.stopOnce.Do(func() { close(s.stopCh) })
+	s.sweepMu.Lock()
+	s.sweepMu.Unlock() //nolint:staticcheck // wait for in-flight tick
+	return nil
+}
 
 // ─── BoltVault implements core.Vault ───────────────────────────────
 
@@ -242,6 +259,26 @@ func (v *BoltVault) deleteRaw(tenantID, token string) error {
 	})
 }
 
+// Stats reports entry count from bbolt's KeyN metadata (O(1), no
+// bucket scan) and returns Bytes=-1 because computing the real byte
+// total would require a full bucket walk on every scrape — a non-
+// starter on a multi-MB vault. Operators who want a byte signal can
+// look at the file size on disk, which bbolt grows in page-sized
+// increments and is a strictly better metric than the JSON-payload
+// sum we could compute here.
+func (v *BoltVault) Stats() core.VaultStats {
+	var entries int64
+	_ = v.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketVault))
+		if b == nil {
+			return nil
+		}
+		entries = int64(b.Stats().KeyN)
+		return nil
+	})
+	return core.VaultStats{Entries: entries, Bytes: -1}
+}
+
 // ─── BoltStore implements core.Store ───────────────────────────────
 
 func (s *BoltStore) Put(_ context.Context, record core.StoreRecord) error {
@@ -314,6 +351,20 @@ func (s *BoltStore) deleteRaw(tenantID, id string) error {
 	})
 }
 
+// Stats — see BoltVault.Stats for the rationale on Bytes=-1.
+func (s *BoltStore) Stats() core.StoreStats {
+	var entries int64
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketStore))
+		if b == nil {
+			return nil
+		}
+		entries = int64(b.Stats().KeyN)
+		return nil
+	})
+	return core.StoreStats{Entries: entries, Bytes: -1}
+}
+
 // ─── Sweeper ───────────────────────────────────────────────────────
 
 // startSweeperLocked launches the background sweeper in its own
@@ -324,6 +375,11 @@ func (v *BoltVault) startSweeperLocked() {
 		return
 	}
 	go runSweeper(v.stopCh, v.sweepInterval, func() {
+		// Hold sweepMu so Close() can synchronously wait for an
+		// in-flight tick to finish before letting its caller close
+		// the underlying *bolt.DB.
+		v.sweepMu.Lock()
+		defer v.sweepMu.Unlock()
 		_ = sweepBucket(v.db, []byte(bucketVault))
 	})
 }
@@ -333,6 +389,8 @@ func (s *BoltStore) startSweeperLocked() {
 		return
 	}
 	go runSweeper(s.stopCh, s.sweepInterval, func() {
+		s.sweepMu.Lock()
+		defer s.sweepMu.Unlock()
 		_ = sweepBucket(s.db, []byte(bucketStore))
 	})
 }

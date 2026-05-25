@@ -5,6 +5,7 @@ import (
 
 	"github.com/anonde-io/anonde"
 	"github.com/anonde-io/anonde/internal/core"
+	"github.com/anonde-io/anonde/internal/metrics"
 	"github.com/anonde-io/anonde/internal/store"
 )
 
@@ -28,5 +29,6 @@ func newTestService() *core.Service {
 		store.NewMemoryVault(),
 		store.NewMemoryStore(),
 		allowAllPolicy{},
+		metrics.NewNoop(),
 	)
 }

@@ -62,6 +62,22 @@ func (v *MemoryVault) Delete(_ context.Context, tenantID, token string) error {
 	return nil
 }
 
+// Stats walks the live entry map under the mutex. The map is small
+// in practice (the in-memory vault is reset every restart, so it
+// never accumulates indefinitely) and computing both entries and
+// bytes in one pass is cheap enough to run on every scrape — the
+// alternative of maintaining live counters would add a write under
+// every Put/Delete just to feed metrics, which isn't worth it.
+func (v *MemoryVault) Stats() core.VaultStats {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var bytes int64
+	for _, e := range v.m {
+		bytes += int64(len(e.Value.Token) + len(e.Value.Cleartext) + len(e.Value.EntityType))
+	}
+	return core.VaultStats{Entries: int64(len(v.m)), Bytes: bytes}
+}
+
 // MemoryStore is an in-process anonymization store. Not persistent across restarts.
 type MemoryStore struct {
 	mu            sync.Mutex
@@ -122,6 +138,19 @@ func (s *MemoryStore) Delete(_ context.Context, tenantID, id string) (bool, erro
 	// A record present-but-expired counts as "didn't exist" for the
 	// caller; that lines up with Get's behavior.
 	return !rec.expiredAt(time.Now()), nil
+}
+
+// Stats walks the records under the mutex. AnonymizedContent
+// dominates the byte count — the token slice is small enough that we
+// ignore it here to keep the loop cheap. Approximation, not audit.
+func (s *MemoryStore) Stats() core.StoreStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var bytes int64
+	for _, e := range s.m {
+		bytes += int64(len(e.Value.AnonymizedContent))
+	}
+	return core.StoreStats{Entries: int64(len(s.m)), Bytes: bytes}
 }
 
 type vaultEntry struct {

@@ -1,0 +1,128 @@
+# Dockerfile.anonde-ner-stack — anonde server with the BASE + LARGE
+# GLiNER stack baked in. Lowest-leak deployment tier (local bench
+# Σ ALL ≈ 9.7% across 30 corpora × 5 languages vs ~12.9% for the
+# single-BASE Dockerfile.anonde-ner). Two ONNX sessions run per request
+# (span-decoder BASE + flat/token-decoder LARGE) and the analyzer's
+# RemoveConflicts unions their findings.
+#
+# Three-tier image lineup:
+#
+#   - Dockerfile.anonde            patterns only, ~12 MB.
+#   - Dockerfile.anonde-ner        BASE GLiNER (FP32 span), ~770 MB.
+#     Production default. Σ ALL ≈ 12.9%.
+#   - Dockerfile.anonde-ner-stack  BASE + LARGE GLiNER (this file),
+#     ~2.1 GB. Σ ALL ≈ 9.7%. Pick this when image size + ~2x latency
+#     are acceptable in exchange for ~3pp better recall.
+#
+# Build:
+#   docker build -f Dockerfile.anonde-ner-stack -t anonde-ner-stack .
+# Run:
+#   docker run -d -p 8080:8080 -e WARMUP_ON_START=1 anonde-ner-stack
+#
+# Image-size budget (~2.1 GB total):
+#   - BASE FP32 ONNX  (knowledgator/gliner-pii-base-v1.0/onnx/model.onnx)
+#                     ~370 MB
+#   - LARGE FP32 ONNX (knowledgator/gliner-pii-large-v1.0/model.onnx)
+#                     ~1.4 GB
+#   - Tokenizers + configs                       ~50 MB total
+#   - distroless/cc-debian12 base + libonnxruntime + Go binary ~300 MB
+#
+# Why not run them in parallel goroutines:
+#   - Each session is internally serialised by its own recognizer mutex
+#     (the *ort.DynamicAdvancedSession caches input/output slot pointers
+#     on the struct, not safe for concurrent .Run()). Two recognizers in
+#     the registry can in principle dispatch in parallel since each owns
+#     its own session, but doing so doubles peak RAM (both sessions
+#     resident-and-active simultaneously). The analyzer engine today
+#     runs recognizers in sequence. Sequential keeps ~2 GB peak instead
+#     of ~4 GB and still fits on a single 4 GB VM.
+
+ARG ONNXRUNTIME_VERSION=1.26.0
+
+# Multi-arch via buildx: TARGETPLATFORM = the image arch being produced.
+# The build stage executes in TARGETPLATFORM (under QEMU when cross-
+# building), so the produced binary AND the DOWNLOAD_MODELS_ONLY=1 bake
+# step run natively for each target arch. See Dockerfile.anonde-ner for
+# the same pattern + rationale.
+FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS build
+ARG TARGETARCH
+WORKDIR /src
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl tar build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# --- fetch libonnxruntime -------------------------------------------------
+# Per-arch libonnxruntime tarball (x64 vs aarch64). See the equivalent
+# block in Dockerfile.anonde-ner for the rationale.
+ARG ONNXRUNTIME_VERSION
+RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) ORT_ARCH=x64 ;; \
+        arm64) ORT_ARCH=aarch64 ;; \
+        *) echo "unsupported TARGETARCH=$TARGETARCH"; exit 1 ;; \
+    esac; \
+    curl -fsSL \
+        "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION}.tgz" \
+        -o /tmp/ort.tgz && \
+    tar -xzf /tmp/ort.tgz -C /tmp && \
+    mkdir -p /out/lib && \
+    cp /tmp/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} \
+       /out/lib/libonnxruntime.so.1 && \
+    rm -rf /tmp/onnxruntime-linux-${ORT_ARCH}-${ONNXRUNTIME_VERSION} /tmp/ort.tgz
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 \
+    go build -tags hugot -o /out/anonde ./cmd/anonde
+
+# --- bake BOTH GLiNER models into the image -------------------------------
+# DOWNLOAD_MODELS_ONLY=1 makes the binary construct the analyzer engine,
+# run a single trivial Analyze() to force lazy init of every recognizer,
+# then exit. With ANALYZER_BACKEND=gliner-stack that means BOTH the BASE
+# (span decoder) and the FLAT (LARGE token decoder) recognizers init,
+# pulling their ONNX + tokenizer assets into GLINER_MODELS_DIR. The
+# /models dir is then copied into the runtime stage below — no runtime
+# downloads, no outbound network from the production container.
+ENV GLINER_MODELS_DIR=/models \
+    GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
+    GLINER_ONNX_FILE=onnx/model.onnx \
+    ANONDE_GLINER_FLAT_MODEL=knowledgator/gliner-pii-large-v1.0 \
+    ANONDE_GLINER_FLAT_ONNX_FILE=model.onnx \
+    ANALYZER_BACKEND=gliner-stack \
+    ORT_SO_PATH=/out/lib/libonnxruntime.so.1 \
+    DOWNLOAD_MODELS_ONLY=1
+RUN /out/anonde
+
+# --- runtime --------------------------------------------------------------
+# TARGETPLATFORM keeps the runtime image arch in lockstep with the build
+# stage. libonnxruntime lands in /lib (arch-neutral path) to dodge the
+# glibc-multiarch x86_64 vs aarch64 split — see Dockerfile.anonde-ner.
+FROM --platform=$TARGETPLATFORM gcr.io/distroless/cc-debian12
+ARG TARGETARCH
+COPY --from=build /out/anonde /anonde
+COPY --from=build /out/lib/libonnxruntime.so.1 /lib/libonnxruntime.so.1
+COPY --from=build /models /models
+
+# Runtime defaults: stack backend, both models on disk, no download. Match
+# the ANONDE_GLINER_FLAT_* env spelling exactly with cmd/anonde/main.go's
+# analyzerFromEnv — those are the canonical names and they default to
+# these same values in the binary, but spelling them here makes the
+# container's behaviour obvious from `docker inspect` without reading Go.
+ENV ANALYZER_BACKEND=gliner-stack \
+    GLINER_MODELS_DIR=/models \
+    GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
+    GLINER_ONNX_FILE=onnx/model.onnx \
+    GLINER_THRESHOLD=0.40 \
+    ANONDE_GLINER_FLAT_MODEL=knowledgator/gliner-pii-large-v1.0 \
+    ANONDE_GLINER_FLAT_ONNX_FILE=model.onnx \
+    ORT_SO_PATH=/lib/libonnxruntime.so.1
+
+EXPOSE 8080
+ENTRYPOINT ["/anonde"]

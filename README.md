@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/anonde-icon.jpg" alt="anonde" width="128" height="128">
+  <img src="docs/assets/brand-mark-animated.svg" alt="anonde" width="128" height="128">
 </p>
 
 <h1 align="center">anonde</h1>

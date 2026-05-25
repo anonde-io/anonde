@@ -16,15 +16,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/anonde-io/anonde/analyzer"
 )
+
+// defaultOllamaCacheSize bounds the in-process decision cache for the
+// reconciler. The cache key is (span surface form, entity type, hash of
+// the surrounding ±TextWindow chars), so cardinality grows with
+// document throughput. The old unbounded `map[string]bool` leaked
+// memory in long-running production processes; the LRU bounds RSS at
+// roughly cacheSize × (key + bool) ≈ 100k * ~80 B = ~8 MB.
+//
+// Override via ANONDE_OLLAMA_CACHE_SIZE; values <= 0 fall back to this
+// default, malformed values are logged and ignored (matching the
+// GLINER_POOL_SIZE precedent — a typo never blocks boot).
+const defaultOllamaCacheSize = 100_000
 
 // OllamaConfig configures the Ollama-backed reconciler. Zero values are
 // replaced with sensible defaults in NewOllama.
@@ -64,10 +79,12 @@ type Ollama struct {
 	client *http.Client
 
 	// cache memoises decisions by (span-text, type, surrounding context
-	// hash). Lifetime is process; for cross-process caching, plug a
-	// distributed store via OllamaConfig.Cache (future).
-	mu    sync.Mutex
-	cache map[string]bool
+	// hash). Bounded LRU — previously an unbounded `map[string]bool`
+	// that leaked memory in long-running processes. Cache key shape:
+	// `entityType|span|sha1(window)[:16hex]` (see cacheKey()).
+	// Capacity is set at construction time from
+	// ANONDE_OLLAMA_CACHE_SIZE (default 100k entries, ~8 MB RSS).
+	cache *lru.Cache[string, bool]
 
 	// group deduplicates in-flight identical requests so two parallel
 	// workers don't both hit the LLM with the same prompt.
@@ -150,10 +167,23 @@ func NewOllama(cfg OllamaConfig) *Ollama {
 	if cfg.TextWindow == 0 {
 		cfg.TextWindow = 200
 	}
+	cacheSize := defaultOllamaCacheSize
+	if raw := strings.TrimSpace(os.Getenv("ANONDE_OLLAMA_CACHE_SIZE")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			cacheSize = n
+		}
+	}
+	cache, err := lru.New[string, bool](cacheSize)
+	if err != nil {
+		// lru.New only errors on size<=0; the parse above filters that.
+		// Fall back to the default and keep moving — a misconfigured env
+		// var must not crash startup.
+		cache, _ = lru.New[string, bool](defaultOllamaCacheSize)
+	}
 	return &Ollama{
 		cfg:    cfg,
 		client: &http.Client{},
-		cache:  make(map[string]bool),
+		cache:  cache,
 	}
 }
 
@@ -222,9 +252,7 @@ func (r *Ollama) askKeep(ctx context.Context, text string, c analyzer.Recognizer
 	window := windowAround(text, c.Start, c.End, r.cfg.TextWindow)
 
 	key := cacheKey(spanText, c.EntityType, window)
-	r.mu.Lock()
-	if v, ok := r.cache[key]; ok {
-		r.mu.Unlock()
+	if v, ok := r.cache.Get(key); ok {
 		atomicAdd(&r.stats.cacheHit, 1)
 		if v {
 			atomicAdd(&r.stats.llmKeep, 1)
@@ -233,7 +261,6 @@ func (r *Ollama) askKeep(ctx context.Context, text string, c analyzer.Recognizer
 		}
 		return v
 	}
-	r.mu.Unlock()
 
 	// singleflight collapses concurrent identical requests into one
 	// LLM call. Without it, K parallel workers handed the same span
@@ -246,9 +273,7 @@ func (r *Ollama) askKeep(ctx context.Context, text string, c analyzer.Recognizer
 		if callErr != nil {
 			return nil, callErr
 		}
-		r.mu.Lock()
-		r.cache[key] = keep
-		r.mu.Unlock()
+		r.cache.Add(key, keep)
 		return keep, nil
 	})
 	if err != nil {

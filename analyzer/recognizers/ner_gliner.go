@@ -321,6 +321,18 @@ func (r *GLiNERRecognizer) SupportedLanguages() []string {
 // a DynamicAdvancedSession over the ONNX file.
 func (r *GLiNERRecognizer) init(ctx context.Context) error {
 	r.once.Do(func() {
+		// Catch panics so a partially-initialised recognizer (e.g.
+		// tokenizer loaded but ONNX session failed mid-way) becomes a
+		// clean error rather than a never-clearing panic loop. Once
+		// sync.Once.Do() returns, every future init() short-circuits
+		// to the same initErr, and Analyze's `if err := r.init(ctx);
+		// err != nil` guard returns it cleanly.
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.initErr = fmt.Errorf("gliner init panicked: %v", rec)
+				log.Printf("gliner: INIT PANIC: %v", rec)
+			}
+		}()
 		// --- config defaults --------------------------------------
 		r.labels = r.cfg.Labels
 		if len(r.labels) == 0 {
@@ -529,11 +541,20 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		}
 		r.onnxOutputName = "logits"
 
+		// Optional session tuning from ANONDE_ORT_* env vars. nil
+		// preserves ORT defaults (intra=num cores, inter=1, graph=basic).
+		// MUST be called AFTER initOrtEnvironment — NewSessionOptions
+		// requires IsInitialized() == true.
+		sessionOpts, optsErr := sessionOptionsFromEnv()
+		if optsErr != nil {
+			log.Printf("gliner: sessionOptionsFromEnv: %v (falling through to ORT defaults)", optsErr)
+			sessionOpts = nil
+		}
 		session, sessErr := ort.NewDynamicAdvancedSession(
 			onnxFile,
 			r.onnxInputNames,
 			[]string{r.onnxOutputName},
-			nil, // default session options
+			sessionOpts,
 		)
 		if sessErr != nil {
 			r.initErr = fmt.Errorf("gliner: open onnx session %s: %w", onnxFile, sessErr)

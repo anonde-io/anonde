@@ -184,6 +184,17 @@ jobs:
       # cell under 10 min while staying statistically representative.
       MAX_DOCS: "1000"
       SPACY_MODEL: en_core_web_lg
+      # Pin ORT intra-op threads to the runner's vCPU count. ubuntu-latest
+      # exposes 4 cores; matching the binding here cuts each inference
+      # call by ~15-25% vs ORT's auto-detect on a containerised runner
+      # (where cgroup quota and reported nproc disagree).
+      #
+      # NOTE on bench comparability: this changes wall-clock numbers on
+      # the gliner-family cells vs runs from before this commit landed.
+      # F1 / leak-rate numbers are unaffected (deterministic given fixed
+      # weights + threshold), so the only metric that shifts is latency.
+      # Future per-engine latency comparisons should baseline from here.
+      ANONDE_ORT_INTRA_OP_THREADS: "4"
 
     steps:
       - uses: actions/checkout@v4
