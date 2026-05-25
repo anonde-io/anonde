@@ -96,6 +96,36 @@ func (s *Service) GetVersion(_ context.Context) (VersionInfo, error) {
 	return s.versionInfo, nil
 }
 
+// SaveRecord persists a fully-formed StoreRecord. Used by the binary-
+// format endpoints (currently POST /v1/anonymizations/pdf) that need to
+// store original + redacted bytes so reveal can return the original.
+// The token-based text path uses Ingest which writes the record
+// internally; SaveRecord is the escape hatch for surfaces that
+// pre-compute the record themselves.
+func (s *Service) SaveRecord(ctx context.Context, rec StoreRecord) error {
+	if rec.TenantID == "" || rec.ID == "" {
+		return fmt.Errorf("tenant_id and id are required")
+	}
+	return s.store.Put(ctx, rec)
+}
+
+// GetRecord returns the stored anonymization for (tenant, id) — the
+// raw StoreRecord including OriginalBytes / AnonymizedBytes for
+// binary formats. Errors when the record is missing or expired.
+func (s *Service) GetRecord(ctx context.Context, tenantID, id string) (StoreRecord, error) {
+	if tenantID == "" || id == "" {
+		return StoreRecord{}, fmt.Errorf("tenant_id and id are required")
+	}
+	return s.store.Get(ctx, tenantID, id)
+}
+
+// NewAnonymizationID exposes the internal Stripe-style id minter so
+// surfaces like the PDF endpoint that bypass Ingest can still mint
+// consistent ids.
+func (s *Service) NewAnonymizationID() string {
+	return newAnonymizationID()
+}
+
 // DeleteAnonymization removes the stored anonymization for (tenant, id)
 // and every vault entry it references. Idempotent: a missing record
 // returns Deleted=false, nil error. Token vault errors are surfaced so

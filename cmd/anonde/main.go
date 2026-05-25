@@ -19,6 +19,7 @@ import (
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
 	"github.com/anonde-io/anonde/internal/api"
+	"github.com/anonde-io/anonde/internal/content"
 	"github.com/anonde-io/anonde/internal/core"
 	"github.com/anonde-io/anonde/internal/metrics"
 	"github.com/anonde-io/anonde/internal/policy"
@@ -141,6 +142,33 @@ func main() {
 		openAIBase = "https://api.openai.com/v1 (default)"
 	}
 	log.Printf("openai-compatible proxy enabled at POST /v1/chat/completions (upstream=%s)", openAIBase)
+
+	// PDF redaction endpoint (POST /v1/anonymizations/pdf). Opt-in
+	// via ANONDE_PDF_ENABLED=1 because it: (a) requires pdftoppm +
+	// tesseract on PATH for OCR fallback on scanned PDFs, and (b)
+	// optionally loads a ~500 MB YOLOS signature model when
+	// ANONDE_PDF_VISION_MODEL=1 is set. Endpoint returns 501 with a
+	// pointer at this env var when disabled.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("ANONDE_PDF_ENABLED")), "1") {
+		opts := content.RedactPDFOptions{
+			Engine:          analyzerEngine,
+			AnalysisCfg:     analyzer.AnalysisConfig{ScoreThreshold: 0.30, RemoveConflicts: true},
+			DPI:             200,
+			BoxPadding:      2,
+			VisualHeuristic: true,
+		}
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("ANONDE_PDF_VISION_MODEL")), "1") {
+			detector, derr := content.LoadSignatureDetector(strings.TrimSpace(os.Getenv("ANONDE_SIGNATURE_MODEL_PATH")))
+			if derr != nil {
+				log.Fatalf("ANONDE_PDF_VISION_MODEL=1 but failed to load signature detector: %v", derr)
+			}
+			opts.VisualDetector = detector
+			log.Printf("pdf endpoint: signature detector loaded")
+		}
+		httpAPI.SetPDFRedactor(api.NewPDFRedactor(opts))
+		log.Printf("pdf endpoint enabled at POST /v1/anonymizations/pdf + GET /v1/anonymizations/{id}/reveal-pdf (vision_model=%s)",
+			strings.TrimSpace(os.Getenv("ANONDE_PDF_VISION_MODEL")))
+	}
 
 	// Wrap the routes in the concurrency limiter as the outermost layer
 	// so health checks ARE gated too — that's intentional. An unhealthy
