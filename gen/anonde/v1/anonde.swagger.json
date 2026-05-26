@@ -1,0 +1,710 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "anonde/v1/anonde.proto",
+    "description": "Anonde service API.\n\nv1 is not yet released; breaking changes are allowed within this version\nuntil the first tagged release. Once tagged, follow the usual proto\nrules (no field renumbering, no required→optional flips, etc.).\n\nTwo transports share these messages:\n\n  - gRPC / Connect (RPC-style URLs):\n      POST /anonde.v1.Service/\u003cMethod\u003e\n\n  - REST gateway (grpc-gateway, path-based URLs):\n      see the (google.api.http) option on each rpc below.\n\nTenant/anonymization identifiers live in the URL path / body on the\nREST side and inside the request message on the RPC side. The\ngateway populates the message fields from the path before\ndispatching, so the service layer only ever sees one shape.",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "Service"
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/anonymizations": {
+      "post": {
+        "summary": "CreateAnonymization analyzes content, mints tokens for every\ndetected entity, persists the (token → cleartext) map in the\nvault, and stores the anonymization keyed by (tenant_id, id).",
+        "description": "REST: POST /v1/anonymizations   (tenant_id + optional id in body)",
+        "operationId": "Service_CreateAnonymization",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateAnonymizationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateAnonymizationRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/anonymizations/pdf": {
+      "post": {
+        "summary": "AnonymizePDF runs the visual PDF redactor over a raw PDF body and\nreturns a redacted PDF. The server stores both the original and\nredacted bytes keyed by (tenant_id, minted id) so RevealPDF can\nreturn the original later. Opt-in at server boot via\nANONDE_PDF_ENABLED=1 — without that the RPC returns Unimplemented\n(HTTP 501).",
+        "description": "Body binding: `body: \"pdf_content\"` makes the request body the raw\nbytes of the bytes field; the REST gateway uses a custom\n`application/pdf` marshaler so callers send raw PDF, not\nbase64-in-JSON. tenant_id is bound from `?tenant=` / `?tenantId=`\nquery OR from the `X-Anonde-Tenant` header (forwarded via the\ngateway metadata annotator). gRPC / Connect callers populate it on\nthe message directly.\n\nThe response's id / counts / by-type map are also emitted as\n`X-Anonde-Id`, `X-Anonde-Entities`, `X-Anonde-Entity-Types`, and\nrepeated `X-Anonde-Entity-Count: TYPE=N` headers via the gateway's\nForwardResponseOption, so REST clients can log without parsing the\nPDF body.\n\nREST: POST /v1/anonymizations/pdf",
+        "operationId": "Service_AnonymizePDF",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1AnonymizePDFResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "pdfContent",
+            "description": "Raw PDF body. Over REST the custom application/pdf marshaler\npopulates this from the request body directly (no base64). Over\ngRPC / Connect callers fill it like any bytes field.",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "byte"
+            }
+          },
+          {
+            "name": "tenantId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/anonymizations/{id}": {
+      "delete": {
+        "summary": "DeleteAnonymization removes the stored anonymization and every\nvault entry it linked. Idempotent: returns OK even if nothing\nexisted (deleted=false in that case).",
+        "description": "REST: DELETE /v1/anonymizations/{id}?tenantId={tenant_id}\n  (no body on DELETE, so tenant goes in the query string;\n  moves to auth-derived once the bearer-token interceptor lands.)",
+        "operationId": "Service_DeleteAnonymization",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteAnonymizationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "tenantId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/anonymizations/{id}/detokenize": {
+      "post": {
+        "summary": "DetokenizeTokens resolves a list of tokens to cleartext. Requires\nactor + purpose for audit; the configured PolicyAuthorizer can deny\n(PermissionDenied in gRPC; HTTP 403 over REST).",
+        "description": "REST: POST /v1/anonymizations/{id}/detokenize   (tenant_id in body)",
+        "operationId": "Service_DetokenizeTokens",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DetokenizeTokensResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ServiceDetokenizeTokensBody"
+            }
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/anonymizations/{id}/reveal": {
+      "post": {
+        "summary": "RevealContent restores tokens inside a piece of anonymized content\nback to cleartext. Wraps DetokenizeTokens + format-aware string\nreplacement. Requires the same policy check.",
+        "description": "REST: POST /v1/anonymizations/{id}/reveal   (tenant_id in body)",
+        "operationId": "Service_RevealContent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RevealContentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ServiceRevealContentBody"
+            }
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/anonymizations/{id}/reveal-pdf": {
+      "get": {
+        "summary": "RevealPDF returns the original bytes the server stashed at\nAnonymizePDF time. 404 when the record is missing, expired, or was\nnot created via the PDF endpoint (i.e. no OriginalBytes on the\nstore record). Same tenant binding as AnonymizePDF.",
+        "description": "REST: GET /v1/anonymizations/{id}/reveal-pdf",
+        "operationId": "Service_RevealPDF",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RevealPDFResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "tenantId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "summary": "HealthCheck is a cheap liveness probe. Always returns SERVING for\nnow; readiness (analyzer warm, vault reachable) is a separate\nfuture endpoint.",
+        "description": "REST: GET /v1/health (the plain /healthz endpoint also stays).",
+        "operationId": "Service_HealthCheck",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1HealthCheckResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/synthesize": {
+      "post": {
+        "summary": "SynthesizeContent anonymizes content with realistic fake values\n(Synthesize operator) without persisting anything. Stateless.",
+        "description": "REST: POST /v1/synthesize",
+        "operationId": "Service_SynthesizeContent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SynthesizeContentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1SynthesizeContentRequest"
+            }
+          }
+        ],
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/v1/version": {
+      "get": {
+        "summary": "GetVersion reports the running backend, model, and build info.",
+        "description": "REST: GET /v1/version",
+        "operationId": "Service_GetVersion",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetVersionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "HealthCheckResponseServingStatus": {
+      "type": "string",
+      "enum": [
+        "SERVING_STATUS_UNSPECIFIED",
+        "SERVING_STATUS_SERVING",
+        "SERVING_STATUS_NOT_SERVING"
+      ],
+      "default": "SERVING_STATUS_UNSPECIFIED"
+    },
+    "ServiceDetokenizeTokensBody": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ServiceRevealContentBody": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "contentFormat": {
+          "type": "string",
+          "description": "Empty = inherit the format the anonymization was created with."
+        }
+      }
+    },
+    "protobufAny": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "rpcStatus": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/protobufAny"
+          }
+        }
+      }
+    },
+    "v1AnalyzerOptions": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "type": "string",
+          "description": "Language filter (e.g. \"en\", \"de\"). Empty = auto-detect."
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Allow-list of entity types. Empty = every recognizer fires."
+        },
+        "scoreThreshold": {
+          "type": "number",
+          "format": "double",
+          "description": "Minimum confidence score. Use score_threshold_set to distinguish\n\"field present and 0\" (include everything) from \"field absent\"\n(apply service default)."
+        },
+        "scoreThresholdSet": {
+          "type": "boolean"
+        },
+        "disableNer": {
+          "type": "boolean",
+          "description": "disable_ner = true → skip NER recognizers (pattern-only path)."
+        }
+      },
+      "description": "AnalyzerOptions are optional overrides for the analyzer pipeline.\nEmpty values fall back to service defaults."
+    },
+    "v1AnonymizePDFResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string"
+        },
+        "redactedPdf": {
+          "type": "string",
+          "format": "byte",
+          "description": "Redacted PDF bytes. The custom REST marshaler writes these as the\nresponse body with Content-Type: application/pdf."
+        },
+        "entitiesCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "entityTypesCount": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "entitiesByType": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "description": "type -\u003e count, e.g. {\"PERSON\": 3, \"EMAIL_ADDRESS\": 1}. Emitted as\nrepeated `X-Anonde-Entity-Count: TYPE=N` response headers over REST."
+        }
+      }
+    },
+    "v1CreateAnonymizationRequest": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "id is optional. Empty = server mints one (`anon_\u003chex\u003e`) and\nreturns it in the response. Supplied = used verbatim; the caller\nis responsible for uniqueness within (tenant_id)."
+        },
+        "content": {
+          "type": "string"
+        },
+        "contentFormat": {
+          "type": "string",
+          "description": "text | json | ndjson | logs | pdf | auto. Empty = text."
+        },
+        "options": {
+          "$ref": "#/definitions/v1AnalyzerOptions"
+        }
+      }
+    },
+    "v1CreateAnonymizationResponse": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "id is always present in the response (caller-supplied or minted)."
+        },
+        "anonymizedContent": {
+          "type": "string"
+        },
+        "detectedEntitySize": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Finding"
+          }
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1TokenRef"
+          }
+        }
+      }
+    },
+    "v1DeleteAnonymizationResponse": {
+      "type": "object",
+      "properties": {
+        "tokensDeleted": {
+          "type": "integer",
+          "format": "int32",
+          "description": "tokens_deleted reports how many vault entries were removed. 0 means\neither nothing existed or there were no tokens."
+        },
+        "deleted": {
+          "type": "boolean",
+          "description": "deleted is true iff a record was present before the call. Useful\nfor callers that want a real \"was anything actually there\" signal\nwhile keeping the operation itself idempotent."
+        }
+      }
+    },
+    "v1DetokenizeTokensResponse": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "resolved": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "token -\u003e cleartext."
+        }
+      }
+    },
+    "v1Finding": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "end": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "score": {
+          "type": "number",
+          "format": "double"
+        },
+        "entityType": {
+          "type": "string"
+        },
+        "recognizerName": {
+          "type": "string"
+        }
+      },
+      "description": "Finding is one detected PII span. Mirrors analyzer.RecognizerResult."
+    },
+    "v1GetVersionResponse": {
+      "type": "object",
+      "properties": {
+        "analyzerBackend": {
+          "type": "string",
+          "description": "analyzer_backend = patterns | hugot | gliner | ollama."
+        },
+        "model": {
+          "type": "string",
+          "description": "model name reported by the backend, empty for patterns."
+        },
+        "buildSha": {
+          "type": "string",
+          "description": "build_sha is the git revision the binary was built from."
+        },
+        "goVersion": {
+          "type": "string",
+          "description": "go_version is runtime.Version()."
+        },
+        "apiVersion": {
+          "type": "string",
+          "description": "api_version is the proto package version (v1, v2, …)."
+        }
+      }
+    },
+    "v1HealthCheckResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/definitions/HealthCheckResponseServingStatus"
+        }
+      }
+    },
+    "v1RevealContentResponse": {
+      "type": "object",
+      "properties": {
+        "tenantId": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "deanonymizedContent": {
+          "type": "string"
+        },
+        "resolved": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "v1RevealPDFResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "originalPdf": {
+          "type": "string",
+          "format": "byte",
+          "description": "Original (pre-anonymization) PDF bytes the server stashed at\nAnonymizePDF time."
+        }
+      }
+    },
+    "v1SynthesizeContentRequest": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "contentFormat": {
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/definitions/v1AnalyzerOptions"
+        },
+        "consistent": {
+          "type": "boolean",
+          "description": "Consistent = same input always produces the same fake."
+        },
+        "docScoped": {
+          "type": "boolean",
+          "description": "DocScoped (requires consistent) = same text maps to the same fake\nwithin this single request only."
+        }
+      }
+    },
+    "v1SynthesizeContentResponse": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Finding"
+          }
+        }
+      }
+    },
+    "v1TokenRef": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "entityType": {
+          "type": "string"
+        },
+        "start": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "end": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "TokenRef is one minted token tied to a finding offset."
+    }
+  }
+}

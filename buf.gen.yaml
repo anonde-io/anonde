@@ -16,5 +16,16 @@ plugins:
     opt:
       - paths=source_relative
       - generate_unbound_methods=false
+  # protoc-gen-openapiv2 emits an OpenAPI v2 (swagger) spec from the
+  # same google.api.http annotations that drive the REST gateway —
+  # so the docs auto-regen every time `make proto` runs. No drift.
+  # Output: gen/anonde/v1/anonde.swagger.json
+  - local: protoc-gen-openapiv2
+    out: gen
+    opt:
+      - logtostderr=true
+      - allow_merge=false
+      - use_go_templates=true
+      - generate_unbound_methods=false
 inputs:
   - directory: proto

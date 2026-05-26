@@ -348,6 +348,7 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 ## Docs
 
 - [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
+- [API reference (Swagger)](docs/api/): browsable spec auto-generated from [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto) — open `docs/api/index.html` after `make proto`. Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json).
 - [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, the `anonymize-pdf` CLI, Prometheus metrics
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
