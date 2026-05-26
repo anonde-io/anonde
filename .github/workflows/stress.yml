@@ -86,11 +86,22 @@ jobs:
       - name: Render summary
         if: always()
         run: |
+          # Each Summarize() block in stress/loadgen.go emits:
+          #     [stress] attack=<name> variant=<variant>
+          #       rate    : ...
+          #       success : ...
+          #       latency : ...
+          #       status  : ...
+          # `go test -v` indents Logf output, so the header lines are
+          # whitespace-prefixed too. Match leading whitespace on every
+          # alternative so the per-variant header survives the grep —
+          # otherwise the metric blocks land in the summary unlabeled
+          # and you can't tell which variant/test they belong to.
           {
             echo "## Stress suite — \`$STRESS_VARIANT\`"
             echo ""
             echo '```'
-            grep -E '^\[stress\]|^---|^[[:space:]]+(rate|success|latency|status)' stress.log || true
+            grep -E '^[[:space:]]*\[stress\]|^[[:space:]]*--- (PASS|FAIL):|^[[:space:]]+(rate|success|latency|status)[[:space:]]+:' stress.log || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
