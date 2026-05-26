@@ -1,0 +1,102 @@
+name: stress
+
+# Heavy stress + edge-case tier. Builds every anonde Docker variant
+# (patterns / ner / ner-stack) via testcontainers-go and runs the
+# stress suite under sustained load. NOT a merge gate — the e2e
+# workflow is. This runs on demand or weekly so a stress regression
+# surfaces within ~7 days without blocking every PR.
+#
+# Cold cost: ~25 min (image builds dominated by NER model bakes).
+# Warm cost (Docker layer cache hit): ~10 min. Single ubuntu-latest
+# runner has enough disk + memory for the matrix sequentially.
+#
+# To trigger ad-hoc:
+#   gh workflow run stress.yml
+#
+# To filter to one variant during development:
+#   gh workflow run stress.yml -f variant=patterns
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Variant filter (patterns | ner | ner-stack | all)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - patterns
+          - ner
+          - ner-stack
+  schedule:
+    # Sunday 03:00 UTC. Weekly catch for image / dep / OCR / GLiNER
+    # regressions that the e2e merge gate can't see.
+    - cron: "0 3 * * 0"
+
+concurrency:
+  group: stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    # Matches bench.yml. standard-2 is tight for the ner-stack variant
+    # (~2.8 GB runtime + Docker overhead on 8 GB RAM); bump to
+    # standard-4 if scheduled runs start OOMing on the stack row.
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Docker info
+        run: |
+          docker info
+          docker buildx version
+          df -h
+
+      - name: Run stress suite
+        env:
+          # workflow_dispatch input falls through to "all" on
+          # scheduled runs (which have no inputs).
+          STRESS_VARIANT: ${{ github.event.inputs.variant || 'all' }}
+        run: |
+          set -euo pipefail
+          case "$STRESS_VARIANT" in
+            all)
+              make stress | tee stress.log
+              ;;
+            patterns|ner|ner-stack)
+              go test -tags stress -count=1 -timeout 30m -v \
+                -run "TestStress.*/${STRESS_VARIANT}" \
+                ./stress/... | tee stress.log
+              ;;
+            *)
+              echo "unknown variant: $STRESS_VARIANT" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Render summary
+        if: always()
+        run: |
+          {
+            echo "## Stress suite — \`$STRESS_VARIANT\`"
+            echo ""
+            echo '```'
+            grep -E '^\[stress\]|^---|^[[:space:]]+(rate|success|latency|status)' stress.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-log-${{ github.run_id }}
+          path: stress.log
+          retention-days: 14

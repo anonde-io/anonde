@@ -55,7 +55,10 @@ concurrency:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    # Matches bench.yml + stress.yml. The e2e tier is light (~5s
+    # patterns-only), so standard-2 is fine; staying on a project-
+    # provisioned runner keeps cost + concurrency predictable.
+    runs-on: ubicloud-standard-2
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

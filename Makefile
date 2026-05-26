@@ -80,6 +80,14 @@ test-api: ## Run only the api package tests (verbose)
 e2e: ## Boot the real binary, drive every REST endpoint, assert /metrics ticked (~5s)
 	go test ./e2e/... -count=1 -v
 
+.PHONY: stress
+stress: ## testcontainers-driven load + edge-case tier across all Docker variants (~10-15 min cold). Docker required. See stress/README.md.
+	go test -tags stress -count=1 -timeout 30m -v ./stress/...
+
+.PHONY: stress-fast
+stress-fast: ## Same as `stress` but patterns variant only — fast smoke for harness changes (~2 min cold, ~30s warm)
+	go test -tags stress -count=1 -timeout 10m -v -run 'TestStress.*/patterns' ./stress/...
+
 .PHONY: vet
 vet: ## go vet ./...
 	go vet ./...
