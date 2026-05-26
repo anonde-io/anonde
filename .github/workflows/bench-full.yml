@@ -315,11 +315,20 @@ jobs:
       # Bumping the cache key by editing any of these files forces a
       # full rebuild of the corpus's gold + every cell. The HF + spaCy +
       # libonnxruntime caches are unaffected (separate keys).
+      #
+      # The trailing `-rv<N>` suffix is a MANUAL cache version. Bump it
+      # whenever you want a clean re-measurement that the hash-based
+      # portion of the key can't detect — runner-shape changes (vCPU
+      # count, ORT thread tuning), workflow-only edits, or just "force
+      # everyone to recompute latency from scratch." Without the manual
+      # bump, a `runs-on: ubicloud-standard-4` upgrade restores cached
+      # predictions from the prior `standard-2` run and the latency
+      # table in REPORT_MATRIX.md silently keeps reporting old numbers.
       - name: Cache corpus data
         uses: actions/cache@v4
         with:
           path: bench/corpora/${{ matrix.corpus }}/data
-          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go') }}-maxdocs${{ env.MAX_DOCS }}
+          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go') }}-maxdocs${{ env.MAX_DOCS }}-rv2
 
       - name: Verify hugot build (the bench needs it)
         run: |
