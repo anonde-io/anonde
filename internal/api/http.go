@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -138,9 +141,69 @@ func (s *HTTPServer) Routes() http.Handler {
 		// Surfacing as panic keeps the wiring contract honest.
 		panic("register grpc-gateway handler: " + err.Error())
 	}
+
+	// Direct handler for GET /v1/anonymizations/{id}/reveal-pdf.
+	// Mounted ahead of the gateway subtree so the ServeMux's
+	// most-specific-pattern-wins rule picks this over the catch-all
+	// gateway. Why bypass the gateway: grpc-gateway selects the
+	// response marshaler from the Accept header; with the default
+	// Accept: */* it falls back to JSON, then pdfForwardResponse
+	// declares a Content-Length sized for the raw PDF (from the
+	// response proto field), and the JSON body — which base64-encodes
+	// the PDF — exceeds it. Result: "wrote more than declared
+	// Content-Length" and a truncated body. A dedicated handler that
+	// writes raw bytes makes the GET behave like an asset fetch
+	// regardless of Accept, matching the pre-PR-#11 hand-rolled shape.
+	mux.HandleFunc("GET /v1/anonymizations/{id}/reveal-pdf", s.revealPDF)
+
 	mux.Handle("/v1/", gw)
 
 	return loggingMiddleware(recoverMiddleware(corsMiddleware(mux)))
+}
+
+// revealPDF bypasses grpc-gateway for the reveal-pdf GET so that the
+// response is always raw application/pdf bytes regardless of the
+// caller's Accept header. Mirrors the gateway's tenant-binding
+// behaviour: prefers the X-Anonde-Tenant header, then ?tenant=<id>,
+// ?tenant_id=<id>, ?tenantId=<id> query params.
+func (s *HTTPServer) revealPDF(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	tenantID := strings.TrimSpace(r.Header.Get(headerTenant))
+	if tenantID == "" {
+		q := r.URL.Query()
+		for _, k := range []string{"tenant", "tenant_id", "tenantId"} {
+			if v := strings.TrimSpace(q.Get(k)); v != "" {
+				tenantID = v
+				break
+			}
+		}
+	}
+	if tenantID == "" {
+		http.Error(w, "tenant_id required (set X-Anonde-Tenant header or ?tenant=<id>)", http.StatusBadRequest)
+		return
+	}
+	raw, err := s.svc.GetOriginalPDF(r.Context(), tenantID, id)
+	if err != nil {
+		// GetOriginalPDF returns ErrNotFound-ish strings for missing
+		// records; map every error to 404 here so callers don't get a
+		// 500 for an expired/deleted id. The error body keeps the
+		// detail for debugging.
+		code := http.StatusNotFound
+		if errors.Is(err, core.ErrPDFRedactorUnconfigured) {
+			code = http.StatusNotImplemented
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	w.Header().Set("Content-Type", mimeApplicationPDF)
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+	w.Header().Set("X-Anonde-Id", id)
+	w.Header().Set("X-Anonde-Tenant", tenantID)
+	_, _ = w.Write(raw)
 }
 
 // NewServerProtocols returns the http.Protocols value needed so a single

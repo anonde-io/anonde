@@ -68,10 +68,6 @@ build: ## go build ./...
 build-ner: ## Build with -tags hugot (GLiNER + libonnxruntime required)
 	go build -tags hugot ./...
 
-.PHONY: build-pdf-cli
-build-pdf-cli: ## Build the one-shot anonymize-pdf CLI binary (needs -tags hugot)
-	go build -tags hugot -o bin/anonymize-pdf ./cmd/anonymize-pdf
-
 .PHONY: test
 test: ## Run the whole test suite
 	go test ./...
@@ -112,16 +108,12 @@ docker-build: ## Build the patterns-only image ($(IMAGE):patterns)
 	docker build -f Dockerfile.anonde -t $(IMAGE):patterns .
 
 .PHONY: docker-build-ner
-docker-build-ner: ## Build the NER image (~770 MB, $(IMAGE):ner, GLiNER base + tesseract + poppler)
+docker-build-ner: ## Build the NER image (~1.13 GB, $(IMAGE):ner, GLiNER base + YOLOS sig + tesseract + poppler)
 	docker build -f Dockerfile.anonde-ner -t $(IMAGE):ner .
 
 .PHONY: docker-build-ner-stack
-docker-build-ner-stack: ## Build the lowest-leak image (~2.1 GB, GLiNER base+LARGE, $(IMAGE):ner-stack)
+docker-build-ner-stack: ## Build the lowest-leak image (~2.65 GB, GLiNER base+LARGE + YOLOS sig, $(IMAGE):ner-stack)
 	docker build -f Dockerfile.anonde-ner-stack -t $(IMAGE):ner-stack .
-
-.PHONY: docker-build-pdf-cli
-docker-build-pdf-cli: ## Build the one-shot anonymize-pdf CLI image (tesseract + 6 lang packs)
-	docker build -f Dockerfile.anonymize-pdf -t anonymize-pdf .
 
 .PHONY: docker-run
 docker-run: docker-build ## Build + start the patterns container on :$(PORT) (text/JSON only, no PDF, no metrics)

@@ -21,9 +21,10 @@ make run-ner-pdf        # host needs pdftoppm (poppler) and tesseract on PATH
 ```
 
 `make run-ner-pdf` is the full developer suite: text/JSON/PDF anonymize,
-reveal, and `/metrics`. The CLI counterpart for one-off PDFs without a
-server is `make build-pdf-cli`, which drops a binary at
-`./bin/anonymize-pdf`.
+reveal, and `/metrics`. There's no separate CLI binary any more; the
+server is the only surface and all the legacy CLI knobs (mode, dpi,
+box-padding, entities, score-threshold, etc.) bind from URL query
+parameters on `POST /v1/anonymizations/pdf` (see §3).
 
 ### Docker (one container, everything wired)
 
@@ -31,22 +32,15 @@ server is `make build-pdf-cli`, which drops a binary at
 make docker-build       # patterns image (anonde-smoke:patterns, ~12 MB, text/JSON only)
 make docker-run         # patterns container on :8081
 
-make docker-build-ner   # NER image (anonde-smoke:ner, ~770 MB, GLiNER + OCR baked in)
+make docker-build-ner   # NER image (anonde-smoke:ner, ~1.13 GB, GLiNER + YOLOS sig + OCR baked in)
 make docker-run-ner     # NER container on :8081, PDF endpoint + metrics on :9090
 
 make smoke              # round-trips ingest, reveal, delete against :8081
 ```
 
-For one-shot PDFs without running a server, build the dedicated CLI image:
-
-```bash
-make docker-build-pdf-cli
-docker run --rm -v "$PWD:/data" -v anonde-models:/root/.cache/anonde \
-  anonymize-pdf /data/in.pdf /data/out.pdf
-```
-
-The lowest-leak tier (`Dockerfile.anonde-ner-stack`, base + LARGE GLiNER,
-~2.1 GB, ~2× inference latency) builds via `make docker-build-ner-stack`.
+The lowest-leak tier (`Dockerfile.anonde-ner-stack`, base + LARGE GLiNER
++ YOLOS sig, ~2.65 GB, ~2× inference latency) builds via
+`make docker-build-ner-stack`.
 
 ## 2. Text: anonymize / deanonymize
 
@@ -110,18 +104,47 @@ logs) or the `?tenant=<id>` query param. The POST response also echoes
 `X-Anonde-Entity-Count: TYPE=N` header per detected entity type, so
 you can log counts without a second request.
 
-The redactor rasterizes each page (200 DPI), runs OCR + GLiNER, then
-draws black boxes over PII word boxes on the page images. Output is a
-flattened image-PDF, so text-layer extraction won't recover the redacted
-content.
+The redactor rasterizes each page (200 DPI), runs OCR + GLiNER + the
+YOLOS signature detector (always-on when `ANONDE_PDF_ENABLED=1`), then
+draws black boxes over every PII word, signature, stamp, and ink region
+on the page rasters. Output is a flattened image-PDF, so text-layer
+extraction won't recover the redacted content.
 
-CLI equivalent (one-shot, no server):
+**Per-request knobs** bind from URL query parameters; the request body
+is the raw PDF. Anything you don't set falls back to the server default
+(`dpi=200`, `box_padding=2`, `mode=visual`, heuristic on, score
+threshold = analyzer default).
 
 ```bash
-go run -tags hugot ./cmd/anonymize-pdf in.pdf out.pdf
-# flags: -mode visual|text, -backend gliner|patterns, -langs eng+deu,
-#        -score-threshold 0.3, -signature-model, -dpi 200
+curl -s -X POST "http://localhost:8081/v1/anonymizations/pdf\
+?mode=visual\
+&dpi=300\
+&box_padding=4\
+&score_threshold=0.5&score_threshold_set=true\
+&entities=PERSON&entities=LOCATION\
+&disable_ner=false\
+&ocr_langs=eng%2Bdeu%2Bron" \
+  -H 'Content-Type: application/pdf' \
+  -H 'X-Anonde-Tenant: demo' \
+  --data-binary @in.pdf -o out.pdf
 ```
+
+Text mode (`?mode=text`) re-renders a text-only PDF with mask
+substitutions instead of black boxes; `?operator=mask` (default,
+prints `mask_char`) vs `?operator=redact` (`<REDACTED>` tokens).
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `mode` | string | `visual` | `visual` or `text` |
+| `operator` | string | `mask` | text mode only; `mask` or `redact` |
+| `mask_char` | string | `#` | text mode mask operator |
+| `ocr_langs` | string | server `ANONDE_OCR_LANGS` | tesseract lang string (visual mode) |
+| `dpi` | int | 200 | visual rasterisation |
+| `box_padding` | int | 2 | visual mode pixels around each PII word box |
+| `disable_visual_heuristic` | bool | false | turn off the ink/sig heuristic |
+| `disable_ner` | bool | false | skip NER recognizers |
+| `score_threshold` | float | analyzer default | requires `score_threshold_set=true` |
+| `entities` | repeated string | (all) | allow-list of entity types |
 
 ## 4. Scanned images (PNG / JPG)
 

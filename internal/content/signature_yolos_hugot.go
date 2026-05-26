@@ -40,12 +40,16 @@ import (
 // not just a quality tax. Override per-deployment via SIGNATURE_QUANT.
 const (
 	signatureInputSz = 640
-	// Default threshold tuned on scanned forms: 0.25 catches clear
-	// handwritten signatures (typical conf >0.80) and dense graphic
-	// elements like coat-of-arms / heraldic logos (~0.25-0.35).
+	// Default threshold validated on real scanned forms (Romanian
+	// poprire, US real-estate listing packets, insurance scans): 0.20
+	// catches clear handwritten signatures (typical conf >0.80), faint
+	// coat-of-arms / heraldic logos (~0.20-0.35), and small printed
+	// stamps the published 0.25 default would skip. A missed mark on a
+	// scanned form is a privacy leak, so we trade slightly more
+	// false-positive boxes on dense graphics for that recall.
 	// Override via SIGNATURE_THRESHOLD env. Below 0.18 the model
 	// starts firing on dense text blocks.
-	signatureConfMin = 0.25
+	signatureConfMin = 0.20
 	signatureIOUMin  = 0.55
 
 	signatureRepoBase = "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/"
@@ -75,9 +79,8 @@ var (
 
 // LoadSignatureDetector downloads (on first use) the YOLOS
 // signature-detection ONNX, initialises an in-process onnxruntime
-// session, and returns a VisualDetector. Exported so both the CLI
-// (cmd/anonymize-pdf) and the HTTP server (cmd/anonde) can wire
-// it identically.
+// session, and returns a VisualDetector. Called from cmd/anonde at
+// startup whenever ANONDE_PDF_ENABLED=1.
 //
 // overridePath, when non-empty, points at an existing local ONNX
 // file and bypasses the download — used by Dockerfile.anonde-ner

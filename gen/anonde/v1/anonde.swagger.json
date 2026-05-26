@@ -86,6 +86,87 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "scoreThreshold",
+            "description": "Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;\nhoisted to top-level fields because grpc-gateway can't bind nested\nmessage fields from URL query parameters cleanly). Zero values\nfall back to the server-side defaults baked at boot time.",
+            "in": "query",
+            "required": false,
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "name": "scoreThresholdSet",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "entities",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "disableNer",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "mode",
+            "description": "PDF-specific knobs. Zero values fall back to server defaults.\nmode: \"visual\" (default) or \"text\". Visual draws boxes on page\nrasters; text re-renders a text PDF with mask substitutions.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "operator",
+            "description": "operator (text mode only): \"mask\" (default) or \"redact\".",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "maskChar",
+            "description": "mask_char (text mode only): single character used by the mask\noperator. Default \"#\".",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "ocrLangs",
+            "description": "ocr_langs: tesseract language string, e.g. \"eng+deu+ron\". Overrides\nthe server's ANONDE_OCR_LANGS for this request.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "dpi",
+            "description": "dpi: rasterisation DPI for visual mode. 0 = server default (200).",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "boxPadding",
+            "description": "box_padding: pixels around each PII word box in visual mode.\n0 = server default (2).",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "disableVisualHeuristic",
+            "description": "disable_visual_heuristic: turn off the ink-density heuristic that\ncatches signatures/stamps/logos. Inverted polarity so the zero\nvalue keeps the heuristic on.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [

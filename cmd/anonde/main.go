@@ -144,11 +144,17 @@ func main() {
 	log.Printf("openai-compatible proxy enabled at POST /v1/chat/completions (upstream=%s)", openAIBase)
 
 	// PDF redaction endpoint (POST /v1/anonymizations/pdf). Opt-in
-	// via ANONDE_PDF_ENABLED=1 because it: (a) requires pdftoppm +
-	// tesseract on PATH for OCR fallback on scanned PDFs, and (b)
-	// optionally loads a ~500 MB YOLOS signature model when
-	// ANONDE_PDF_VISION_MODEL=1 is set. Endpoint returns 501 with a
-	// pointer at this env var when disabled.
+	// via ANONDE_PDF_ENABLED=1 because it requires pdftoppm + tesseract
+	// on PATH for OCR on scanned PDFs and loads a ~500 MB YOLOS
+	// signature-detection model into memory. Endpoint returns 501 with
+	// a pointer at this env var when disabled.
+	//
+	// The YOLOS signature detector is always loaded when PDF is enabled
+	// — there's no per-request way to skip it, and the
+	// ANONDE_PDF_VISION_MODEL split flag has been retired. Memory cost
+	// (~500 MB resident) is the price of accepting PDFs; operators who
+	// can't afford it should leave ANONDE_PDF_ENABLED unset and route
+	// PDF traffic to a separate node.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("ANONDE_PDF_ENABLED")), "1") {
 		opts := content.RedactPDFOptions{
 			Engine:          analyzerEngine,
@@ -157,17 +163,13 @@ func main() {
 			BoxPadding:      2,
 			VisualHeuristic: true,
 		}
-		if strings.EqualFold(strings.TrimSpace(os.Getenv("ANONDE_PDF_VISION_MODEL")), "1") {
-			detector, derr := content.LoadSignatureDetector(strings.TrimSpace(os.Getenv("ANONDE_SIGNATURE_MODEL_PATH")))
-			if derr != nil {
-				log.Fatalf("ANONDE_PDF_VISION_MODEL=1 but failed to load signature detector: %v", derr)
-			}
-			opts.VisualDetector = detector
-			log.Printf("pdf endpoint: signature detector loaded")
+		detector, derr := content.LoadSignatureDetector(strings.TrimSpace(os.Getenv("ANONDE_SIGNATURE_MODEL_PATH")))
+		if derr != nil {
+			log.Fatalf("ANONDE_PDF_ENABLED=1 but failed to load signature detector: %v", derr)
 		}
+		opts.VisualDetector = detector
 		svc.SetPDFRedactor(core.NewPDFRedactor(opts))
-		log.Printf("pdf endpoint enabled at POST /v1/anonymizations/pdf + GET /v1/anonymizations/{id}/reveal-pdf (vision_model=%s)",
-			strings.TrimSpace(os.Getenv("ANONDE_PDF_VISION_MODEL")))
+		log.Printf("pdf endpoint enabled at POST /v1/anonymizations/pdf + GET /v1/anonymizations/{id}/reveal-pdf (signature detector loaded)")
 	}
 
 	// Wrap the routes in the concurrency limiter as the outermost layer

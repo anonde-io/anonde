@@ -15,13 +15,20 @@ import (
 // stubRedactor lets the gateway smoke tests exercise the full path
 // without pulling in CGO + libonnxruntime + a real PDF. It echoes a
 // deterministic redacted-bytes payload and a known stats map so the
-// response headers are exact.
+// response headers are exact, and (optionally) captures the per-request
+// opts so tests can assert the proto fields plumb through.
 type stubRedactor struct {
 	out   []byte
 	stats core.RedactStats
+	// lastOpts is set on every Redact call; tests read it after the
+	// HTTP roundtrip to verify request-binding. Not safe for concurrent
+	// requests — fine in test scope.
+	lastOpts *core.RedactOptions
 }
 
-func (s stubRedactor) Redact(_ context.Context, raw []byte) ([]byte, core.RedactStats, error) {
+func (s *stubRedactor) Redact(_ context.Context, raw []byte, opts core.RedactOptions) ([]byte, core.RedactStats, error) {
+	cp := opts
+	s.lastOpts = &cp
 	// Echo the input length as part of the output so the test can prove
 	// the request body actually reached the redactor.
 	out := append([]byte("REDACTED:"), raw...)
@@ -33,7 +40,7 @@ func (s stubRedactor) Redact(_ context.Context, raw []byte) ([]byte, core.Redact
 
 func TestRESTPDFEndpoint_TenantViaHeader(t *testing.T) {
 	svc := newTestService()
-	svc.SetPDFRedactor(stubRedactor{
+	svc.SetPDFRedactor(&stubRedactor{
 		stats: core.RedactStats{
 			EntityCount: 4,
 			TypeCount:   2,
@@ -102,7 +109,7 @@ func TestRESTPDFEndpoint_TenantViaHeader(t *testing.T) {
 
 func TestRESTPDFEndpoint_TenantViaQuery(t *testing.T) {
 	svc := newTestService()
-	svc.SetPDFRedactor(stubRedactor{})
+	svc.SetPDFRedactor(&stubRedactor{})
 	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
 	t.Cleanup(srv.Close)
 
@@ -151,7 +158,7 @@ func TestRESTPDFEndpoint_Unconfigured(t *testing.T) {
 
 func TestRESTPDFEndpoint_MissingTenant(t *testing.T) {
 	svc := newTestService()
-	svc.SetPDFRedactor(stubRedactor{})
+	svc.SetPDFRedactor(&stubRedactor{})
 	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
 	t.Cleanup(srv.Close)
 
@@ -174,7 +181,7 @@ func TestRESTPDFEndpoint_MissingTenant(t *testing.T) {
 func TestRESTPDFEndpoint_RevealRoundTrip(t *testing.T) {
 	svc := newTestService()
 	original := []byte("%PDF-1.4\noriginal payload")
-	svc.SetPDFRedactor(stubRedactor{})
+	svc.SetPDFRedactor(&stubRedactor{})
 	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
 	t.Cleanup(srv.Close)
 
@@ -193,10 +200,12 @@ func TestRESTPDFEndpoint_RevealRoundTrip(t *testing.T) {
 		t.Fatalf("anonymize: expected anon_<hex>, got %q", id)
 	}
 
-	// 2) Reveal: original bytes come back byte-exact.
+	// 2) Reveal: original bytes come back byte-exact. Intentionally NO
+	// Accept header set — proves the dedicated GET handler returns raw
+	// PDF bytes regardless of Accept, which used to fail with
+	// Accept: */* under the gateway's default JSON marshaler.
 	rev, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/anonymizations/"+id+"/reveal-pdf", nil)
 	rev.Header.Set(headerTenant, "demo")
-	rev.Header.Set("Accept", mimeApplicationPDF)
 	revResp, err := srv.Client().Do(rev)
 	if err != nil {
 		t.Fatalf("reveal: %v", err)
@@ -218,5 +227,128 @@ func TestRESTPDFEndpoint_RevealRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(got, original) {
 		t.Fatalf("reveal body mismatch:\n got: %q\nwant: %q", string(got), string(original))
+	}
+}
+
+// TestRevealPDF_TenantViaQuery confirms the dedicated GET handler honors
+// the ?tenant= query param when no X-Anonde-Tenant header is sent —
+// matching the gateway's tenant-binding behaviour for the POST.
+func TestRevealPDF_TenantViaQuery(t *testing.T) {
+	svc := newTestService()
+	original := []byte("%PDF-1.4\nq-tenant")
+	svc.SetPDFRedactor(&stubRedactor{out: original})
+	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
+	t.Cleanup(srv.Close)
+
+	post, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/anonymizations/pdf?tenantId=demo", bytes.NewReader(original))
+	post.Header.Set("Content-Type", mimeApplicationPDF)
+	pr, err := srv.Client().Do(post)
+	if err != nil {
+		t.Fatalf("anonymize: %v", err)
+	}
+	id := pr.Header.Get("X-Anonde-Id")
+	_, _ = io.Copy(io.Discard, pr.Body)
+	pr.Body.Close()
+
+	get, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/anonymizations/"+id+"/reveal-pdf?tenant=demo", nil)
+	resp, err := srv.Client().Do(get)
+	if err != nil {
+		t.Fatalf("reveal: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(raw))
+	}
+	got, _ := io.ReadAll(resp.Body)
+	if !bytes.Equal(got, original) {
+		t.Fatalf("reveal body mismatch: got %q want %q", got, original)
+	}
+}
+
+// TestRevealPDF_MissingTenant covers the explicit 400 when neither
+// header nor query param carries the tenant.
+func TestRevealPDF_MissingTenant(t *testing.T) {
+	svc := newTestService()
+	svc.SetPDFRedactor(&stubRedactor{})
+	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Get(srv.URL + "/v1/anonymizations/anon_x/reveal-pdf")
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+}
+
+// TestRESTPDFEndpoint_QueryParamsPlumbThrough proves the new per-request
+// fields (mode, dpi, box_padding, entities, score_threshold, ocr_langs,
+// disable_visual_heuristic) bind from URL query string and land in the
+// core.RedactOptions struct the redactor sees. Smoke test of the
+// grpc-gateway wire-binding for the extended AnonymizePDFRequest.
+func TestRESTPDFEndpoint_QueryParamsPlumbThrough(t *testing.T) {
+	svc := newTestService()
+	stub := &stubRedactor{}
+	svc.SetPDFRedactor(stub)
+	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
+	t.Cleanup(srv.Close)
+
+	url := srv.URL + "/v1/anonymizations/pdf" +
+		"?mode=visual" +
+		"&dpi=300" +
+		"&box_padding=4" +
+		"&disable_visual_heuristic=true" +
+		"&ocr_langs=eng%2Bron" +
+		"&score_threshold=0.5" +
+		"&score_threshold_set=true" +
+		"&entities=PERSON&entities=LOCATION" +
+		"&disable_ner=true" +
+		"&operator=redact"
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte("%PDF-1.4\nx")))
+	req.Header.Set("Content-Type", mimeApplicationPDF)
+	req.Header.Set(headerTenant, "demo")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(raw))
+	}
+
+	got := stub.lastOpts
+	if got == nil {
+		t.Fatalf("redactor.lastOpts is nil; redactor was never called")
+	}
+	if got.Mode != "visual" {
+		t.Errorf("Mode = %q, want visual", got.Mode)
+	}
+	if got.DPI != 300 {
+		t.Errorf("DPI = %d, want 300", got.DPI)
+	}
+	if got.BoxPadding != 4 {
+		t.Errorf("BoxPadding = %d, want 4", got.BoxPadding)
+	}
+	if !got.DisableVisualHeuristic {
+		t.Errorf("DisableVisualHeuristic = false, want true")
+	}
+	if got.OCRLangs != "eng+ron" {
+		t.Errorf("OCRLangs = %q, want eng+ron", got.OCRLangs)
+	}
+	if got.ScoreThreshold != 0.5 || !got.ScoreThresholdSet {
+		t.Errorf("ScoreThreshold = %v (set=%v), want 0.5 (set=true)", got.ScoreThreshold, got.ScoreThresholdSet)
+	}
+	if !got.DisableNER {
+		t.Errorf("DisableNER = false, want true")
+	}
+	if got.Operator != "redact" {
+		t.Errorf("Operator = %q, want redact", got.Operator)
+	}
+	if len(got.Entities) != 2 || got.Entities[0] != "PERSON" || got.Entities[1] != "LOCATION" {
+		t.Errorf("Entities = %v, want [PERSON LOCATION]", got.Entities)
 	}
 }

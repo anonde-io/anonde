@@ -190,41 +190,50 @@ not bundle them — `ExtractAnalyzable` silently skips the OCR fallback
 when the binaries aren't on `PATH`, so the patterns-only image stays
 ~12 MB.
 
-Optionally, `ANONDE_PDF_VISION_MODEL=1` loads a YOLOS signature
-detector and lets the visual redactor cover signatures, stamps, and
-logos that no OCR will see. The model is baked into `anonde-ner` (FP32
-by default; flip with the `SIGNATURE_QUANT={fp16,int8}` build arg).
+Whenever `ANONDE_PDF_ENABLED=1` the server eagerly loads a YOLOS
+signature detector so the visual redactor covers signatures, stamps,
+and logos that no OCR will see. The model is baked into `anonde-ner`
+(FP32 by default; flip with the `SIGNATURE_QUANT={fp16,int8}` build
+arg). Memory cost is ~500 MB resident; operators who can't afford it
+should leave `ANONDE_PDF_ENABLED` unset and route PDFs to a separate
+node.
 
 Tune via env: `ANONDE_OCR_ENABLED`, `ANONDE_OCR_LANGS`,
 `ANONDE_OCR_DPI`, `ANONDE_OCR_TEXT_FLOOR`, `ANONDE_PDF_ENABLED`,
-`ANONDE_PDF_VISION_MODEL`, `ANONDE_SIGNATURE_MODEL_PATH`. See
+`ANONDE_SIGNATURE_MODEL_PATH`. See
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#pdf--ocr) for the full table.
 
-## Anonymize PDFs from the command line
+## Anonymize PDFs
 
-For batch / offline workflows there's a one-shot CLI,
-[`cmd/anonymize-pdf`](cmd/anonymize-pdf/main.go), with the same UX as
-Private AI / Limina (`anonymize-pdf in.pdf out.pdf`):
+PDFs are a first-class HTTP endpoint, not a separate binary: every knob
+the old `anonymize-pdf` CLI exposed (mode, dpi, box-padding, entities,
+score-threshold, ocr-langs, …) binds from URL query parameters on
+`POST /v1/anonymizations/pdf`. The redactor uses the same
+`internal/content` primitives as the rest of the server, so output is
+byte-identical regardless of transport.
 
 ```bash
-# Bundled image — first run downloads ~880 MB of models into a named
-# volume; reuse the volume to avoid re-downloading.
-docker run --rm \
-  -v "$PWD:/data" \
-  -v anonde-models:/root/.cache/anonde \
-  ghcr.io/anonde-io/anonymize-pdf:latest /data/in.pdf /data/out.pdf
+# Run an NER server with PDF enabled (one liner)
+docker run --rm -p 8081:8080 ghcr.io/anonde-io/anonde-ner:latest
 
-# Common flags
-anonymize-pdf --mode=visual    in.pdf out.pdf   # default; black boxes on page rasters
-anonymize-pdf --mode=text      in.pdf out.pdf   # rerendered text PDF with '#' substitutions
-anonymize-pdf --signature-model in.pdf out.pdf  # also cover signatures / stamps / logos
-anonymize-pdf --langs=eng+deu  in.pdf out.pdf   # restrict OCR languages
-anonymize-pdf --entities=PERSON,LOCATION in.pdf out.pdf  # detector allow-list
+# Visual redaction (default; black boxes on page rasters)
+curl -X POST 'http://localhost:8081/v1/anonymizations/pdf' \
+  -H 'Content-Type: application/pdf' -H 'X-Anonde-Tenant: demo' \
+  --data-binary @in.pdf -o out.pdf
+
+# Text-mode + mask operator (rerendered text PDF with '#' substitutions)
+curl -X POST 'http://localhost:8081/v1/anonymizations/pdf?mode=text&operator=mask' \
+  -H 'Content-Type: application/pdf' -H 'X-Anonde-Tenant: demo' \
+  --data-binary @in.pdf -o out.pdf
+
+# Restrict OCR languages + entity allow-list per request
+curl -X POST 'http://localhost:8081/v1/anonymizations/pdf?ocr_langs=eng%2Bdeu&entities=PERSON&entities=LOCATION' \
+  -H 'Content-Type: application/pdf' -H 'X-Anonde-Tenant: demo' \
+  --data-binary @in.pdf -o out.pdf
 ```
 
-`Dockerfile.anonymize-pdf` builds the image locally. The CLI uses the
-same `internal/content` redaction primitives as the HTTP endpoint, so
-output is byte-identical for the same input.
+See [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) for the full
+field table.
 
 ## Use anonde as an OpenAI proxy
 
@@ -349,7 +358,7 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 
 - [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
 - [API reference (Swagger)](docs/api/): browsable spec auto-generated from [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto) — open `docs/api/index.html` after `make proto`. Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json).
-- [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, the `anonymize-pdf` CLI, Prometheus metrics
+- [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, per-request PDF knobs, Prometheus metrics
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
 - [Operators](docs/OPERATORS.md): Replace, Redact, Mask, Hash, Encrypt, Synthesize

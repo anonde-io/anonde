@@ -85,6 +85,9 @@ type RedactPDFOptions struct {
 	// (e.g. tech4humans/yolov8s-signature-detector via
 	// yalue/onnxruntime_go). Built only with -tags hugot.
 	VisualDetector VisualDetector
+	// OCRLangs overrides ANONDE_OCR_LANGS for this request. Empty
+	// falls back to the env default (or "eng+deu" as the final fallback).
+	OCRLangs string
 }
 
 // VisualDetector is the contract for vision-model object detectors that
@@ -152,8 +155,12 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 		fullText strings.Builder
 		spans    []CharSpan
 	)
+	langs := opts.OCRLangs
+	if langs == "" {
+		langs = ocrLangs()
+	}
 	for i, p := range pages {
-		words, err := ocrPageTSV(p.PNGPath, ocrLangs())
+		words, err := ocrPageTSV(p.PNGPath, langs)
 		if err != nil {
 			return nil, nil, err
 		}

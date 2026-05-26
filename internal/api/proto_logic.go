@@ -137,7 +137,20 @@ func executeAnonymizePDF(ctx context.Context, svc *core.Service, msg *anondev1.A
 		// fallback is REST-only.
 		tenantID = tenantFromIncomingMD(ctx)
 	}
-	id, redacted, stats, err := svc.RedactPDF(ctx, tenantID, msg.GetPdfContent())
+	opts := core.RedactOptions{
+		Mode:                   msg.GetMode(),
+		Operator:               msg.GetOperator(),
+		MaskChar:               msg.GetMaskChar(),
+		OCRLangs:               msg.GetOcrLangs(),
+		Entities:               msg.GetEntities(),
+		ScoreThreshold:         msg.GetScoreThreshold(),
+		ScoreThresholdSet:      msg.GetScoreThresholdSet(),
+		DPI:                    int(msg.GetDpi()),
+		BoxPadding:             int(msg.GetBoxPadding()),
+		DisableVisualHeuristic: msg.GetDisableVisualHeuristic(),
+		DisableNER:             msg.GetDisableNer(),
+	}
+	id, redacted, stats, err := svc.RedactPDF(ctx, tenantID, msg.GetPdfContent(), opts)
 	if err != nil {
 		return nil, err
 	}

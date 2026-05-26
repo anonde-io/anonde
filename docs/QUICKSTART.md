@@ -219,14 +219,14 @@ Three Dockerfiles ship with the repo, pick per workload:
 | Image | Built via | Size | Backend | Use when |
 |---|---|---|---|---|
 | `anonde-smoke:patterns` | `make docker-build` | ~12 MB | patterns-only | German clinical text, structured English fields, no narrative names |
-| `anonde-smoke:ner` | `make docker-build-ner` | ~770 MB | GLiNER base + patterns + OCR | production default; Σ ALL ≈ 12.9% leak across 30 corpora; PDF endpoint enabled |
-| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | ~2.1 GB | GLiNER base + LARGE + patterns | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
+| `anonde-smoke:ner` | `make docker-build-ner` | ~1.13 GB | GLiNER base + patterns + OCR + YOLOS sig | production default; Σ ALL ≈ 12.9% leak across 30 corpora; PDF endpoint enabled |
+| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | ~2.65 GB | GLiNER base + LARGE + patterns + YOLOS sig | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
 
 `make docker-run` and `make docker-run-ner` build the image (if needed)
-and start the container. The NER container exposes `/v1/anonymizations/pdf`
-and Prometheus on `:9090`. A separate one-shot PDF CLI image
-(`make docker-build-pdf-cli`) is documented in
-[`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md).
+and start the container. The NER container exposes
+`/v1/anonymizations/pdf` (which accepts all the legacy CLI knobs as
+URL query parameters; see [`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md))
+and Prometheus on `:9090`.
 
 The NER image runs offline once built; the ONNX model is baked into
 `/models` during build. No HuggingFace Hub calls at runtime.

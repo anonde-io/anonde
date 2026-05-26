@@ -312,6 +312,37 @@ message AnonymizePDFRequest {
   // populates this from the request body directly (no base64). Over
   // gRPC / Connect callers fill it like any bytes field.
   bytes pdf_content = 2;
+
+  // Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;
+  // hoisted to top-level fields because grpc-gateway can't bind nested
+  // message fields from URL query parameters cleanly). Zero values
+  // fall back to the server-side defaults baked at boot time.
+  double score_threshold = 3;
+  bool score_threshold_set = 4;
+  repeated string entities = 5;
+  bool disable_ner = 6;
+
+  // PDF-specific knobs. Zero values fall back to server defaults.
+  // mode: "visual" (default) or "text". Visual draws boxes on page
+  // rasters; text re-renders a text PDF with mask substitutions.
+  string mode = 7;
+  // operator (text mode only): "mask" (default) or "redact".
+  string operator = 8;
+  // mask_char (text mode only): single character used by the mask
+  // operator. Default "#".
+  string mask_char = 9;
+  // ocr_langs: tesseract language string, e.g. "eng+deu+ron". Overrides
+  // the server's ANONDE_OCR_LANGS for this request.
+  string ocr_langs = 10;
+  // dpi: rasterisation DPI for visual mode. 0 = server default (200).
+  int32 dpi = 11;
+  // box_padding: pixels around each PII word box in visual mode.
+  // 0 = server default (2).
+  int32 box_padding = 12;
+  // disable_visual_heuristic: turn off the ink-density heuristic that
+  // catches signatures/stamps/logos. Inverted polarity so the zero
+  // value keeps the heuristic on.
+  bool disable_visual_heuristic = 13;
 }
 
 message AnonymizePDFResponse {

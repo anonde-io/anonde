@@ -158,11 +158,10 @@ deleted.
 
 | Var | Default | What |
 |---|---|---|
-| `ANONDE_PDF_ENABLED` | unset | Set to `1` to mount the PDF endpoint pair. When unset the routes return `501` with a hint pointing at this var. |
-| `ANONDE_PDF_VISION_MODEL` | unset | Set to `1` to load the YOLOS signature detector at boot. Lets the visual redactor cover signatures, stamps, and logos that no OCR will see. Costs ~500 MB RAM at the FP32 default. |
+| `ANONDE_PDF_ENABLED` | unset | Set to `1` to mount the PDF endpoint pair AND eagerly load the YOLOS signature detector (~500 MB resident). When unset the routes return `501` with a hint pointing at this var. The signature model is always loaded when PDF is enabled; there is no per-deploy way to skip it. |
 | `ANONDE_SIGNATURE_MODEL_PATH` | _(baked path in NER image)_ | Override path to the signature ONNX. The `anonde-ner` image bakes one at `/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx`. |
 | `SIGNATURE_QUANT` | `fp32` | Build arg for `Dockerfile.anonde-ner` selecting the signature ONNX precision baked into the image. `fp32` (~1.13 GB image, recommended), `fp16` (~960 MB), `int8` (~870 MB; measurably worse signature recall — more missed signatures). |
-| `SIGNATURE_THRESHOLD` | `0.20` (in the bundled images; `0.25` in the binary default) | YOLOS confidence floor. Lower = more aggressive coverage (catches faint logos / stamps the default would miss), higher = fewer false positives. `0.18` is the lowest safe value before the model starts firing on dense text blocks. The `anonde-ner` / `anonde-ner-stack` / `anonymize-pdf` images set this to `0.20` based on a live test against scanned real-estate listings + insurance forms. |
+| `SIGNATURE_THRESHOLD` | `0.20` | YOLOS confidence floor. Lower = more aggressive coverage (catches faint logos / stamps the default would miss), higher = fewer false positives. `0.18` is the lowest safe value before the model starts firing on dense text blocks. The default was lowered from the model-published `0.25` to `0.20` after a live test against scanned poprire / real-estate / insurance forms surfaced missed heraldic logos. |
 | `ANONDE_OCR_ENABLED` | _(unset → on if both binaries present)_ | Set to `false` / `0` / `off` to disable the OCR fallback even when the binaries are installed. |
 | `ANONDE_OCR_LANGS` | `eng+deu+fra+spa+ita+ron` | Tesseract language string. Restrict to known-corpus languages (e.g. `eng` alone) for faster OCR — each loaded model costs ~30–50 MB RAM. |
 | `ANONDE_OCR_DPI` | `300` | Rasterisation DPI passed to `pdftoppm -r`. Drop to `200` for faster OCR on clean scans; raise to `400+` for low-quality photographs of documents. |
@@ -172,45 +171,29 @@ Tesseract page-segmentation mode is fixed at PSM 3 (fully automatic);
 this preserves table-row reading order on multi-column scans like
 government forms, which PSM 6 ("single block") loses.
 
-### `anonymize-pdf` CLI
+### Per-request PDF knobs
 
-`cmd/anonymize-pdf` ships a one-shot CLI that wraps the same
-`internal/content` primitives — useful for batch / offline workflows
-or for callers who want to redact PDFs without standing up the HTTP
-server. `Dockerfile.anonymize-pdf` builds an image with the binary +
-`poppler-utils` + `tesseract` + `libonnxruntime` already in place.
+Every knob the (retired) `anonymize-pdf` CLI exposed binds from URL
+query parameters on `POST /v1/anonymizations/pdf`. The request body is
+the raw PDF (`Content-Type: application/pdf`); the tenant comes from
+the `X-Anonde-Tenant` header or `?tenant=<id>`.
 
-```bash
-docker build -f Dockerfile.anonymize-pdf -t anonymize-pdf .
-
-# First run downloads ~880 MB of models (GLiNER PII + YOLOS signature
-# FP32) into the named volume. Subsequent runs reuse the cache.
-docker run --rm \
-  -v "$PWD:/data" \
-  -v anonde-models:/root/.cache/anonde \
-  anonymize-pdf /data/in.pdf /data/out.pdf
-```
-
-Flags (see `anonymize-pdf -help` for the full list):
-
-| Flag | Default | What |
+| Query param | Default | What |
 |---|---|---|
-| `--mode` | `visual` | `visual` draws black boxes over each PII span on the original page rasters (Private AI / Limina shape). `text` emits a re-rendered text PDF with `#` substitutions. |
-| `--operator` | `mask` | In `text` mode, the anonymizer operator: `mask` (`#`s) or `redact` (`<REDACTED>`). |
-| `--mask-char` | `#` | Character used by the `mask` operator. |
-| `--backend` | `auto` | `auto` picks `gliner` when the `-tags hugot` build is present, else patterns. Force with `patterns` / `gliner` / `hugot`. |
-| `--langs` | _(empty → `ANONDE_OCR_LANGS`)_ | Tesseract languages, comma- or plus-separated. |
-| `--entities` | _(empty → all)_ | Comma-separated detector allow-list (e.g. `PERSON,LOCATION`). |
-| `--score-threshold` | `0.3` | Minimum recognizer score (matches the HTTP server default). |
-| `--dpi` | `200` | Visual-mode rasterisation DPI. |
-| `--box-padding` | `2` | Pixels of padding around each PII box in visual mode (covers OCR baseline jitter). |
-| `--visual-heuristic` | `true` | In visual mode, also redact ink regions not covered by confident OCR — catches signatures, stamps, logos when the signature model isn't loaded. |
-| `--signature-model` | `false` | Load the YOLOS signature ONNX. Requires `-tags hugot` build and a one-time model download. |
-| `--signature-model-path` | _(downloads to `~/.cache/anonde/models/signature/`)_ | Override the signature ONNX path. |
-| `--dump-text` | _(empty)_ | Optional path to dump the extracted (post-OCR) text for debugging. |
+| `mode` | `visual` | `visual` draws black boxes over each PII span on the original page rasters (Private AI / Limina shape). `text` emits a re-rendered text PDF with `#` substitutions. |
+| `operator` | `mask` | In `text` mode, the anonymizer operator: `mask` (`#`s) or `redact` (`<REDACTED>`). |
+| `mask_char` | `#` | Character used by the `mask` operator. |
+| `ocr_langs` | _(empty → server `ANONDE_OCR_LANGS`)_ | Tesseract languages, plus-separated. URL-encode as `eng%2Bdeu`. |
+| `entities` | _(empty → all)_ | Repeated; detector allow-list, e.g. `entities=PERSON&entities=LOCATION`. |
+| `score_threshold` + `score_threshold_set` | analyzer default | Set both to override the boot-time score floor. `score_threshold_set` lets the wire format distinguish "field absent" from "field present and 0". |
+| `disable_ner` | `false` | Skip NER recognizers in the analyzer pipeline for this request. |
+| `dpi` | `200` | Visual-mode rasterisation DPI. |
+| `box_padding` | `2` | Pixels of padding around each PII box in visual mode (covers OCR baseline jitter). |
+| `disable_visual_heuristic` | `false` | Visual mode: turn off the ink-density heuristic. Inverted polarity so the zero value keeps the heuristic on. |
 
-The CLI exits non-zero on any pipeline error and prints a per-type
-finding summary to stderr; stdout is kept clean for scripting.
+The YOLOS signature detector is not a per-request toggle — it's loaded
+at boot whenever `ANONDE_PDF_ENABLED=1`. To run without it, leave PDF
+disabled entirely.
 
 ## CI
 

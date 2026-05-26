@@ -111,10 +111,10 @@ ENV GLINER_MODELS_DIR=/models \
 RUN /out/anonde
 
 # --- bake the YOLOS signature-detection model -----------------------------
-# Pre-download the ONNX so the `POST /v1/anonymizations/pdf` endpoint
-# doesn't pay a first-request download. Skip with
-# `--build-arg PDF_VISION_MODEL=0` for a slimmer image (the endpoint
-# then downloads on first request to a writable volume).
+# Always baked because the server loads YOLOS whenever
+# ANONDE_PDF_ENABLED=1 (no per-image opt-out flag any more). Skipping
+# the bake would force a ~500 MB first-request download into a
+# writable volume.
 #
 # Quantization variant via `--build-arg SIGNATURE_QUANT=fp32|fp16|int8`.
 # Default is FP32 — the bench matrix on GLiNER showed INT8 leaks
@@ -126,20 +126,17 @@ RUN /out/anonde
 #   fp32: ~487 MB  (default)
 #   fp16: ~318 MB  (-170 MB)
 #   int8: ~236 MB  (-250 MB, recall regression)
-ARG PDF_VISION_MODEL=1
 ARG SIGNATURE_QUANT=fp32
-RUN if [ "$PDF_VISION_MODEL" = "1" ]; then \
-        mkdir -p /models/signature && \
-        case "$SIGNATURE_QUANT" in \
-            fp32) REMOTE=model.onnx       LOCAL=yolos-base-signature-fp32.onnx ;; \
-            fp16) REMOTE=model_fp16.onnx  LOCAL=yolos-base-signature-fp16.onnx ;; \
-            int8) REMOTE=model_int8.onnx  LOCAL=yolos-base-signature-int8.onnx ;; \
-            *) echo "SIGNATURE_QUANT must be one of fp32|fp16|int8" >&2; exit 1 ;; \
-        esac && \
-        curl -fsSL -A "anonde-build" \
-            "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/$REMOTE" \
-            -o "/models/signature/$LOCAL" ; \
-    fi
+RUN mkdir -p /models/signature && \
+    case "$SIGNATURE_QUANT" in \
+        fp32) REMOTE=model.onnx       LOCAL=yolos-base-signature-fp32.onnx ;; \
+        fp16) REMOTE=model_fp16.onnx  LOCAL=yolos-base-signature-fp16.onnx ;; \
+        int8) REMOTE=model_int8.onnx  LOCAL=yolos-base-signature-int8.onnx ;; \
+        *) echo "SIGNATURE_QUANT must be one of fp32|fp16|int8" >&2; exit 1 ;; \
+    esac && \
+    curl -fsSL -A "anonde-build" \
+        "https://huggingface.co/onnx-community/yolos-base-signature-detection-ONNX/resolve/main/onnx/$REMOTE" \
+        -o "/models/signature/$LOCAL"
 
 # --- runtime --------------------------------------------------------------
 # debian:bookworm-slim — switched from distroless/cc to gain apt so the
@@ -148,19 +145,18 @@ RUN if [ "$PDF_VISION_MODEL" = "1" ]; then \
 # buildx multi-arch story from the distroless variant carries over via
 # $TARGETPLATFORM.
 #
-# Image size (with the signature model baked):
+# Image size (signature model is always baked):
 #   SIGNATURE_QUANT=fp32 (default) → ~1.13 GB
 #   SIGNATURE_QUANT=fp16           → ~960 MB
 #   SIGNATURE_QUANT=int8           → ~870 MB
-# PDF_VISION_MODEL=0               → ~620 MB (download on first request)
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 ARG TARGETARCH
 
 # poppler-utils → pdftoppm for PDF page rasterisation.
 # tesseract-ocr + lang packs → OCR fallback for scanned PDFs.
-# ca-certificates → first-run model download HTTPS when
-# PDF_VISION_MODEL build arg is 0 and the model is fetched at
-# request time.
+# ca-certificates → HTTPS for any runtime model fetches (no first-run
+# downloads in the default image but kept so callers can override
+# ANONDE_SIGNATURE_MODEL_PATH to a custom HF Hub mirror without 503s).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -195,14 +191,17 @@ ARG SIGNATURE_QUANT=fp32
 # PDF endpoint:
 #   ANONDE_PDF_ENABLED=1         → mount POST /v1/anonymizations/pdf
 #                                  + GET /v1/anonymizations/{id}/reveal-pdf
-#   ANONDE_PDF_VISION_MODEL=1    → load the YOLOS signature detector
+#                                  AND eagerly load the YOLOS signature
+#                                  detector. No per-deploy way to skip
+#                                  YOLOS — disable PDF entirely if the
+#                                  memory cost is unacceptable.
 #   ANONDE_SIGNATURE_MODEL_PATH  → override (defaults to the baked
 #                                  copy at /models/signature/yolos-…-${SIGNATURE_QUANT}.onnx)
 #   SIGNATURE_QUANT              → fp32|fp16|int8; must match the bake
 #   ANONDE_OCR_LANGS             → tesseract language string
 #
-# To run text-PII-only (smaller RAM, no vision):
-#   docker run -e ANONDE_PDF_VISION_MODEL=0 -p 8080:8080 anonde-ner
+# To run text-PII-only (smaller RAM, no PDF surface, no YOLOS):
+#   docker run -e ANONDE_PDF_ENABLED=0 -p 8080:8080 anonde-ner
 ENV ANALYZER_BACKEND=gliner \
     GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
@@ -210,7 +209,6 @@ ENV ANALYZER_BACKEND=gliner \
     GLINER_THRESHOLD=0.40 \
     ORT_SO_PATH=/lib/libonnxruntime.so.1 \
     ANONDE_PDF_ENABLED=1 \
-    ANONDE_PDF_VISION_MODEL=1 \
     SIGNATURE_QUANT=${SIGNATURE_QUANT} \
     ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx \
     SIGNATURE_THRESHOLD=0.20 \
