@@ -9,10 +9,17 @@
 # The NER profiles additionally expose Prometheus on the host port set by
 # METRICS_PORT (default 9090) — scrape http://localhost:9090/metrics.
 #
-# No volumes: GLiNER + YOLOS models are baked into the NER image variants
-# (the patterns image has no models). In-memory vault + store reset on
-# restart by design; persist by mounting a bbolt path via ANONDE_BBOLT_PATH
-# at the cmd-line, not via this compose (see docs/DEPLOYMENT.md).
+# Persistence
+# -----------
+# Each service mounts a named volume at /var/lib/anonde, the single anchor
+# every shipped image points at via ENV ANONDE_DATA_DIR. The volume holds:
+#   - telemetry install_id (stable across restarts; otherwise the dashboard
+#     sees each restart as a brand-new install)
+#   - the bbolt vault DB when STORE_BACKEND=bbolt (otherwise the in-memory
+#     vault resets on restart by design — no data lives in the volume).
+# Switch backends with `-e STORE_BACKEND=bbolt -e ANONDE_VAULT_KEY=...`.
+# GLiNER + YOLOS model weights are baked into the NER image variants; they
+# are NOT in this volume.
 
 name: anonde
 
@@ -27,6 +34,8 @@ services:
       - "${ANONDE_PORT:-8081}:8080"
     environment:
       ANALYZER_BACKEND: patterns
+    volumes:
+      - anonde-data-patterns:/var/lib/anonde
     restart: unless-stopped
 
   anonde-ner:
@@ -42,6 +51,8 @@ services:
       ANALYZER_BACKEND: gliner
       ANONDE_PDF_ENABLED: "1"
       METRICS_BIND: "0.0.0.0:9090"
+    volumes:
+      - anonde-data-ner:/var/lib/anonde
     restart: unless-stopped
 
   anonde-ner-stack:
@@ -57,4 +68,14 @@ services:
       ANALYZER_BACKEND: gliner-stack
       ANONDE_PDF_ENABLED: "1"
       METRICS_BIND: "0.0.0.0:9090"
+    volumes:
+      - anonde-data-ner-stack:/var/lib/anonde
     restart: unless-stopped
+
+volumes:
+  # Per-profile named volumes so switching profiles doesn't cross-pollinate
+  # state (the install_id especially — sharing it across variants would make
+  # the dashboard report a single install switching backend repeatedly).
+  anonde-data-patterns:
+  anonde-data-ner:
+  anonde-data-ner-stack:

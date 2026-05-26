@@ -167,6 +167,31 @@ func TestWrapRecorderNoCollectorDegrades(t *testing.T) {
 	}
 }
 
+func TestInstallIDAnchorBeatsXDG(t *testing.T) {
+	anchor := t.TempDir()
+	xdg := t.TempDir()
+	t.Setenv("ANONDE_DATA_DIR", anchor)
+	t.Setenv("XDG_DATA_HOME", xdg)
+	t.Setenv("HOME", t.TempDir())
+
+	id, dir, err := LoadOrCreateInstallID()
+	if err != nil {
+		t.Fatalf("LoadOrCreateInstallID: %v", err)
+	}
+	if dir != anchor {
+		t.Errorf("ANONDE_DATA_DIR did not win: dir=%q anchor=%q xdg=%q", dir, anchor, xdg)
+	}
+	if _, err := os.Stat(filepath.Join(anchor, InstallIDFile)); err != nil {
+		t.Errorf("install_id not written under anchor: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(xdg, "anonde", InstallIDFile)); err == nil {
+		t.Errorf("install_id also written under XDG path; anchor should be exclusive")
+	}
+	if id == "" {
+		t.Errorf("empty id")
+	}
+}
+
 func TestInstallIDPersistsAcrossReads(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", tmp)

@@ -20,14 +20,27 @@ const LastHeartbeatFile = "last_heartbeat"
 // dataDir resolves the directory anonde uses to persist install_id
 // + last_heartbeat. Order:
 //
-//  1. $XDG_DATA_HOME/anonde (XDG spec)
-//  2. $HOME/.local/share/anonde (XDG default)
-//  3. $HOME/.anonde (fallback for non-XDG OSes)
+//  1. $ANONDE_DATA_DIR (anonde-specific anchor; wins outright when
+//     set so containerised deployments can point a single volume at
+//     both the install_id file and the bbolt DB)
+//  2. $XDG_DATA_HOME/anonde (XDG spec)
+//  3. $HOME/.local/share/anonde (XDG default)
+//  4. $HOME/.anonde (fallback for non-XDG OSes — see fallbackDir)
+//
+// The ANONDE_DATA_DIR branch deliberately does NOT append "/anonde"
+// — the anchor IS the anonde directory, so install_id lands at
+// $ANONDE_DATA_DIR/install_id. This matches the bbolt path
+// convention ($ANONDE_DATA_DIR/anonde.db) so an operator sees a flat
+// layout under one volume.
 //
 // Darwin doesn't honour XDG by spec but its $HOME is reliable, so the
 // $HOME/.local/share/anonde branch works fine there too — operators
-// expecting ~/Library paths can set XDG_DATA_HOME explicitly.
+// expecting ~/Library paths can set XDG_DATA_HOME or ANONDE_DATA_DIR
+// explicitly.
 func dataDir() (string, error) {
+	if anchor := strings.TrimSpace(os.Getenv("ANONDE_DATA_DIR")); anchor != "" {
+		return anchor, nil
+	}
 	if xdg := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); xdg != "" {
 		return filepath.Join(xdg, "anonde"), nil
 	}

@@ -13,7 +13,18 @@ COPY --from=build /out/anonde /anonde
 # want a ~250 MB model download at boot. Override with
 #   docker run -e ANALYZER_BACKEND=hugot -v <models>:/cache <image>
 # to enable in-process ONNX NER.
-ENV ANALYZER_BACKEND=patterns
+ENV ANALYZER_BACKEND=patterns \
+    ANONDE_DATA_DIR=/var/lib/anonde
+
+# Single anchor for every piece of state the container persists:
+#  - telemetry install_id  → /var/lib/anonde/install_id
+#  - bbolt vault DB        → /var/lib/anonde/anonde.db (when
+#                            STORE_BACKEND=bbolt; default is memory)
+#  - any future on-disk state should land here too.
+# Declared as VOLUME so Docker creates an anonymous volume on first
+# run; operators wanting durability across `docker rm` should mount
+# a named volume to the same path (-v anonde-data:/var/lib/anonde).
+VOLUME /var/lib/anonde
 
 # OCI image annotations — see Dockerfile.anonde-ner for the rationale.
 ARG IMAGE_REVISION=

@@ -128,6 +128,21 @@ curl -sS -X POST http://localhost:8081/v1/anonymizations \
 # → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
 ```
 
+### Persistence
+
+All three images set `ANONDE_DATA_DIR=/var/lib/anonde` and declare it
+as a Docker `VOLUME`. Two files live there: the telemetry install ID,
+and the bbolt vault DB when you opt into `STORE_BACKEND=bbolt`. Mount
+a named volume for durability across `docker rm`:
+
+```bash
+docker run -v anonde-data:/var/lib/anonde -p 8081:8080 anonde:patterns
+```
+
+`docker-compose.yml` already wires a per-profile named volume. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#persistent-data-directory)
+for the full env-var precedence and library-mode behavior.
+
 ## HTTP API
 
 The same server speaks three transports on one port:

@@ -877,12 +877,19 @@ func glinerOnnxFileFromEnv(modelName string) string {
 // STORE_BACKEND. Default is "memory" so existing dev / library users
 // see no behaviour change.
 //
-// "bbolt" defaults the on-disk file to ANONDE_BBOLT_PATH (override:
-// any writable path; the default "anonde.db" lands in the process
-// CWD). At-rest encryption is opt-in: set ANONDE_VAULT_KEY to a
-// base64 32-byte key to enable AES-256-GCM, otherwise vault values
-// are stored as plaintext JSON. We log loudly when encryption is off
-// so an operator can't miss that the file holds raw PII.
+// "bbolt" path resolution, in precedence order:
+//
+//  1. ANONDE_DATA_DIR/anonde.db — the anchor; same env var the
+//     telemetry install_id resolver honours, so a single mounted
+//     volume holds both files with a flat layout. This is what the
+//     shipped Docker images use.
+//  2. "anonde.db" in the process CWD — the bare-binary / library
+//     fallback when no anchor is set.
+//
+// At-rest encryption is opt-in: set ANONDE_VAULT_KEY to a base64
+// 32-byte key to enable AES-256-GCM, otherwise vault values are
+// stored as plaintext JSON. We log loudly when encryption is off so
+// an operator can't miss that the file holds raw PII.
 //
 // Returns the impls plus a `close` that the caller defers; this owns
 // the bbolt *DB lifecycle when it's in play. The two adapters share
@@ -896,7 +903,7 @@ func selectStoreBackend(vaultTTL, storeTTL time.Duration) (core.Vault, core.Stor
 			"memory",
 			func() {}
 	case "bbolt":
-		path := strings.TrimSpace(getenvDefault("ANONDE_BBOLT_PATH", "anonde.db"))
+		path := resolveBoltPath()
 		var key []byte
 		if strings.TrimSpace(os.Getenv("ANONDE_VAULT_KEY")) != "" {
 			var err error
@@ -942,6 +949,21 @@ func selectStoreBackend(vaultTTL, storeTTL time.Duration) (core.Vault, core.Stor
 		log.Fatalf("unsupported STORE_BACKEND=%q (valid: memory, bbolt)", backend)
 		return nil, nil, "", func() {}
 	}
+}
+
+// resolveBoltPath implements the bbolt path precedence documented on
+// selectStoreBackend: ANONDE_DATA_DIR/anonde.db when the anchor is
+// set, falling back to "anonde.db" in the process CWD.
+//
+// The anchor matches the telemetry install_id layout so one mounted
+// volume (typically /var/lib/anonde in the shipped images) holds
+// both files with no subdirectory nesting and only one env var for
+// operators to remember.
+func resolveBoltPath() string {
+	if anchor := strings.TrimSpace(os.Getenv("ANONDE_DATA_DIR")); anchor != "" {
+		return anchor + string(os.PathSeparator) + "anonde.db"
+	}
+	return "anonde.db"
 }
 
 func durationFromEnv(key string, fallback time.Duration) time.Duration {

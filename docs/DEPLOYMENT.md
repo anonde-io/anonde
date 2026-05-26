@@ -110,6 +110,34 @@ Applies to every GLiNER recognizer (single + pooled). Defaults match onnxruntime
 | `MEMORY_STORE_TTL` | `5m` | anonymized-document retention |
 | `MAX_CONTENT_BYTES` | 10 MiB | request body cap |
 
+### Persistent data directory
+
+All three shipped images set `ANONDE_DATA_DIR=/var/lib/anonde` and
+declare it as a Docker `VOLUME`. Everything anonde persists on disk
+lives under that one path:
+
+| File | Purpose |
+|---|---|
+| `/var/lib/anonde/install_id` | telemetry install ID; stable across restarts |
+| `/var/lib/anonde/anonde.db` | bbolt vault DB (only when `STORE_BACKEND=bbolt`) |
+
+For durability across `docker rm`, mount a named volume to the same
+path: `-v anonde-data:/var/lib/anonde`. The `docker-compose.yml`
+already does this per profile. Without a named volume Docker creates
+an anonymous volume that survives `stop`/`start` but not `rm`.
+
+Override knobs:
+
+| Var | Effect |
+|---|---|
+| `ANONDE_DATA_DIR` | the anchor; both the install_id and the bbolt DB live under it |
+| `XDG_DATA_HOME` | telemetry-only fallback; when set without `ANONDE_DATA_DIR`, install_id lands at `$XDG_DATA_HOME/anonde/install_id` |
+
+Library users and bare-binary deployments see no behaviour change —
+without the anchor, install_id falls back to
+`$XDG_DATA_HOME/anonde/install_id` (or `~/.local/share/anonde/install_id`)
+and bbolt to CWD-relative `anonde.db`, as before.
+
 ## PDF + OCR
 
 There are two PDF surfaces, both backed by the same

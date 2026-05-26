@@ -212,7 +212,19 @@ ENV ANALYZER_BACKEND=gliner \
     SIGNATURE_QUANT=${SIGNATURE_QUANT} \
     ANONDE_SIGNATURE_MODEL_PATH=/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx \
     SIGNATURE_THRESHOLD=0.20 \
-    ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
+    ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron \
+    ANONDE_DATA_DIR=/var/lib/anonde
+
+# Single anchor for every piece of state the container persists:
+#  - telemetry install_id  → /var/lib/anonde/install_id
+#  - bbolt vault DB        → /var/lib/anonde/anonde.db (when
+#                            STORE_BACKEND=bbolt; default is memory)
+# Declared as VOLUME so Docker creates an anonymous volume on first
+# run; operators wanting durability across `docker rm` should mount
+# a named volume to the same path (-v anonde-data:/var/lib/anonde).
+# /models stays a baked-in read-only directory (GLiNER + YOLOS weights)
+# and is intentionally NOT a volume.
+VOLUME /var/lib/anonde
 
 # OCI image annotations — populated at build time by GitHub Actions
 # (or any caller that passes the args). Defaults are sensible enough
