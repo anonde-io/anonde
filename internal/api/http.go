@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -357,9 +358,14 @@ func auditMiddleware(next http.Handler) http.Handler {
 
 		// Heartbeat goroutine. Does not touch rec.status / rec.bytesOut to
 		// stay race-free with the handler goroutine — heartbeats only
-		// report elapsed time + immutable request metadata.
+		// report elapsed time + immutable request metadata. We wait for
+		// the goroutine to exit (hbWg.Wait) before returning so no
+		// goroutine outlives the request; otherwise a delayed heartbeat
+		// could fire AFTER request_end, and any read of the heartbeat
+		// tuning vars would race against test cleanup.
 		done := make(chan struct{})
-		go func() {
+		var hbWg sync.WaitGroup
+		hbWg.Go(func() {
 			timer := time.NewTimer(auditHeartbeatThreshold)
 			defer timer.Stop()
 			for {
@@ -376,10 +382,11 @@ func auditMiddleware(next http.Handler) http.Handler {
 					timer.Reset(auditHeartbeatInterval)
 				}
 			}
-		}()
+		})
 
 		next.ServeHTTP(rec, r)
 		close(done)
+		hbWg.Wait()
 
 		auditLogger.LogAttrs(ctx, slog.LevelInfo, "request_end",
 			slog.String("request_id", id),
