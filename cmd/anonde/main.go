@@ -24,6 +24,7 @@ import (
 	"github.com/anonde-io/anonde/internal/metrics"
 	"github.com/anonde-io/anonde/internal/policy"
 	"github.com/anonde-io/anonde/internal/store"
+	"github.com/anonde-io/anonde/internal/telemetry"
 )
 
 func main() {
@@ -72,6 +73,17 @@ func main() {
 		recorder = metrics.New(metricsReg)
 	} else {
 		recorder = metrics.NewNoop()
+	}
+	// Telemetry wiring. Default-on, opt-out via ANONDE_TELEMETRY=off
+	// or hard-off via ANONDE_OFFLINE=1. When enabled, the collector
+	// is wrapped around the metrics Recorder so a single observation
+	// in the Service path feeds both /metrics and the heartbeat
+	// payload, with no duplication of measurement code. The static
+	// half of the payload (install id, version, backend, build tag)
+	// is resolved here so the Service layer never sees telemetry.
+	telemetryCfg, telemetryCollector := buildTelemetryConfig(backendName)
+	if telemetryCollector != nil {
+		recorder = telemetry.WrapRecorder(recorder, telemetryCollector)
 	}
 	analyzerEngine.SetMetrics(recorder)
 
@@ -195,11 +207,78 @@ func main() {
 		startMetricsListener(metricsBind, metricsReg)
 	}
 
+	// Start the telemetry sender after the HTTP listener is built but
+	// before it blocks on ListenAndServe. The returned stop func is
+	// kept for a future graceful-shutdown handler; today it just
+	// runs on the fatal-error return path, which is correct enough
+	// — the kernel kills the goroutine on a hard exit and the next
+	// boot's last_heartbeat check makes that safe.
+	stopTelemetry := telemetry.Start(context.Background(), telemetryCfg)
+	defer stopTelemetry()
+
 	log.Printf("anonde server listening on %s (max_request_bytes=%d backend=%s model=%s store=%s)",
 		addr, maxBytes, backendName, modelName, storeName)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+// buildTelemetryConfig resolves the telemetry env-var surface and
+// returns the Config + Collector pair main needs. Returns a nil
+// collector and a disabled config when telemetry is off
+// (ANONDE_TELEMETRY=off or ANONDE_OFFLINE=1) so callers can do a
+// single `if collector != nil` check.
+//
+// Env precedence: ANONDE_OFFLINE=1 wins outright (the umbrella
+// "no outbound calls" knob; covers telemetry and any future remote
+// model fetches). Otherwise ANONDE_TELEMETRY=off / 0 / false / no
+// disables; anything else keeps the default-on behaviour the launch
+// plan calls for.
+//
+// The startup log line is emitted here so it lands near the
+// "anonde server listening" line, where operators look first.
+func buildTelemetryConfig(backendName string) (telemetry.Config, *telemetry.Collector) {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("ANONDE_OFFLINE")), "1") {
+		log.Printf("telemetry disabled (ANONDE_OFFLINE=1; all outbound calls suppressed)")
+		return telemetry.Config{Enabled: false}, nil
+	}
+	if !boolFromEnv("ANONDE_TELEMETRY", true) {
+		log.Printf("telemetry disabled (ANONDE_TELEMETRY=off)")
+		return telemetry.Config{Enabled: false}, nil
+	}
+
+	id, dir, err := telemetry.LoadOrCreateInstallID()
+	if err != nil {
+		log.Printf("telemetry: install id unavailable (%v); disabling sender", err)
+		return telemetry.Config{Enabled: false}, nil
+	}
+	if dir == "" {
+		log.Printf("telemetry: install id is ephemeral; data dir not writable, heartbeat will run without cross-restart correlation")
+	}
+
+	endpoint := strings.TrimSpace(os.Getenv("ANONDE_TELEMETRY_URL"))
+	if endpoint == "" {
+		endpoint = telemetry.DefaultEndpoint
+	}
+
+	collector := telemetry.NewCollector()
+	cfg := telemetry.Config{
+		Enabled:   true,
+		Endpoint:  endpoint,
+		Collector: collector,
+		DataDir:   dir,
+		Static: telemetry.StaticInfo{
+			InstallID: id,
+			Version:   buildSHA(),
+			BuildTag:  buildTagsLabel(),
+			Backend:   backendName,
+		},
+	}
+	// The disclosure line is verbatim from the launch plan; do not
+	// soften it. Operators who care about telemetry read for the
+	// opt-out instruction here.
+	log.Printf("telemetry enabled (anonymous, 24h heartbeat). set ANONDE_TELEMETRY=off to disable.")
+	return cfg, collector
 }
 
 // startMetricsListener spawns the second HTTP server in a goroutine.
