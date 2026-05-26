@@ -92,7 +92,7 @@ jobs:
   # ---- Per-cell bench. One runner per corpus, in parallel. ----------
   bench-cell:
     name: cell · ${{ matrix.corpus }}
-    runs-on: ubicloud-standard-2
+    runs-on: ubicloud-standard-4
     # 75 min (was 45): the openai-pf cell is now part of the full matrix
     # and runs ~80 s/doc on CPU. We score it on a deterministic
     # OPENAI_PF_SAMPLE-doc subsample (40 → ~53 min) rather than the whole
@@ -365,7 +365,7 @@ jobs:
     # Render even if some cells failed — render_matrix is tolerant of
     # missing per-cell JSONLs (they show as "–" in the matrix UI).
     if: always()
-    runs-on: ubicloud-standard-2
+    runs-on: ubicloud-standard-4
     timeout-minutes: 15
 
     steps:
