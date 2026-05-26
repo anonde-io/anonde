@@ -76,6 +76,10 @@ test: ## Run the whole test suite
 test-api: ## Run only the api package tests (verbose)
 	go test -v ./internal/api/...
 
+.PHONY: e2e
+e2e: ## Boot the real binary, drive every REST endpoint, assert /metrics ticked (~5s)
+	go test ./e2e/... -count=1 -v
+
 .PHONY: vet
 vet: ## go vet ./...
 	go vet ./...
