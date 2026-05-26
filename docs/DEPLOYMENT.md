@@ -8,6 +8,18 @@ anonde ships three Docker variants of the same `cmd/anonde` HTTP service. Pick p
 | `Dockerfile.anonde-ner` | Same binary + libonnxruntime + baked GLiNER BASE model | ~770 MB | production: detects PERSON/ORG/etc. via GLiNER. Bench Σ ALL ≈ 12.9% leak rate across 30 corpora. |
 | `Dockerfile.anonde-ner-stack` | Same as `-ner` plus the LARGE GLiNER variant baked in too | ~2.1 GB | lowest-leak tier: registers BOTH base (span decoder) and LARGE (flat decoder) recognizers in one analyzer engine. Bench Σ ALL ≈ 8.4%. ~2× per-request inference latency vs `-ner` (both models run concurrently per request); peak RAM ~2.8 GB at single-instance, more with pooling. |
 
+## Running a variant
+
+Three peer entry points; all build the same image you'd ship.
+
+| Workflow | Patterns | NER | NER stack |
+|---|---|---|---|
+| Make | `make docker-run` | `make docker-run-ner` | (build only: `make docker-build-ner-stack`) |
+| Compose | `docker compose --profile patterns up` | `docker compose --profile ner up` | `docker compose --profile ner-stack up` |
+| Raw docker | `docker build -f Dockerfile.anonde -t anonde:patterns . && docker run --rm -p 8081:8080 anonde:patterns` | see [`Dockerfile.anonde-ner`](../Dockerfile.anonde-ner) header | see [`Dockerfile.anonde-ner-stack`](../Dockerfile.anonde-ner-stack) header |
+
+Compose profiles are mutually exclusive: only one runs per `docker compose up`. All publish the API on `${ANONDE_PORT:-8081}`; the NER profiles additionally expose Prometheus on `${METRICS_PORT:-9090}`. No volumes — models are baked into the NER images; persist the vault with a bbolt path (see "Vault + request limits" below) if you need state across restarts.
+
 ## NER image internals
 
 - Uses `gcr.io/distroless/cc-debian12` (needs glibc for libonnxruntime).
@@ -46,7 +58,7 @@ GLINER_THRESHOLD=0.40
 ORT_SO_PATH=/lib/libonnxruntime.so.1    # arch-neutral path; image is multi-arch
 ```
 
-Memory-constrained deployments can opt back into INT8 by rebuilding with `GLINER_ONNX_FILE=onnx/model_quint8.onnx` (saves ~240 MB image size at the cost of ~6pp Σ ALL leak rate on multilingual legal / clinical text — measured in the bench matrix).
+Memory-constrained deployments can opt back into INT8 by rebuilding with `GLINER_ONNX_FILE=onnx/model_quint8.onnx` (saves ~240 MB image size at the cost of ~6pp Σ ALL leak rate on multilingual legal / clinical text, measured in the bench matrix).
 
 ### Stack variant (defaults wired in `Dockerfile.anonde-ner-stack`)
 
@@ -87,7 +99,7 @@ Applies to every GLiNER recognizer (single + pooled). Defaults match onnxruntime
 | Var | Default | What |
 |---|---|---|
 | `ANONDE_ORT_INTRA_OP_THREADS` | ORT default (≈ num cores) | Threads used inside one ONNX op (matmul / attention). Set lower if you want to leave cores for HTTP serving; set explicitly to mismatch host vCPU detection. |
-| `ANONDE_ORT_INTER_OP_THREADS` | ORT default (1) | Threads used to run independent ops in parallel. Rarely worth tweaking for GLiNER — its compute graph is mostly sequential. |
+| `ANONDE_ORT_INTER_OP_THREADS` | ORT default (1) | Threads used to run independent ops in parallel. Rarely worth tweaking for GLiNER; its compute graph is mostly sequential. |
 | `ANONDE_ORT_GRAPH_OPT_LEVEL` | ORT default (`basic`) | One of `disabled`, `basic`, `extended`, `all`. Higher levels can shave 5–15% per inference at the cost of longer first-call init. Try `extended` first; `all` may break on specific ONNX exports. |
 
 ### Vault + request limits (both variants)
@@ -103,11 +115,11 @@ Applies to every GLiNER recognizer (single + pooled). Defaults match onnxruntime
 There are two PDF surfaces, both backed by the same
 `internal/content` primitives:
 
-1. **`content_format: "pdf"` on `POST /v1/anonymizations`** — base64
+1. **`content_format: "pdf"` on `POST /v1/anonymizations`:** base64
    PDF in, tokenised text + vault out. Reversible via the standard
    `/reveal` endpoint. Always available; doesn't need
    `ANONDE_PDF_ENABLED`.
-2. **`POST /v1/anonymizations/pdf`** — raw PDF body in, redacted PDF
+2. **`POST /v1/anonymizations/pdf`:** raw PDF body in, redacted PDF
    body out, with the original retained for
    `GET /v1/anonymizations/{id}/reveal-pdf`. Opt-in via
    `ANONDE_PDF_ENABLED=1` because it shells out to `pdftoppm` +
@@ -116,7 +128,7 @@ There are two PDF surfaces, both backed by the same
 
 Both extract the PDF text layer via `ledongthuc/pdf` first. When the
 layer is empty or shorter than `ANONDE_OCR_TEXT_FLOOR` bytes (default
-64) — i.e. an image-only scan with no text layer — anonde transparently
+64), i.e. an image-only scan with no text layer, anonde transparently
 rasterises each page with `pdftoppm` and OCRs it with `tesseract`,
 then feeds the joined text into the normal analyzer pipeline. Pure
 shell-out: no CGO, no Go dependencies.
@@ -141,17 +153,17 @@ the language packs you need; nothing else changes in the server.
   (the same convention as `DELETE /v1/anonymizations/{id}?tenantId=…`).
 - Response: `application/pdf` body (the redacted PDF) plus these response
   headers:
-  - `X-Anonde-Id` — the minted anonymization id (`anon_<hex>`), needed
+  - `X-Anonde-Id`: the minted anonymization id (`anon_<hex>`), needed
     for `/reveal-pdf` and `DELETE /v1/anonymizations/{id}`.
-  - `X-Anonde-Tenant` — echo of the resolved tenant.
-  - `X-Anonde-Entities` — total redacted span count.
-  - `X-Anonde-Entity-Types` — number of distinct entity types found.
-  - `X-Anonde-Entity-Count` — repeated header, one `TYPE=N` per
+  - `X-Anonde-Tenant`: echo of the resolved tenant.
+  - `X-Anonde-Entities`: total redacted span count.
+  - `X-Anonde-Entity-Types`: number of distinct entity types found.
+  - `X-Anonde-Entity-Count`: repeated header, one `TYPE=N` per
     detected entity type (e.g. `PERSON=4`, `EMAIL_ADDRESS=2`).
 
 `GET /v1/anonymizations/{id}/reveal-pdf` takes the same tenant
 header / query and returns the original PDF bytes. Subject to the same
-`MEMORY_STORE_TTL` as text anonymizations — 404 once expired or
+`MEMORY_STORE_TTL` as text anonymizations: 404 once expired or
 deleted.
 
 ### Env vars
@@ -160,10 +172,10 @@ deleted.
 |---|---|---|
 | `ANONDE_PDF_ENABLED` | unset | Set to `1` to mount the PDF endpoint pair AND eagerly load the YOLOS signature detector (~500 MB resident). When unset the routes return `501` with a hint pointing at this var. The signature model is always loaded when PDF is enabled; there is no per-deploy way to skip it. |
 | `ANONDE_SIGNATURE_MODEL_PATH` | _(baked path in NER image)_ | Override path to the signature ONNX. The `anonde-ner` image bakes one at `/models/signature/yolos-base-signature-${SIGNATURE_QUANT}.onnx`. |
-| `SIGNATURE_QUANT` | `fp32` | Build arg for `Dockerfile.anonde-ner` selecting the signature ONNX precision baked into the image. `fp32` (~1.13 GB image, recommended), `fp16` (~960 MB), `int8` (~870 MB; measurably worse signature recall — more missed signatures). |
+| `SIGNATURE_QUANT` | `fp32` | Build arg for `Dockerfile.anonde-ner` selecting the signature ONNX precision baked into the image. `fp32` (~1.13 GB image, recommended), `fp16` (~960 MB), `int8` (~870 MB; measurably worse signature recall, more missed signatures). |
 | `SIGNATURE_THRESHOLD` | `0.20` | YOLOS confidence floor. Lower = more aggressive coverage (catches faint logos / stamps the default would miss), higher = fewer false positives. `0.18` is the lowest safe value before the model starts firing on dense text blocks. The default was lowered from the model-published `0.25` to `0.20` after a live test against scanned poprire / real-estate / insurance forms surfaced missed heraldic logos. |
 | `ANONDE_OCR_ENABLED` | _(unset → on if both binaries present)_ | Set to `false` / `0` / `off` to disable the OCR fallback even when the binaries are installed. |
-| `ANONDE_OCR_LANGS` | `eng+deu+fra+spa+ita+ron` | Tesseract language string. Restrict to known-corpus languages (e.g. `eng` alone) for faster OCR — each loaded model costs ~30–50 MB RAM. |
+| `ANONDE_OCR_LANGS` | `eng+deu+fra+spa+ita+ron` | Tesseract language string. Restrict to known-corpus languages (e.g. `eng` alone) for faster OCR; each loaded model costs ~30–50 MB RAM. |
 | `ANONDE_OCR_DPI` | `300` | Rasterisation DPI passed to `pdftoppm -r`. Drop to `200` for faster OCR on clean scans; raise to `400+` for low-quality photographs of documents. |
 | `ANONDE_OCR_TEXT_FLOOR` | `64` | Byte threshold below which the text-layer extraction is treated as empty and OCR fires. Small floor catches PDFs whose text layer holds only stray whitespace / single-line metadata. |
 
@@ -180,7 +192,7 @@ the `X-Anonde-Tenant` header or `?tenant=<id>`.
 
 | Query param | Default | What |
 |---|---|---|
-| `mode` | `visual` | `visual` draws black boxes over each PII span on the original page rasters (Private AI / Limina shape). `text` emits a re-rendered text PDF with `#` substitutions. |
+| `mode` | `visual` | `visual` draws black boxes over each PII span on the original page rasters. `text` emits a re-rendered text PDF with `#` substitutions. |
 | `operator` | `mask` | In `text` mode, the anonymizer operator: `mask` (`#`s) or `redact` (`<REDACTED>`). |
 | `mask_char` | `#` | Character used by the `mask` operator. |
 | `ocr_langs` | _(empty → server `ANONDE_OCR_LANGS`)_ | Tesseract languages, plus-separated. URL-encode as `eng%2Bdeu`. |
@@ -191,7 +203,7 @@ the `X-Anonde-Tenant` header or `?tenant=<id>`.
 | `box_padding` | `2` | Pixels of padding around each PII box in visual mode (covers OCR baseline jitter). |
 | `disable_visual_heuristic` | `false` | Visual mode: turn off the ink-density heuristic. Inverted polarity so the zero value keeps the heuristic on. |
 
-The YOLOS signature detector is not a per-request toggle — it's loaded
+The YOLOS signature detector is not a per-request toggle; it's loaded
 at boot whenever `ANONDE_PDF_ENABLED=1`. To run without it, leave PDF
 disabled entirely.
 
@@ -202,7 +214,7 @@ disabled entirely.
 1. Builds the default (no-CGO) target.
 2. Builds the `-tags hugot` target with CGO.
 3. Runs the Go unit-test suite.
-4. Runs `make corpus-openmed && make corpus-synth_clinical` — patterns + GLiNER + GLiNER-py sidecar across two German corpora.
+4. Runs `make corpus-openmed && make corpus-synth_clinical`: patterns + GLiNER + GLiNER-py sidecar across two German corpora.
 5. Renders `bench/REPORT_MATRIX.md` and uploads it (+ `results_matrix.csv` + per-cell findings JSONLs) as workflow artifacts.
 6. **Guard rail**: fails the job if either GLiNER cell produced 0 NER-attributable findings (caught a real silent-fallback bug the first time it landed).
 

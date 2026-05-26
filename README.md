@@ -28,7 +28,7 @@
 
 ## See it in 10 seconds
 
-**Your input** (text, JSON, NDJSON, logs, or PDF — scanned PDFs are OCR'd automatically):
+**Your input** (text, JSON, NDJSON, logs, or PDF; scanned PDFs are OCR'd automatically):
 
 ```text
 From: sarah.chen@acme.example
@@ -109,7 +109,15 @@ docker build -f Dockerfile.anonde -t anonde:patterns .
 docker run --rm -p 8081:8080 anonde:patterns
 ```
 
-The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default — the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars and image internals.
+The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default; the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars and image internals.
+
+Or with Docker Compose (mutually exclusive profiles, one runs at a time):
+
+```bash
+docker compose --profile patterns  up   # ~12 MB,    text/JSON only
+docker compose --profile ner       up   # ~1.13 GB,  GLiNER + PDF + metrics on :9090
+docker compose --profile ner-stack up   # ~2.65 GB,  lowest-leak GLiNER stack
+```
 
 Hit the running server:
 
@@ -130,14 +138,14 @@ The same server speaks three transports on one port:
 
 Plus two optional surfaces:
 
-- **PDF redaction (raw bytes in, raw bytes out)** — `POST /v1/anonymizations/pdf` accepts a raw `application/pdf` body and returns a redacted PDF; `GET /v1/anonymizations/{id}/reveal-pdf` returns the original. Tenant via the `X-Anonde-Tenant` header or `?tenantId=` query. Opt-in via `ANONDE_PDF_ENABLED=1`. Defined in the proto (`AnonymizePDF` / `RevealPDF` RPCs) — also callable over gRPC / Connect, with `pdf_content` and `redacted_pdf` as base64-encoded `bytes` fields. See [PDFs, including scans (OCR fallback)](#pdfs-including-scans-ocr-fallback) below.
-- **OpenAI-compatible proxy** at `POST /v1/chat/completions` — see [Use anonde as an OpenAI proxy](#use-anonde-as-an-openai-proxy) below.
+- **PDF redaction (raw bytes in, raw bytes out):** `POST /v1/anonymizations/pdf` accepts a raw `application/pdf` body and returns a redacted PDF; `GET /v1/anonymizations/{id}/reveal-pdf` returns the original. Tenant via the `X-Anonde-Tenant` header or `?tenantId=` query. Opt-in via `ANONDE_PDF_ENABLED=1`. Defined in the proto (`AnonymizePDF` / `RevealPDF` RPCs); also callable over gRPC / Connect, with `pdf_content` and `redacted_pdf` as base64-encoded `bytes` fields. See [PDFs, including scans (OCR fallback)](#pdfs-including-scans-ocr-fallback) below.
+- **OpenAI-compatible proxy** at `POST /v1/chat/completions`. See [Use anonde as an OpenAI proxy](#use-anonde-as-an-openai-proxy) below.
 
 Source of truth: [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ## PDFs, including scans (OCR fallback)
 
-anonde has two PDF surfaces — pick by use case:
+anonde has two PDF surfaces; pick by use case:
 
 1. **Text PDFs through the normal anonymize endpoint.** Send a
    base64-encoded PDF with `content_format: "pdf"` to
@@ -145,9 +153,8 @@ anonde has two PDF surfaces — pick by use case:
    `ledongthuc/pdf`, fed into the same analyzer pipeline as text input,
    and you get the standard tokenised text + vault back. Reversible
    via `/v1/anonymizations/{id}/reveal`.
-2. **PDF in → redacted PDF out via `POST /v1/anonymizations/pdf`.**
-   Send the raw PDF body (Private AI / Limina shape, so you can swap
-   their base URL for anonde's). Server returns a redacted PDF with
+2. **Raw PDF in, redacted PDF out via `POST /v1/anonymizations/pdf`.**
+   Send the raw PDF body. The server returns a redacted PDF with
    black boxes drawn over each PII span on the original page rasters.
    Reversible via `GET /v1/anonymizations/{id}/reveal-pdf`, which
    returns the original PDF bytes. Opt-in: start the server with
@@ -155,8 +162,8 @@ anonde has two PDF surfaces — pick by use case:
    `-tags hugot` build with `pdftoppm` + `tesseract` on `PATH`).
 
 When the PDF text layer is empty or shorter than
-`ANONDE_OCR_TEXT_FLOOR` bytes (default 64) — i.e. an image-only scan
-from an MFP or a photo-to-PDF — both surfaces transparently
+`ANONDE_OCR_TEXT_FLOOR` bytes (default 64), i.e. an image-only scan
+or a photo-to-PDF, both surfaces transparently
 rasterise each page with `pdftoppm` and OCR it with `tesseract`
 before running the analyzer. No code change on the caller side.
 
@@ -186,7 +193,7 @@ curl -sS -H "X-Anonde-Tenant: demo" \
 The `anonde-ner` and `anonde-ner-stack` images bundle `poppler-utils`
 + `tesseract-ocr` with `eng+deu+fra+spa+ita+ron` language packs, so
 OCR is on by default there. The patterns-only image (`anonde`) does
-not bundle them — `ExtractAnalyzable` silently skips the OCR fallback
+not bundle them; `ExtractAnalyzable` silently skips the OCR fallback
 when the binaries aren't on `PATH`, so the patterns-only image stays
 ~12 MB.
 
@@ -240,8 +247,8 @@ field table.
 The lowest-friction integration: point your existing OpenAI SDK at
 anonde instead of `api.openai.com`. anonde anonymizes the prompt,
 forwards it to the real provider, de-anonymizes the response, and hands
-it back in OpenAI shape. No plugin, no code change beyond the base URL —
-works with the raw OpenAI SDK, LangChain, or anything that speaks the
+it back in OpenAI shape. No plugin, no code change beyond the base URL.
+Works with the raw OpenAI SDK, LangChain, or anything that speaks the
 OpenAI API.
 
 Start the server with the upstream configured:
@@ -260,7 +267,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8081/v1", api_key="unused")
 
 resp = client.chat.completions.create(
-    model="openai/gpt-4o",   # provider/model — "openai/" is optional
+    model="openai/gpt-4o",   # provider/model; "openai/" is optional
     messages=[{"role": "user",
                "content": "Email a summary to sarah.chen@acme.example"}],
 )
@@ -270,7 +277,7 @@ resp = client.chat.completions.create(
 
 The endpoint is a single OpenAI-shaped `POST /v1/chat/completions`, so
 the client base URL is byte-identical to a real OpenAI swap. The
-upstream provider is selected in-band — the OpenRouter convention — by a
+upstream provider is selected in-band (the OpenRouter convention) by a
 `provider/model` prefix on the `model` field: `openai/gpt-4o` routes to
 OpenAI and forwards the bare `gpt-4o` upstream. A model with no prefix
 defaults to OpenAI. v0.1 proxies OpenAI only; an `anthropic/…` model is
@@ -284,8 +291,8 @@ rejected with a clear error until Anthropic routing lands in v0.2.
 | `ANONDE_PROXY_TIMEOUT` | `120s` | Upstream request timeout (shared across all proxied providers). |
 
 **Known limitation (v0.1):** non-streaming only. A `stream: true` request
-is rejected with a clear error rather than silently downgraded —
-streaming SSE de-anonymization lands in v0.1.1. Anthropic and Gemini
+is rejected with a clear error rather than silently downgraded.
+Streaming SSE de-anonymization lands in v0.1.1. Anthropic and Gemini
 upstreams (selected by the `anthropic/` / `gemini/` model prefix) are on
 the roadmap.
 
@@ -357,7 +364,7 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 ## Docs
 
 - [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
-- [API reference (Swagger)](docs/api/): browsable spec auto-generated from [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto) — open `docs/api/index.html` after `make proto`. Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json).
+- [API reference (Swagger)](docs/api/): browsable spec auto-generated from [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto); open `docs/api/index.html` after `make proto`. Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json).
 - [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, per-request PDF knobs, Prometheus metrics
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
@@ -367,14 +374,14 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 
 ## Contributing & community
 
-- **Issues** — bug reports, feature requests, and questions all welcome.
+- **Issues:** bug reports, feature requests, and questions all welcome.
   The repo has [issue templates](.github/ISSUE_TEMPLATE/) for each.
-- **Pull requests** — start with [CONTRIBUTING.md](CONTRIBUTING.md) for
+- **Pull requests:** start with [CONTRIBUTING.md](CONTRIBUTING.md) for
   dev setup, recognizer-adding patterns, and bench expectations. No DCO
-  or CLA — Apache 2.0 §5 grants the inbound license automatically.
-- **Code of conduct** — [Contributor Covenant 2.1](CODE_OF_CONDUCT.md).
+  or CLA; Apache 2.0 §5 grants the inbound license automatically.
+- **Code of conduct:** [Contributor Covenant 2.1](CODE_OF_CONDUCT.md).
   Conduct concerns go to `conduct@anonde.io`.
-- **Security** — vulnerabilities go through the private channels in
+- **Security:** vulnerabilities go through the private channels in
   [SECURITY.md](SECURITY.md), not public issues.
 
 ## License

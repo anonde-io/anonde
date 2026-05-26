@@ -1,66 +1,60 @@
-name: anonde-local
+# anonde local stack — pick a profile that matches the image variant you want.
+#
+#   docker compose --profile patterns  up    # ~12 MB,    patterns only, text/JSON only
+#   docker compose --profile ner       up    # ~1.13 GB,  GLiNER base + PDF + metrics
+#   docker compose --profile ner-stack up    # ~2.65 GB,  GLiNER base+LARGE + PDF + metrics
+#
+# Profiles are mutually exclusive: only one runs per `docker compose up`.
+# All three publish the API on the host port set by ANONDE_PORT (default 8081).
+# The NER profiles additionally expose Prometheus on the host port set by
+# METRICS_PORT (default 9090) — scrape http://localhost:9090/metrics.
+#
+# No volumes: GLiNER + YOLOS models are baked into the NER image variants
+# (the patterns image has no models). In-memory vault + store reset on
+# restart by design; persist by mounting a bbolt path via ANONDE_BBOLT_PATH
+# at the cmd-line, not via this compose (see docs/DEPLOYMENT.md).
+
+name: anonde
 
 services:
-  anonde:
+  anonde-patterns:
+    profiles: ["patterns"]
     build:
       context: .
       dockerfile: Dockerfile.anonde
-    image: anonde:local
+    image: anonde:patterns
     ports:
-      - "${ANONDE_PORT:-8082}:8080"
+      - "${ANONDE_PORT:-8081}:8080"
     environment:
-      ANONDE_ADDR: ":8080"
-      ANALYZER_BACKEND: "${ANALYZER_BACKEND:-hugot}"
-      HUGOT_MODEL: "${HUGOT_MODEL:-Isotonic/distilbert_finetuned_ai4privacy_v2}"
-      HUGOT_MODELS_DIR: "/models"
-    volumes:
-      - hugot_models:/models
-    networks:
-      - local_data_plane
+      ANALYZER_BACKEND: patterns
     restart: unless-stopped
 
-  ollama:
-    image: ollama/ollama:latest
-    profiles:
-      - ollama
+  anonde-ner:
+    profiles: ["ner"]
+    build:
+      context: .
+      dockerfile: Dockerfile.anonde-ner
+    image: anonde:ner
     ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - local_data_plane
-    restart: unless-stopped
-
-  # Optional production-oriented primitives for moving beyond in-memory stubs.
-  vault-db:
-    image: postgres:16-alpine
+      - "${ANONDE_PORT:-8081}:8080"
+      - "${METRICS_PORT:-9090}:9090"
     environment:
-      POSTGRES_DB: vault
-      POSTGRES_USER: vault
-      POSTGRES_PASSWORD: vault_local_only
-    volumes:
-      - vault_db_data:/var/lib/postgresql/data
-    networks:
-      - local_data_plane
+      ANALYZER_BACKEND: gliner
+      ANONDE_PDF_ENABLED: "1"
+      METRICS_BIND: "0.0.0.0:9090"
     restart: unless-stopped
 
-  policy:
-    image: openpolicyagent/opa:latest-static
-    command:
-      - "run"
-      - "--server"
-      - "--addr=0.0.0.0:8181"
+  anonde-ner-stack:
+    profiles: ["ner-stack"]
+    build:
+      context: .
+      dockerfile: Dockerfile.anonde-ner-stack
+    image: anonde:ner-stack
     ports:
-      - "8181:8181"
-    networks:
-      - local_data_plane
+      - "${ANONDE_PORT:-8081}:8080"
+      - "${METRICS_PORT:-9090}:9090"
+    environment:
+      ANALYZER_BACKEND: gliner-stack
+      ANONDE_PDF_ENABLED: "1"
+      METRICS_BIND: "0.0.0.0:9090"
     restart: unless-stopped
-
-networks:
-  local_data_plane:
-    driver: bridge
-
-volumes:
-  hugot_models:
-  ollama_data:
-  vault_db_data:
