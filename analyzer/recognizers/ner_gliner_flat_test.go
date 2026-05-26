@@ -16,7 +16,7 @@ import (
 
 // TestGLiNERFlatRecognizer_Metadata verifies the recognizer name (and
 // its NERRecognizer suffix so DisableNER controls it) plus the canonical
-// entities surfaced via SupportedEntities. Pure-Go assertion — works in
+// entities surfaced via SupportedEntities. Pure-Go assertion; works in
 // every CI env regardless of cached model.
 func TestGLiNERFlatRecognizer_Metadata(t *testing.T) {
 	t.Parallel()
@@ -40,7 +40,7 @@ func TestGLiNERFlatRecognizer_Metadata(t *testing.T) {
 }
 
 // TestGLiNERFlat_MissingModelNoDownload covers the AutoDownload=false
-// path independent of any cached model — this runs in every CI env.
+// path independent of any cached model; this runs in every CI env.
 func TestGLiNERFlat_MissingModelNoDownload(t *testing.T) {
 	t.Parallel()
 	rec := recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
@@ -56,7 +56,7 @@ func TestGLiNERFlat_MissingModelNoDownload(t *testing.T) {
 
 // TestGLiNERFlat_PersonBreadthSmoke exercises the full flat-decoder
 // inference path on the canonical PersonBreadth fixture. Skips cleanly
-// when the LARGE model OR libonnxruntime isn't cached locally — does NOT
+// when the LARGE model OR libonnxruntime isn't cached locally; does NOT
 // trigger a network download in tests.
 func TestGLiNERFlat_PersonBreadthSmoke(t *testing.T) {
 	t.Parallel()
@@ -76,7 +76,7 @@ func TestGLiNERFlat_PersonBreadthSmoke(t *testing.T) {
 		t.Skipf("gliner-large model.onnx missing under %s; skipping smoke test", modelPath)
 	}
 
-	// Locate libonnxruntime — same dev fallbacks as the span recognizer
+	// Locate libonnxruntime; same dev fallbacks as the span recognizer
 	// test so the same machines green-light both.
 	libPath := os.Getenv("ORT_LIBRARY_PATH")
 	if libPath == "" {
@@ -110,7 +110,7 @@ func TestGLiNERFlat_PersonBreadthSmoke(t *testing.T) {
 	results, err := rec.Analyze(ctx, text, nil, "en")
 	if err != nil {
 		// libonnxruntime may not be installed on this host. Skip rather
-		// than fail — this smoke test is opportunistic, not gating.
+		// than fail; this smoke test is opportunistic, not gating.
 		if strings.Contains(err.Error(), "Platform-specific initialization failed") ||
 			strings.Contains(err.Error(), "shared library") {
 			t.Skipf("onnxruntime shared library not available: %v", err)
@@ -130,7 +130,7 @@ func TestGLiNERFlat_PersonBreadthSmoke(t *testing.T) {
 		if r.EntityType != "PERSON" {
 			continue
 		}
-		// Any overlap with the John Doe range counts — the wider-span
+		// Any overlap with the John Doe range counts; the wider-span
 		// tiebreak should yield full-name coverage but we tolerate
 		// partial coverage rather than fail the smoke check on a model
 		// quirk; the strict per-fixture coverage check lives in the

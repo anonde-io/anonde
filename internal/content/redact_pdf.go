@@ -26,7 +26,7 @@ import (
 	_ "image/jpeg"
 )
 
-// OCRWord captures a single recognized word — its text plus the
+// OCRWord captures a single recognized word; its text plus the
 // page-local pixel bounding box and tesseract confidence (0-100).
 type OCRWord struct {
 	Page         int
@@ -56,7 +56,7 @@ type PageRaster struct {
 }
 
 // RedactPDFOptions controls visual-redaction behavior. The zero value
-// is a sensible default — patterns-only analyzer, black-fill boxes,
+// is a sensible default; patterns-only analyzer, black-fill boxes,
 // 200 DPI rasterisation.
 type RedactPDFOptions struct {
 	// Engine performs the PII detection on the OCR'd text. Required.
@@ -64,7 +64,7 @@ type RedactPDFOptions struct {
 	// AnalysisCfg is passed through to Engine.Analyze. Language is
 	// auto-detected when empty.
 	AnalysisCfg analyzer.AnalysisConfig
-	// FillColor is the box fill — defaults to opaque black.
+	// FillColor is the box fill; defaults to opaque black.
 	FillColor color.RGBA
 	// BoxPadding adds N pixels in each direction around the bbox
 	// before filling. Helps cover OCR baseline jitter / drop-shadow
@@ -103,7 +103,7 @@ type VisualDetector interface {
 // OCR with word-level bounding boxes, run anonde's analyzer on the
 // concatenated text, then paint filled rectangles over each PII word
 // on its page raster. The output is a new PDF where every page is the
-// (now-redacted) raster of the corresponding input page — original
+// (now-redacted) raster of the corresponding input page; original
 // visual structure preserved, PII pixels obliterated.
 //
 // Returns the new PDF bytes plus the structured findings (so callers
@@ -123,12 +123,11 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 		opts.BoxPadding = 2
 	}
 	if opts.FillColor == (color.RGBA{}) {
-		// Off-white / very light grey — matches the visual style of
-		// commercial PII gateways (Private AI / Limina). Slightly
-		// darker than pure white so a reviewer can still see WHERE
-		// PII was on a scanned-paper background, without the box
-		// screaming "REDACTED" at them. RGB(230,230,230) is the
-		// neutral grey commercial redactors converge on.
+		// Off-white / very light grey: darker than pure white so a
+		// reviewer can still see WHERE PII was on a scanned-paper
+		// background, without the box screaming "REDACTED" at them.
+		// RGB(230,230,230) is the neutral grey commercial redactors
+		// converge on.
 		opts.FillColor = color.RGBA{230, 230, 230, 255}
 	}
 
@@ -195,7 +194,7 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 	debugDump := os.Getenv("ANONDE_FINDINGS_DEBUG") != ""
 	// rectsPerPage holds the redaction rectangles per page. We
 	// compute each rect from the OCR word bbox proportionally to the
-	// character-range overlap between the finding and the word —
+	// character-range overlap between the finding and the word,
 	// this matters for tokens where tesseract glued PII to non-PII
 	// (e.g. "250,00|RO57TREZ..." emitted as one word): we want to
 	// black out the IBAN slice without eating the "250,00" amount.
@@ -289,7 +288,7 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 			).Intersect(canvas.Bounds())
 			draw.Draw(canvas, padded, filler, image.Point{}, draw.Src)
 		}
-		// Visual heuristic — overlay extra boxes over ink regions the
+		// Visual heuristic; overlay extra boxes over ink regions the
 		// OCR didn't claim as confident text (signatures, stamps,
 		// logos). Runs on the ORIGINAL page raster, not the
 		// already-redacted canvas, so freshly-blacked text boxes don't

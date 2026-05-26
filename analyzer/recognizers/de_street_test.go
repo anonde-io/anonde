@@ -21,7 +21,7 @@ func TestDEStreetRecognizer(t *testing.T) {
 		{"compound Sauerbruchplatz", "Sauerbruchplatz 8 erreichbar", []string{"Sauerbruchplatz 8"}},
 		{"compound straße", "Kantstraße 21", []string{"Kantstraße 21"}},
 		// Negative: prep form ("Am Bauch", "Im Bett") deliberately not
-		// matched — too ambiguous in clinical text.
+		// matched; too ambiguous in clinical text.
 		{"prep form should not match", "Schmerzen Am Bauch und Im Bett.", nil},
 		// Negative: common clinical compound endings that used to FP.
 		{"Vorgang must not match", "Operativer Vorgang abgeschlossen.", nil},

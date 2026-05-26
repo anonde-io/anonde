@@ -177,7 +177,7 @@ func TestMapHugotLabel(t *testing.T) {
 		{"I-ORG", "ORGANIZATION", true},
 		{"B-MISC", "NRP", true},
 		{"I-MISC", "NRP", true},
-		// "O" outside tag — should be unknown.
+		// "O" outside tag; should be unknown.
 		{"O", "", false},
 		// Totally unknown label.
 		{"UNKNOWN", "", false},
@@ -200,7 +200,7 @@ func TestMapHugotLabel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Integration test (skipped in short mode — requires model download)
+// Integration test (skipped in short mode; requires model download)
 // ---------------------------------------------------------------------------
 
 func TestHugotNERRecognizer_Integration(t *testing.T) {
@@ -273,7 +273,7 @@ func TestHugotNERRecognizer_Integration(t *testing.T) {
 }
 
 // TestHugotNERRecognizer_IntegrationGerman verifies the default multilingual
-// model picks up German PERSON / LOCATION / ORGANIZATION entities — the
+// model picks up German PERSON / LOCATION / ORGANIZATION entities; the
 // "German by default" product promise.
 func TestHugotNERRecognizer_IntegrationGerman(t *testing.T) {
 	if testing.Short() {

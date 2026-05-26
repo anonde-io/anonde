@@ -56,7 +56,7 @@ func TestDEDateContextRecognizer(t *testing.T) {
 			wantSpans: []string{"2057", "2059"},
 		},
 
-		// Negative cases — must NOT match.
+		// Negative cases; must NOT match.
 		{
 			name:      "lab value resembling year",
 			text:      "Ferritin 2007 ng/mL Normalbereich.",
@@ -73,7 +73,7 @@ func TestDEDateContextRecognizer(t *testing.T) {
 			wantSpans: nil,
 		},
 		// Note: "Sterilisation nach DIN 2018" intentionally NO LONGER
-		// has a negative test — the medical-vocab context fallback
+		// has a negative test; the medical-vocab context fallback
 		// flags 2018 because Sterilisation is in the procedure vocab.
 		// Acceptable trade: catches 100+ real bare-year dates
 		// (Polytrauma 1995, Pankreatitis 2022, Mamma-CA 2040, etc.)

@@ -10,7 +10,7 @@ import (
 )
 
 // OCR configuration knobs (env-driven so self-hosters can tune without
-// rebuilding). All have safe defaults — the only hard requirement to
+// rebuilding). All have safe defaults; the only hard requirement to
 // enable OCR is having `pdftoppm` and `tesseract` on PATH.
 const (
 	envOCREnabled = "ANONDE_OCR_ENABLED"
@@ -27,7 +27,7 @@ const (
 	// each model once per process; combining the common European
 	// scripts costs ~200 MB RAM peak but reads multilingual docs
 	// (German legal, Romanian government forms, French contracts)
-	// without per-doc tuning. Override via ANONDE_OCR_LANGS — e.g.
+	// without per-doc tuning. Override via ANONDE_OCR_LANGS; e.g.
 	// "eng" alone is faster when the corpus is known English-only.
 	defaultOCRLangs     = "eng+deu+fra+spa+ita+ron"
 	defaultOCRDPI       = "300"
@@ -36,7 +36,7 @@ const (
 
 // ocrAvailable reports whether the required external binaries are
 // reachable on PATH. Callers should treat false as "skip OCR
-// silently" rather than as an error — OCR is an opt-in fallback.
+// silently" rather than as an error; OCR is an opt-in fallback.
 func ocrAvailable() bool {
 	if v := strings.ToLower(strings.TrimSpace(os.Getenv(envOCREnabled))); v == "false" || v == "0" || v == "off" {
 		return false
@@ -89,7 +89,7 @@ func ocrDPI() string {
 // characters (matching how pdftotext separates pages, which is what
 // the analyzer downstream is used to).
 //
-// Returns ("", nil) — not an error — when OCR is unavailable, so
+// Returns ("", nil), not an error, when OCR is unavailable, so
 // callers can wire it as a soft fallback after the text-layer path.
 func OCRPDFBytes(raw []byte) (string, error) {
 	if !ocrAvailable() {
@@ -139,7 +139,7 @@ func OCRPDFBytes(raw []byte) (string, error) {
 func tesseractText(image, langs string) (string, error) {
 	// `tesseract <img> stdout -l <langs>` emits plain text on stdout.
 	// PSM 3 (fully automatic page segmentation) is tesseract's default
-	// and works best on real-world scans — it preserves table-row
+	// and works best on real-world scans; it preserves table-row
 	// reading order on multi-column government forms (Romanian
 	// garnishment notices were the motivating case: PSM 6 was reading
 	// only every other table row, losing per-row IBANs and amounts).

@@ -3,7 +3,7 @@
 // ner_gliner_ensemble_test.go covers the pure-logic parts of the
 // ensemble recognizer: mergeOverlapping (the OR-merge) and
 // EnsembleFromEnv's three-way return contract. The Analyze() goroutine
-// fan-out is exercised indirectly — full integration coverage that
+// fan-out is exercised indirectly; full integration coverage that
 // requires real ONNX sessions lives in the bench harness, not in unit
 // tests, because the per-member init() downloads ~370 MB of model
 // weights.
@@ -25,7 +25,7 @@ import (
 func TestMergeOverlapping_UnionBoundsSameType(t *testing.T) {
 	in := []analyzer.RecognizerResult{
 		{Start: 10, End: 14, Score: 0.55, EntityType: "PERSON", RecognizerName: "GLiNERRecognizer"},  // "Jane"
-		{Start: 10, End: 18, Score: 0.62, EntityType: "PERSON", RecognizerName: "GLiNERRecognizer"},  // "Jane Doe" — wider, higher score
+		{Start: 10, End: 18, Score: 0.62, EntityType: "PERSON", RecognizerName: "GLiNERRecognizer"},  // "Jane Doe"; wider, higher score
 	}
 	out := mergeOverlapping(in)
 	if len(out) != 1 {
@@ -57,7 +57,7 @@ func TestMergeOverlapping_DifferentTypesStaySeparate(t *testing.T) {
 }
 
 // TestMergeOverlapping_DisjointSpansBothKept covers the "different
-// member found a span the other didn't" case — the core recall-stacking
+// member found a span the other didn't" case; the core recall-stacking
 // win. Both spans must survive.
 func TestMergeOverlapping_DisjointSpansBothKept(t *testing.T) {
 	in := []analyzer.RecognizerResult{
@@ -73,7 +73,7 @@ func TestMergeOverlapping_DisjointSpansBothKept(t *testing.T) {
 // TestEnsembleFromEnv_UnsetReturnsNilNil pins the silent-fallback
 // contract: when ANONDE_NER_STACK is unset, the caller MUST fall
 // through to the existing single-model path. (nil, nil) is the only
-// return shape that does this — (nil, err) would Fatalf in main, and
+// return shape that does this; (nil, err) would Fatalf in main, and
 // (non-nil, nil) would override the single-model path.
 func TestEnsembleFromEnv_UnsetReturnsNilNil(t *testing.T) {
 	t.Setenv("ANONDE_NER_STACK", "")
@@ -101,7 +101,7 @@ func TestEnsembleFromEnv_MalformedErrors(t *testing.T) {
 
 // TestEnsembleFromEnv_HappyPathConstructsMembers verifies the env list
 // is parsed and each non-empty entry becomes a member. Doesn't run
-// Analyze (no ONNX session creation) — just checks the constructor's
+// Analyze (no ONNX session creation); just checks the constructor's
 // shape.
 func TestEnsembleFromEnv_HappyPathConstructsMembers(t *testing.T) {
 	t.Setenv("ANONDE_NER_STACK", " knowledgator/gliner-pii-base-v1.0 , knowledgator/gliner-pii-large-v1.0 ")

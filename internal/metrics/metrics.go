@@ -2,7 +2,7 @@
 //
 // Callers (the analyzer, core.Service, the vault/store collector) talk
 // to the Recorder interface, never to prometheus directly. The
-// production wiring uses a PRIVATE *prometheus.Registry — anonde
+// production wiring uses a PRIVATE *prometheus.Registry; anonde
 // imported as a library MUST NOT pollute the caller's default
 // (global) registry. cmd/anonde mounts this private registry behind
 // promhttp.HandlerFor on the optional second listener.
@@ -16,7 +16,7 @@
 // names (EmailRecognizer, GLiNERRecognizer, …), winner/loser kinds
 // (ner|pattern), status (ok|denied|error), backend names (patterns|
 // hugot|gliner|ollama). Tenant IDs, request IDs, tokens, raw cleartext
-// or any text-derived value MUST NEVER appear as a label — they would
+// or any text-derived value MUST NEVER appear as a label; they would
 // (a) blow up cardinality (Prometheus best practice is <100 distinct
 // label values per series) and (b) leak PII through /metrics, which is
 // a worse exposure than the data plane itself.
@@ -45,7 +45,7 @@ type Recorder interface {
 	Request(op string) RequestSpan
 
 	// EntityDetected records one surviving finding emitted by the
-	// analyzer after RemoveConflicts. Called once per finding —
+	// analyzer after RemoveConflicts. Called once per finding,
 	// cardinality is bounded by (entity types ~30) × (recognizers ~52).
 	EntityDetected(entityType, recognizer string, score float64)
 
@@ -59,12 +59,12 @@ type Recorder interface {
 
 	// PolicyDenied records one detokenize/reveal denial. reason is
 	// a short stable string (e.g. "static_default", "actor_unknown")
-	// — NEVER include the request's actor/purpose/tenant.
+	// NEVER include the request's actor/purpose/tenant.
 	PolicyDenied(reason string)
 }
 
 // RequestSpan accumulates per-request observations. Done MUST be
-// called exactly once per Request — typically via defer.
+// called exactly once per Request; typically via defer.
 type RequestSpan interface {
 	// BytesIn / BytesOut record the request and response payload
 	// sizes in bytes. For meta operations (GetVersion, Delete) that
@@ -85,7 +85,7 @@ type RequestSpan interface {
 
 // New returns a Prometheus-backed Recorder that registers all metric
 // families on the supplied registry. Pass a fresh prometheus.NewRegistry()
-// — never the global default — so importing anonde as a library can't
+// never the global default; so importing anonde as a library can't
 // collide with the caller's metrics.
 func New(reg *prometheus.Registry) Recorder {
 	r := newPromRecorder()

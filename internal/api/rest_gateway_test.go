@@ -61,7 +61,7 @@ func httpJSON(t *testing.T, srv *httptest.Server, method, path string, body any)
 func TestREST_IngestRevealDelete_RoundTrip(t *testing.T) {
 	srv, _ := newRESTTestEnv(t)
 
-	// POST /v1/anonymizations — tenant_id + doc_id in body.
+	// POST /v1/anonymizations; tenant_id + doc_id in body.
 	status, ing := httpJSON(t, srv, "POST", "/v1/anonymizations", map[string]any{
 		"tenant_id":      "acme",
 		"id":         "letter-001",
@@ -78,7 +78,7 @@ func TestREST_IngestRevealDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("response didn't echo tenant_id/doc_id; got tenant=%v doc=%v", ing["tenant_id"], ing["id"])
 	}
 
-	// POST /v1/anonymizations/{doc_id}/reveal — doc_id from URL, tenant_id in body.
+	// POST /v1/anonymizations/{doc_id}/reveal; doc_id from URL, tenant_id in body.
 	status, rev := httpJSON(t, srv, "POST", "/v1/anonymizations/letter-001/reveal", map[string]any{
 		"tenant_id":      "acme",
 		"actor":         "tester",
@@ -93,7 +93,7 @@ func TestREST_IngestRevealDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("reveal didn't restore email, got %v", rev["deanonymized_content"])
 	}
 
-	// DELETE /v1/anonymizations/{doc_id}?tenant_id=acme — no body, tenant via query.
+	// DELETE /v1/anonymizations/{doc_id}?tenant_id=acme; no body, tenant via query.
 	status, del := httpJSON(t, srv, "DELETE", "/v1/anonymizations/letter-001?tenant_id=acme", nil)
 	if status != http.StatusOK {
 		t.Fatalf("delete: expected 200, got %d (%v)", status, del)

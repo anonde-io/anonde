@@ -45,7 +45,7 @@ func NewAnonymizerEngine() *AnonymizerEngine { return &AnonymizerEngine{} }
 // merging the output is a single "<PERSON_001>" token covering the whole
 // name. Merging is deliberately at this layer (not in the recognizer)
 // because bench corpora often annotate name components as separate gold
-// spans — merging at the recognizer level would tank exact-match metrics.
+// spans; merging at the recognizer level would tank exact-match metrics.
 func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerResult, cfg AnonymizerConfig) (*AnonymizerResult, error) {
 	if cfg == nil {
 		cfg = AnonymizerConfig{}

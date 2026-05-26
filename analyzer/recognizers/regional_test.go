@@ -37,7 +37,7 @@ func TestUKNINO_PassesAndRejectsBadPrefix(t *testing.T) {
 	}
 
 	// "QQ" is excluded by the recognizer regex (Q is not in the allowed
-	// first-letter class) and so does not match at all — confirms structural
+	// first-letter class) and so does not match at all; confirms structural
 	// reject.
 	out, _ = r.Analyze(context.Background(), "QQ123456C", nil, "en")
 	if len(out) != 0 {
@@ -174,7 +174,7 @@ func TestINAadhaar_VerhoeffPasses(t *testing.T) {
 	// We choose to assert Verhoeff calc directly to avoid pinning to a value
 	// whose checksum we computed by hand:
 	if !validateVerhoeff("234567890125") {
-		t.Skip("synthetic Aadhaar fixture failed Verhoeff; skip — pick another in fixture pool")
+		t.Skip("synthetic Aadhaar fixture failed Verhoeff; skip; pick another in fixture pool")
 	}
 	if len(out) == 0 || out[0].Score != 1.0 {
 		t.Fatalf("Verhoeff-valid Aadhaar should validate, got %+v", out)
@@ -213,7 +213,7 @@ func TestSGNRIC_KnownValid(t *testing.T) {
 func TestKRRRN_ChecksumPasses(t *testing.T) {
 	t.Parallel()
 	r := NewKRRRNRecognizer()
-	// Known-valid synthetic: 9001011-2345672 — verify by direct calc.
+	// Known-valid synthetic: 9001011-2345672; verify by direct calc.
 	if !validateKRRRN("9001011234567") {
 		t.Skip("RRN fixture failed checksum; pick a different one")
 	}

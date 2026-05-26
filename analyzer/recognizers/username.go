@@ -14,7 +14,7 @@ import (
 // match natural-language person-name distributions they were trained
 // on.
 //
-// PATTERN PHILOSOPHY: lean toward recall — over-redaction is annoying,
+// PATTERN PHILOSOPHY: lean toward recall; over-redaction is annoying,
 // under-redaction leaks PII. Scored at 0.50 (below the 0.85 of clean
 // recognizers) so the analyzer's conflict resolver prefers a clean
 // pattern (EMAIL, URL, PHONE) or a confident NER over us, but a span
@@ -33,12 +33,12 @@ import (
 //     the same way ASCII ones do.
 
 var (
-	// firstname.lastname[-suffix] — dotted handle shape. Both halves
+	// firstname.lastname[-suffix]; dotted handle shape. Both halves
 	// ≥ 4 lowercase letters (Unicode letter class for diacritics).
 	// The 4-char floor combined with a 5-char minimum first half is the
 	// FP guard: "the.cat", "img.png", "doc.pdf", "max.min" all fail
 	// because at least one half is < 4 chars. "bercem.luini" (6+5) and
-	// "ada.lovelace42" (3+8+digits — wait, "ada" is 3 chars — needs
+	// "ada.lovelace42" (3+8+digits, wait, "ada" is 3 chars, needs
 	// the optional digit suffix to lift it above the floor) survive
 	// when the digit suffix is present.
 	//
@@ -50,7 +50,7 @@ var (
 		`\b\d{0,3}\p{Ll}{4,30}[.\-]\p{Ll}{4,30}(?:[.\-]\p{Ll}{2,30}){0,2}\d{0,4}\b`,
 	)
 
-	// stem + digit suffix — surname-with-year shape like "kottmann1989",
+	// stem + digit suffix; surname-with-year shape like "kottmann1989",
 	// "schlöter01", "jousse20". Stem ≥ 4 lowercase letters; suffix 2-4
 	// digits. Random-token shapes like "xmrlcpvcqejqc8071" (stem 13
 	// letters, 4 digits) match this form too.
@@ -68,10 +68,10 @@ func NewUsernameRecognizer() *UsernameRecognizer { return &UsernameRecognizer{} 
 // Name returns the recognizer name (used in conflict resolution + logs).
 func (r *UsernameRecognizer) Name() string { return "UsernameRecognizer" }
 
-// SupportedEntities — emits PERSON (handle owner identity).
+// SupportedEntities; emits PERSON (handle owner identity).
 func (r *UsernameRecognizer) SupportedEntities() []string { return []string{"PERSON"} }
 
-// SupportedLanguages — shape is language-agnostic.
+// SupportedLanguages; shape is language-agnostic.
 func (r *UsernameRecognizer) SupportedLanguages() []string { return []string{"*"} }
 
 // Analyze applies both username patterns. Scores are deliberately low

@@ -10,7 +10,7 @@ import (
 // piiCorpus is the sample of PII-shaped strings we feed through every
 // Recorder method to assert nothing leaks into label values. If
 // future code adds a new Recorder method or a new label, extend this
-// list — the test will fail unless those values are absent from the
+// list; the test will fail unless those values are absent from the
 // scraped output.
 var piiCorpus = []string{
 	"max.mustermann@example.com",
@@ -30,8 +30,8 @@ var piiCorpus = []string{
 // surfaces as a label value or in a metric name. This is what stops a
 // future "just add the tenant_id label, it'll be fine" refactor.
 //
-// We feed the PII shapes through the SCORE / BYTES arguments — the
-// only non-label numeric inputs — to make absolutely sure the values
+// We feed the PII shapes through the SCORE / BYTES arguments; the
+// only non-label numeric inputs; to make absolutely sure the values
 // stay out of the label space even if someone mistakenly stringifies
 // them later. The label-shaped args are filled with the legitimate
 // metadata values code is allowed to use.
@@ -99,7 +99,7 @@ func TestRecorder_FamiliesAndLabels(t *testing.T) {
 	rec := New(reg)
 
 	// Drive each path so every vector has at least one observed
-	// series — Gather() only returns families with at least one
+	// series; Gather() only returns families with at least one
 	// child series.
 	span := rec.Request("ingest")
 	span.BytesIn(100)
@@ -160,7 +160,7 @@ func TestRecorder_FamiliesAndLabels(t *testing.T) {
 
 // TestNoop_DoesNotCrash exercises every verb on the no-op recorder.
 // It exists because the noop is what library users and tests get by
-// default — a regression that panics here would break every dependent
+// default; a regression that panics here would break every dependent
 // test in one stroke.
 func TestNoop_DoesNotCrash(t *testing.T) {
 	rec := NewNoop()
@@ -177,7 +177,7 @@ func TestNoop_DoesNotCrash(t *testing.T) {
 
 // TestRequestSpan_CountsBytesOnce verifies the bytes counter
 // only increments once per span and only when BytesIn/BytesOut were
-// called — meta operations that skip the byte calls shouldn't appear
+// called; meta operations that skip the byte calls shouldn't appear
 // in anonde_bytes_processed_total.
 func TestRequestSpan_CountsBytesOnce(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -188,7 +188,7 @@ func TestRequestSpan_CountsBytesOnce(t *testing.T) {
 	span.BytesOut(50)
 	span.Done("ok")
 
-	// Meta op — no bytes called.
+	// Meta op; no bytes called.
 	metaSpan := rec.Request("delete")
 	metaSpan.Done("ok")
 
@@ -218,7 +218,7 @@ func TestRequestSpan_CountsBytesOnce(t *testing.T) {
 
 // counterByLabels finds a specific child series of a CounterVec on
 // the registry by matching its label name/value pairs (order
-// independent — Prometheus serialises labels alphabetically, not in
+// independent; Prometheus serialises labels alphabetically, not in
 // the order Register saw them). Returns the float64 value directly.
 func counterByLabels(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) float64 {
 	t.Helper()
@@ -255,7 +255,7 @@ func counterByLabels(t *testing.T, reg *prometheus.Registry, name string, labels
 }
 
 // TestGauges_BuildInfoAlwaysOne verifies the build_info gauge is
-// emitted even when every other source is nil — dashboards depend on
+// emitted even when every other source is nil; dashboards depend on
 // it as a stable presence signal.
 func TestGauges_BuildInfoAlwaysOne(t *testing.T) {
 	reg := prometheus.NewRegistry()

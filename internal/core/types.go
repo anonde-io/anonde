@@ -13,7 +13,7 @@ package core
 
 import "github.com/anonde-io/anonde/analyzer"
 
-// IngestRequest creates a new anonymization. ID is optional — if
+// IngestRequest creates a new anonymization. ID is optional; if
 // empty, the service mints one (prefixed `anon_`) and returns it in
 // IngestResponse.
 type IngestRequest struct {
@@ -49,7 +49,7 @@ type TokenRef struct {
 // the token offsets needed to reveal it. For binary formats (PDF) the
 // OriginalBytes and AnonymizedBytes fields hold the round-trippable
 // data; AnonymizedContent stays empty in that case. JSON encoding of
-// the byte fields uses base64 — fine for the bbolt backend, cheap
+// the byte fields uses base64; fine for the bbolt backend, cheap
 // in-memory.
 type StoreRecord struct {
 	TenantID          string     `json:"tenant_id"`

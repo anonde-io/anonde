@@ -9,7 +9,7 @@ import "regexp"
 // explicit street-type prefix (Rue, Via, Calle, …) followed by a
 // capitalized name component, optionally followed by a house number.
 // Bare numeric house numbers and bare place names without a street-type
-// prefix are intentionally NOT caught here — those are an open-set NER
+// prefix are intentionally NOT caught here; those are an open-set NER
 // problem and the FP risk on prose is too high.
 
 var (

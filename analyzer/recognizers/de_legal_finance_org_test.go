@@ -13,13 +13,13 @@ func TestDELegalFinanceOrgRecognizer(t *testing.T) {
 		text      string
 		wantSpans []string // substrings expected, order-insensitive
 	}{
-		// Courts — the legal_de corpus's #1 ORG-leak family.
+		// Courts; the legal_de corpus's #1 ORG-leak family.
 		{"Amtsgericht with city", "An das Amtsgericht Bremen gerichtet.", []string{"Amtsgericht Bremen"}},
 		{"Arbeitsgericht with city", "An das Arbeitsgericht Krefeld", []string{"Arbeitsgericht Krefeld"}},
 		{"BGH abbreviation", "Das BGH-Urteil vom 12.05.", []string{"BGH"}},
 		{"Landgericht with hyphenated city", "Landgericht Frankfurt-Höchst entschied.", []string{"Landgericht Frankfurt-Höchst"}},
 
-		// Banks — finance_de's headline org family.
+		// Banks; finance_de's headline org family.
 		{"KfW Bankengruppe", "KfW Bankengruppe — Online-Banking", []string{"KfW Bankengruppe"}},
 		{"HypoVereinsbank", "HypoVereinsbank\nFiliale Wiesbaden", []string{"HypoVereinsbank"}},
 		{"Sparkasse with city", "Bei der Sparkasse Köln-Bonn eingerichtet.", []string{"Sparkasse Köln-Bonn"}},
@@ -36,7 +36,7 @@ func TestDELegalFinanceOrgRecognizer(t *testing.T) {
 		{"Firma GmbH & Co KG", "der Firma Elbschloss Möbel GmbH & Co. KG", []string{"Firma Elbschloss Möbel GmbH & Co. KG"}},
 		{"AG plain", "Volkswagen AG meldet", []string{"Volkswagen AG"}},
 
-		// Must NOT match — non-institutional surfaces.
+		// Must NOT match; non-institutional surfaces.
 		{"plain city", "in München", nil},
 		{"plain person", "Beate Roth wohnt hier.", nil},
 	}

@@ -41,7 +41,7 @@ func main() {
 
 	// WARMUP_ON_START=1 runs one trivial Analyze synchronously before the
 	// HTTP server starts listening. For NER backends this forces the
-	// sync.Once-gated ONNX session creation to happen at boot — failure
+	// sync.Once-gated ONNX session creation to happen at boot; failure
 	// (typically OOM under-provisioning) is then visible in machine boot
 	// logs instead of as a stuck first user request, and the first real
 	// request sees ~150 ms latency instead of 5–30 s. No-op overhead on
@@ -94,7 +94,7 @@ func main() {
 	// Register the scrape-time gauges collector now that vault / store
 	// / analyzer are all known. Each callback is a thin adapter to keep
 	// the metrics package free of internal/core and internal/store
-	// dependencies (and vice versa). Wired only when metrics are on —
+	// dependencies (and vice versa). Wired only when metrics are on,
 	// otherwise the registry doesn't exist.
 	if metricsEnabled {
 		metrics.RegisterGauges(metricsReg, metrics.GaugesConfig{
@@ -150,7 +150,7 @@ func main() {
 	// a pointer at this env var when disabled.
 	//
 	// The YOLOS signature detector is always loaded when PDF is enabled
-	// — there's no per-request way to skip it, and the
+	// there's no per-request way to skip it, and the
 	// ANONDE_PDF_VISION_MODEL split flag has been retired. Memory cost
 	// (~500 MB resident) is the price of accepting PDFs; operators who
 	// can't afford it should leave ANONDE_PDF_ENABLED unset and route
@@ -173,7 +173,7 @@ func main() {
 	}
 
 	// Wrap the routes in the concurrency limiter as the outermost layer
-	// so health checks ARE gated too — that's intentional. An unhealthy
+	// so health checks ARE gated too; that's intentional. An unhealthy
 	// server should signal "busy" so load balancers route elsewhere.
 	handler := newConcurrencyLimiter(concurrencyCap).wrap(httpAPI.Routes())
 
@@ -203,7 +203,7 @@ func main() {
 }
 
 // startMetricsListener spawns the second HTTP server in a goroutine.
-// Only /metrics and /healthz are mounted — the public Connect / REST
+// Only /metrics and /healthz are mounted; the public Connect / REST
 // / gRPC routes stay on the primary listener. A non-fatal error on
 // boot is logged but does not kill the main process: metrics being
 // unavailable should not take the data plane down.
@@ -335,13 +335,13 @@ func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
 }
 
 // concurrencyLimiter is a tiny semaphore-style HTTP middleware. Acquire
-// is non-blocking — when the semaphore is full the (N+1)th request is
+// is non-blocking; when the semaphore is full the (N+1)th request is
 // rejected with 429 immediately instead of queueing. Queueing would
 // just convert a throughput problem into a latency problem; backpressure
 // to the caller is the correct shape for a self-hosted server with no
 // idea what the operator's downstream SLO is.
 //
-// `cap <= 0` is the unlimited mode — wrap() returns the handler
+// `cap <= 0` is the unlimited mode; wrap() returns the handler
 // unchanged so there's zero overhead on the default-unset path.
 type concurrencyLimiter struct {
 	sem chan struct{}
@@ -359,13 +359,13 @@ func newConcurrencyLimiter(cap int) *concurrencyLimiter {
 
 // wrap returns an http.Handler that gates `next` behind the semaphore
 // when one is configured. The unlimited case skips the middleware
-// entirely — identical to the pre-change behaviour.
+// entirely; identical to the pre-change behaviour.
 //
 // Panic discipline: the semaphore is correctly released even if the
 // downstream handler panics (Go runs deferred funcs during unwind),
 // but a bare panic would otherwise propagate up through net/http and
 // drop the connection without a body. We recover here so the process
-// stays alive AND the client sees a 500 — wrapped in a nested
+// stays alive AND the client sees a 500; wrapped in a nested
 // defer-recover because writing to a response writer whose headers
 // are already committed is itself an error path we don't want to
 // re-panic from.
@@ -407,7 +407,7 @@ func (l *concurrencyLimiter) wrap(next http.Handler) http.Handler {
 // concurrencyCapFromEnv parses ANONDE_MAX_CONCURRENT_REQUESTS. Unset /
 // 0 / negative returns 0 ("unlimited", current behaviour); malformed
 // values are logged and treated as unset. Matches the GLINER_POOL_SIZE
-// precedent — a typo never blocks boot.
+// precedent; a typo never blocks boot.
 func concurrencyCapFromEnv() int {
 	raw := strings.TrimSpace(os.Getenv("ANONDE_MAX_CONCURRENT_REQUESTS"))
 	if raw == "" {
@@ -427,7 +427,7 @@ func concurrencyCapFromEnv() int {
 // downloadModelsAndExit triggers a single inference call so the configured
 // backend's underlying NER model is fetched into its cache directory, then
 // exits. Used at Docker build time (see Dockerfile.anonde-ner) to bake
-// the model into the runtime image — the runtime then has no cold-start
+// the model into the runtime image; the runtime then has no cold-start
 // download and needs no outbound network access.
 //
 // Timeout is generous (10 minutes) because the first call also has to
@@ -465,19 +465,19 @@ func listenAddr() string {
 //
 // Opt-ins:
 //
-//   - ANALYZER_BACKEND=hugot — in-process ONNX transformer via hugot (XLM-R
+//   - ANALYZER_BACKEND=hugot; in-process ONNX transformer via hugot (XLM-R
 //     PII multilingual by default). Requires the binary to be built with
 //     `-tags hugot`; default builds fall back to a fatal-error stub.
-//   - ANALYZER_BACKEND=gliner — in-process GLiNER PII via yalue/onnxruntime_go.
+//   - ANALYZER_BACKEND=gliner; in-process GLiNER PII via yalue/onnxruntime_go.
 //     Open-set NER, substantially better German clinical recall than hugot
 //     (see bench/corpora/openmed/REPORT_FINAL.md). Requires `-tags hugot` AND
 //     CGO_ENABLED=1 AND libonnxruntime.so reachable at runtime.
-//   - ANALYZER_BACKEND=gliner-flat — single GLiNER recognizer with the
+//   - ANALYZER_BACKEND=gliner-flat; single GLiNER recognizer with the
 //     flat / token decoder (knowledgator/gliner-pii-large-v1.0 and other
 //     4-input BIO ONNX exports). Same build / CGO / libonnxruntime
 //     requirements as gliner. Same env knobs (GLINER_MODEL,
 //     GLINER_THRESHOLD, GLINER_MODELS_DIR, ORT_SO_PATH).
-//   - ANALYZER_BACKEND=gliner-stack — registers BOTH the span-decoder
+//   - ANALYZER_BACKEND=gliner-stack; registers BOTH the span-decoder
 //     base recognizer AND a flat-decoder recognizer in the same engine
 //     so each doc is scored by both models and the conflict resolver
 //     unions their findings. Configured by the existing GLINER_* env
@@ -487,7 +487,7 @@ func listenAddr() string {
 //     which bakes both ONNX exports at build time. This is the lowest-
 //     leak deployment shape (local bench Σ ALL ≈ 9.7% across 30 corpora
 //     vs ~12.9% for gliner alone).
-//   - ANALYZER_BACKEND=ollama — local Ollama daemon for users with an
+//   - ANALYZER_BACKEND=ollama; local Ollama daemon for users with an
 //     existing Ollama setup.
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
@@ -495,31 +495,31 @@ func listenAddr() string {
 //
 // Pool sizing (gliner / gliner-flat / gliner-stack):
 //
-//   - GLINER_POOL_SIZE — integer ≥ 2 builds an N-instance pool for the
+//   - GLINER_POOL_SIZE; integer ≥ 2 builds an N-instance pool for the
 //     base GLiNER recognizer (span decoder for `gliner` / `gliner-stack`,
 //     flat decoder for `gliner-flat`). Unset / 0 / 1 → single recognizer
 //     (current behaviour, no change).
-//   - ANONDE_GLINER_FLAT_POOL_SIZE — integer ≥ 2 builds an N-instance
+//   - ANONDE_GLINER_FLAT_POOL_SIZE; integer ≥ 2 builds an N-instance
 //     pool for the FLAT recognizer of `gliner-stack` only. Unset / 0 / 1
 //     → single flat recognizer alongside the base pool.
 //
 // Memory cost is the binding constraint: ~500 MB per BASE quint8
 // instance, ~1.4 GB per LARGE FP32 instance. Size pools against your
 // VM's RAM, not your CPU count. In a `gliner-stack` deployment the
-// LARGE flat pool should usually be smaller than the BASE pool — e.g.
+// LARGE flat pool should usually be smaller than the BASE pool; e.g.
 // GLINER_POOL_SIZE=4 + ANONDE_GLINER_FLAT_POOL_SIZE=2 peaks ~4.8 GB.
 //
 // ONNX Runtime session tuning (all GLiNER backends):
 //
-//   - ANONDE_ORT_INTRA_OP_THREADS — integer ≥ 1. Number of threads
+//   - ANONDE_ORT_INTRA_OP_THREADS; integer ≥ 1. Number of threads
 //     ORT uses INSIDE one op (e.g. a matmul). Unset → ORT default
-//     (num cores). Lower this when stacking pools — e.g. a 4-instance
+//     (num cores). Lower this when stacking pools; e.g. a 4-instance
 //     pool with intra=4 contends for all CPUs; intra=2 may improve
 //     total throughput by reducing thread-pool oversubscription.
-//   - ANONDE_ORT_INTER_OP_THREADS — integer ≥ 1. Number of threads ORT
+//   - ANONDE_ORT_INTER_OP_THREADS; integer ≥ 1. Number of threads ORT
 //     uses to run independent ops in parallel. Unset → ORT default
 //     (1). Rarely worth raising on transformer graphs.
-//   - ANONDE_ORT_GRAPH_OPT_LEVEL — "disabled" | "basic" | "extended"
+//   - ANONDE_ORT_GRAPH_OPT_LEVEL; "disabled" | "basic" | "extended"
 //     | "all". Unset → ORT default ("basic"). "all" can shave a few
 //     percent off latency at the cost of longer session-open time
 //     (which the warmup absorbs).
@@ -557,7 +557,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		if ens, ensErr := recognizers.EnsembleFromEnv(threshold, os.Getenv("ORT_SO_PATH")); ensErr != nil {
 			log.Fatalf("ANONDE_NER_STACK: %v", ensErr)
 		} else if ens != nil {
-			log.Printf("analyzer backend: gliner-ensemble (threshold=%.2f) — single-model GLINER_MODEL=%s ignored",
+			log.Printf("analyzer backend: gliner-ensemble (threshold=%.2f); single-model GLINER_MODEL=%s ignored",
 				threshold, modelName)
 			return anonde.DefaultAnalyzerEngineWithGLiNEREnsemble(ens), "gliner-ensemble", os.Getenv("ANONDE_NER_STACK")
 		}
@@ -582,7 +582,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		return anonde.DefaultAnalyzerEngineWithGLiNERConfig(cfg), "gliner", modelName
 	case "gliner-flat":
 		// Single flat / token-decoder GLiNER (4-input BIO ONNX export).
-		// Same knobs as `gliner` — GLINER_MODEL, GLINER_THRESHOLD,
+		// Same knobs as `gliner`; GLINER_MODEL, GLINER_THRESHOLD,
 		// GLINER_MODELS_DIR, ORT_SO_PATH. Defaults aimed at the LARGE PII
 		// model since that's the canonical flat-decoder export today.
 		modelName := getenvDefault("GLINER_MODEL", "knowledgator/gliner-pii-large-v1.0")
@@ -686,7 +686,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 
 // glinerPoolSizeFromEnv parses an integer pool size from the named env
 // var. Returns 1 (single recognizer, no pool) when unset, malformed,
-// or ≤ 0. A malformed value is logged but does NOT log.Fatalf —
+// or ≤ 0. A malformed value is logged but does NOT log.Fatalf,
 // matching the GLINER_THRESHOLD precedent so a typo doesn't keep the
 // server from booting; the operator gets the warning in startup logs
 // and falls through to single-recognizer behaviour. Used by both
@@ -710,7 +710,7 @@ func glinerPoolSizeFromEnv(key string) int {
 
 // glinerThresholdFromEnv parses GLINER_THRESHOLD into a float. Zero means
 // "use the recognizer's compiled-in default" (currently 0.40). Threshold
-// is the highest-impact GLiNER knob — multilingual variants typically
+// is the highest-impact GLiNER knob; multilingual variants typically
 // need ~0.25, the English base ~0.40. Override without rebuilding via
 // the env var.
 func glinerThresholdFromEnv() float64 {
@@ -732,12 +732,12 @@ func glinerThresholdFromEnv() float64 {
 //
 // Two env vars, in precedence order:
 //
-//   - GLINER_ONNX_FILE — explicit in-repo path (e.g. "onnx/model.onnx").
+//   - GLINER_ONNX_FILE; explicit in-repo path (e.g. "onnx/model.onnx").
 //     The escape hatch: use it for any repo whose file layout doesn't
 //     match the convenience names below.
-//   - GLINER_QUANT — convenience selector: "int8" | "fp16" | "fp32".
+//   - GLINER_QUANT; convenience selector: "int8" | "fp16" | "fp32".
 //     Maps to the conventional filenames in the knowledgator and
-//     onnx-community GLiNER repos. FP32 is the default — production
+//     onnx-community GLiNER repos. FP32 is the default; production
 //     ships full precision because the bench matrix proved INT8
 //     uniformly depresses recall (Σ ALL leak 20.7% FP32 vs 26.6% INT8).
 //
@@ -780,12 +780,12 @@ func glinerOnnxFileFromEnv(modelName string) string {
 	case "fp16", "float16":
 		// CAVEAT: knowledgator/gliner-pii-base-v1.0's shipped
 		// model_fp16.onnx currently has an onnxruntime-incompatible
-		// graph — onnxruntime rejects it on session create with a
+		// graph; onnxruntime rejects it on session create with a
 		// "Type Error: Type (tensor(float16)) of output arg ... Cast
 		// ..." failure, and the GLiNER recognizer then silently falls
 		// back to patterns-only. The mapping is kept (a future fixed
 		// FP16 export from the upstream repo may load cleanly), but as
-		// of now GLINER_QUANT=fp16 does NOT work for this model — use
+		// of now GLINER_QUANT=fp16 does NOT work for this model; use
 		// fp32 (the default) for the full-precision build.
 		return "onnx/model_fp16.onnx"
 	default:
@@ -826,7 +826,7 @@ func selectStoreBackend(vaultTTL, storeTTL time.Duration) (core.Vault, core.Stor
 				log.Fatalf("STORE_BACKEND=bbolt: %v", err)
 			}
 		} else {
-			log.Printf("STORE_BACKEND=bbolt: ANONDE_VAULT_KEY not set — vault stored UNENCRYPTED at %s", path)
+			log.Printf("STORE_BACKEND=bbolt: ANONDE_VAULT_KEY not set; vault stored UNENCRYPTED at %s", path)
 		}
 		db, err := store.OpenDB(path)
 		if err != nil {

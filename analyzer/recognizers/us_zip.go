@@ -9,8 +9,8 @@ import (
 
 // US ZIP code recognizer. The US Postal Service ZIP layout is 5 digits
 // or ZIP+4 (5 digits, hyphen, 4 digits). Bare 5-digit shapes are
-// ambiguous in raw prose — they collide with years, dollar amounts,
-// lab values, document numbers — so this recognizer scores a bare
+// ambiguous in raw prose; they collide with years, dollar amounts,
+// lab values, document numbers; so this recognizer scores a bare
 // 5-digit match LOW (0.55), enough to redact when no contradictory
 // stronger signal fires but not enough to win against e.g. a DATE
 // context match. ZIP+4 ("28940-9232") is rare enough as an accidental
@@ -42,7 +42,7 @@ func (r *USZipRecognizer) Name() string { return "USZipRecognizer" }
 // English corpora via --fold-parity-labels in the bench harness.
 func (r *USZipRecognizer) SupportedEntities() []string { return []string{"POSTAL_CODE"} }
 
-// SupportedLanguages reports en — bare 5-digit shapes are too noisy in
+// SupportedLanguages reports en; bare 5-digit shapes are too noisy in
 // German clinical text (lab values, document numbers) to enable there.
 func (r *USZipRecognizer) SupportedLanguages() []string { return []string{"en"} }
 
@@ -64,7 +64,7 @@ func (r *USZipRecognizer) Analyze(_ context.Context, text string, _ []string, _ 
 		return nil, nil
 	}
 	var out []analyzer.RecognizerResult
-	// ZIP+4 first — emit at the higher score and let the conflict
+	// ZIP+4 first; emit at the higher score and let the conflict
 	// resolver drop overlapping bare-5 matches at score 0.55.
 	for _, m := range usZip4RE.FindAllStringIndex(text, -1) {
 		out = append(out, analyzer.RecognizerResult{

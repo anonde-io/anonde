@@ -24,7 +24,7 @@ func TestBICRecognizer(t *testing.T) {
 		{"Swiss UBS", "UBSWCHZH80A", []string{"UBSWCHZH80A"}},
 		{"US Citibank", "CITIUS33", []string{"CITIUS33"}},
 
-		// Must NOT match — random ALL-CAPS strings, abbreviations.
+		// Must NOT match; random ALL-CAPS strings, abbreviations.
 		{"plain word", "BUNDESREPUBLIK", nil},
 		{"short acronym", "GmbH", nil},
 		{"all-caps non-BIC", "OVERVIEWDATA1", nil}, // wrong country slot

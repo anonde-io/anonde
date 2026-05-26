@@ -17,7 +17,7 @@ var creditCardRE = regexp.MustCompile(
 		`|(?:2131|1800|35\d{3})\d{11}` + // JCB
 		`|(?:\d{4}[ \-]){3}\d{4}` + // 4-4-4-4 with separators
 		`|(?:\d{4}[ \-]){2}\d{6}` + // 4-4-6 (Amex)
-		`|\d{13,19}` + // bare 13–19 digits — Luhn validates
+		`|\d{13,19}` + // bare 13–19 digits; Luhn validates
 		`)\b`,
 )
 

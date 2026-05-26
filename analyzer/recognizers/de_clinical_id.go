@@ -26,7 +26,7 @@ import (
 //
 // Patterns ordered most-specific first; the analyzer's conflict resolver
 // keeps higher-scored matches when they overlap. Standalone pure-numeric
-// IDs without an anchoring keyword are intentionally NOT emitted — too
+// IDs without an anchoring keyword are intentionally NOT emitted; too
 // many false positives on lab values, dosages, and document numbers in
 // unanchored positions.
 
@@ -74,7 +74,7 @@ var (
 			`RA[-\s]?NR|` +
 			`Rechtsanwalt(?:s)?[-\s]?(?:nummer|Nr)|` +
 			`Notar(?:s)?[-\s]?(?:nummer|Nr)|` +
-			// English keywords — same shape, different vocabulary. "MRN" is
+			// English keywords; same shape, different vocabulary. "MRN" is
 			// already covered above (universal abbreviation); these add the
 			// long forms common in US/UK clinical documents.
 			`Medical[ \t]+Record(?:[ \t]*(?:Number|No\.?|#))?|` +
@@ -85,11 +85,11 @@ var (
 			`Encounter(?:[ \t]*(?:Number|No\.?|#|ID))?` +
 			`)` +
 			// Any sequence of separator chars (whitespace, ., :, ;, tab)
-			// — order-agnostic so we match "Nr.: ", "Nr: ", " :", "\t", "-Nr.\t", etc.
+			// order-agnostic so we match "Nr.: ", "Nr: ", " :", "\t", "-Nr.\t", etc.
 			`[\s.:;,\t]*` +
 			// Value: 0-4 leading letters, optional hyphen, then digit
 			// + alphanumeric/hyphen tail. Slash is INTENTIONALLY excluded
-			// from the tail — including it lets the match eat into an
+			// from the tail; including it lets the match eat into an
 			// adjacent date ("K46473874/26.12.2022" became
 			// "K46473874/26" which then loses the conflict pass to the
 			// stronger DATE_TIME finding on the date suffix). Slash-
@@ -101,9 +101,9 @@ var (
 	// German court-case number shape (Aktenzeichen). Examples:
 	//   "10 Ls 296/22"   "25 VIII 24/22"   "4 VII 532/21"
 	// The Roman-numeral chamber notation is distinctive enough that the
-	// shape itself is self-anchoring — it's vanishingly rare in clinical
+	// shape itself is self-anchoring; it's vanishingly rare in clinical
 	// text, lab reports, or news prose. Two variants:
-	//   (a) keyword-anchored (Az / Aktenzeichen / Geschäftszeichen) —
+	//   (a) keyword-anchored (Az / Aktenzeichen / Geschäftszeichen),
 	//       highest confidence, used when the document signals "this is a
 	//       case number" up front.
 	//   (b) shape-only, requiring the Roman-numeral chamber form OR a
@@ -136,7 +136,7 @@ var (
 			`Zimmer|` +
 			`Etage|` +
 			`Gebäude|` +
-			// English triggers — same intent.
+			// English triggers; same intent.
 			`Ward|Room|Unit|Bed|Floor|Suite|ICU|NICU|PICU|Emergency` +
 			`)\s+` +
 			`([A-Z]{1,4}-?\d{1,4}|\d{1,4}[A-Z]?(?:-\d{1,4})?|[IVX]{1,4})\b`,
@@ -147,7 +147,7 @@ var (
 		`\b[A-Z]\d{3,6}/\d{1,4}\b`,
 	)
 
-	// Standalone customer / contract / order identifiers — uppercase letter
+	// Standalone customer / contract / order identifiers; uppercase letter
 	// prefix, hyphen-or-no-hyphen, 4-12 digits. Covers banking-statement
 	// surfaces like "KD-6556039", "KDNR 987654321", "D17311590" where the
 	// id is printed standalone in a header column without a "Kundennummer:"
@@ -172,7 +172,7 @@ func (r *DEClinicalIDRecognizer) Name() string { return "DEClinicalIDRecognizer"
 func (r *DEClinicalIDRecognizer) SupportedEntities() []string { return []string{"ID"} }
 
 // SupportedLanguages returns the languages this recognizer applies to.
-// Both — despite the DE prefix in the name, the keyword set is bilingual:
+// Both; despite the DE prefix in the name, the keyword set is bilingual:
 // universal abbreviations (MRN, FN, Patient-ID, ID, histology codes) work
 // in any language, and German/English long forms cover both clinical-text
 // styles. Renaming would require touching every call site; kept as-is.
@@ -225,7 +225,7 @@ func (r *DEClinicalIDRecognizer) Analyze(_ context.Context, text string, _ []str
 		})
 	}
 
-	// 4a. German court-case numbers — anchored on Az/Aktenzeichen. The
+	// 4a. German court-case numbers; anchored on Az/Aktenzeichen. The
 	// keyword anchor disambiguates from incidental "<digit> <word> <digit>/<digit>"
 	// fragments. Submatch group 1 = the case number itself.
 	for _, m := range deCaseNumberAnchoredRE.FindAllStringSubmatchIndex(text, -1) {
@@ -270,7 +270,7 @@ func (r *DEClinicalIDRecognizer) Analyze(_ context.Context, text string, _ []str
 	}
 
 	// Within-recognizer dedupe. Pattern 1 (keyword-anchored) and pattern
-	// 4 (case-number) can both fire on the same start offset — e.g.
+	// 4 (case-number) can both fire on the same start offset; e.g.
 	// "Az.: 10 Ls 296/22" produces the keyword anchor's "10" capture AND
 	// the case-number's "10 Ls 296/22" capture. Keep the longer span and
 	// drop the shorter overlapping one. The analyzer's RemoveConflicts
@@ -281,7 +281,7 @@ func (r *DEClinicalIDRecognizer) Analyze(_ context.Context, text string, _ []str
 
 // dedupeOverlappingIDs keeps the longest finding per overlapping cluster.
 // Within a single recognizer two patterns can produce overlapping spans
-// for the same identifier — the keyword anchor capturing only the
+// for the same identifier; the keyword anchor capturing only the
 // leading-digit prefix while the shape pattern captures the full
 // canonical case number. Pre-dedupe so downstream conflict resolution
 // doesn't have to disambiguate inside the recognizer's own output.

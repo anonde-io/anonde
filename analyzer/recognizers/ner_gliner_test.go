@@ -15,7 +15,7 @@ import (
 )
 
 // gliner_probeText is the German clinical sentence used by
-// bench/probes/hugot/probe.go — small enough to fit a 512-token context,
+// bench/probes/hugot/probe.go; small enough to fit a 512-token context,
 // dense enough that any working clinical-PII model produces multiple
 // hits. Reusing it keeps cross-backend comparison apples-to-apples.
 const gliner_probeText = "Der Patient Herr Müller, geboren am 14.03.1962, wohnhaft Hauptstr. 8, 10115 Berlin, " +
@@ -38,7 +38,7 @@ func TestGLiNERRecognizer_Metadata(t *testing.T) {
 	for _, e := range got {
 		gotSet[e] = true
 	}
-	// These come from DefaultLabelToEntity — if the map shrinks we
+	// These come from DefaultLabelToEntity; if the map shrinks we
 	// want the test to fail explicitly.
 	for _, want := range []string{"PERSON", "LOCATION", "STREET_ADDRESS", "PHONE_NUMBER", "DATE_TIME"} {
 		if !gotSet[want] {
@@ -48,7 +48,7 @@ func TestGLiNERRecognizer_Metadata(t *testing.T) {
 }
 
 // TestGLiNER_MissingModelNoDownload covers the AutoDownload=false path
-// — independent of any cached model, so this runs in every CI env.
+// independent of any cached model, so this runs in every CI env.
 func TestGLiNER_MissingModelNoDownload(t *testing.T) {
 	t.Parallel()
 	rec := recognizers.NewGLiNERRecognizer(recognizers.GLiNERConfig{
@@ -64,7 +64,7 @@ func TestGLiNER_MissingModelNoDownload(t *testing.T) {
 
 // TestGLiNER_SmokeGermanProbe exercises the full inference path on a
 // cached German clinical sentence. Skips cleanly if the model OR
-// libonnxruntime isn't available — the bench machine has both, fresh
+// libonnxruntime isn't available; the bench machine has both, fresh
 // CI nodes may not.
 //
 // Assertion is intentionally loose ("at least 3 entities") because
@@ -90,7 +90,7 @@ func TestGLiNER_SmokeGermanProbe(t *testing.T) {
 	// locations.
 	libPath := os.Getenv("ORT_LIBRARY_PATH")
 	if libPath == "" {
-		// .venv-bench wheel — the most common dev box layout in this repo.
+		// .venv-bench wheel; the most common dev box layout in this repo.
 		wd, _ := os.Getwd()
 		// wd is .../analyzer/recognizers; go up two levels for the repo root.
 		repo := filepath.Clean(filepath.Join(wd, "..", ".."))
@@ -126,7 +126,7 @@ func TestGLiNER_SmokeGermanProbe(t *testing.T) {
 		// The onnxruntime shared library may simply not be installed
 		// on this host (homebrew install onnxruntime, or set
 		// ORT_LIBRARY_PATH to a wheel-shipped .dylib). Skip rather
-		// than fail — this test is opportunistic, not gating.
+		// than fail; this test is opportunistic, not gating.
 		if strings.Contains(err.Error(), "Platform-specific initialization failed") ||
 			strings.Contains(err.Error(), "shared library") {
 			t.Skipf("onnxruntime shared library not available: %v", err)
@@ -138,7 +138,7 @@ func TestGLiNER_SmokeGermanProbe(t *testing.T) {
 	}
 
 	// Sanity: at least one PERSON and one entity within the byte
-	// range of "Müller" (37..43 in the probe text — verified manually).
+	// range of "Müller" (37..43 in the probe text; verified manually).
 	gotPerson := false
 	for _, r := range results {
 		if r.EntityType == "PERSON" {
@@ -160,7 +160,7 @@ func TestGLiNER_SmokeGermanProbe(t *testing.T) {
 // We assert the produced PERSON span text covers the full first-last
 // name pair on every repro fixture from the bug report.
 //
-// Skips cleanly when the model OR libonnxruntime isn't available —
+// Skips cleanly when the model OR libonnxruntime isn't available,
 // same gate as TestGLiNER_SmokeGermanProbe above.
 func TestGLiNER_PersonBreadth(t *testing.T) {
 	t.Parallel()
@@ -259,7 +259,7 @@ func TestGLiNER_PersonBreadth(t *testing.T) {
 			}
 			for k := wantStart; k < wantEnd; k++ {
 				if !covered[k] {
-					t.Errorf("PERSON coverage gap at char %d (%q) of expected name %q in %q — surname likely leaking; results=%+v",
+					t.Errorf("PERSON coverage gap at char %d (%q) of expected name %q in %q; surname likely leaking; results=%+v",
 						k-wantStart, string(tc.text[k]), tc.want, tc.text, results)
 					return
 				}

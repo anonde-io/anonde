@@ -14,8 +14,8 @@ import (
 //
 // Why only the Vault, not the Store: a reveal call does N vault
 // lookups (one per token in the document) but exactly one Store.Get.
-// The read amplification — and therefore the I/O cost worth caching
-// away — is all on the vault side. Store records also carry the full
+// The read amplification; and therefore the I/O cost worth caching
+// away; is all on the vault side. Store records also carry the full
 // anonymized blob and can be 100 KB+; caching N of those would be a
 // memory-bound footgun. Vault entries are ~200 bytes each.
 //
@@ -25,7 +25,7 @@ import (
 //     populates on success. Errors are NOT cached (a transient bbolt
 //     error shouldn't poison subsequent reads).
 //   - Put: writes through to the underlying first, only updates the
-//     cache on success. Order matters — a write that fails the
+//     cache on success. Order matters; a write that fails the
 //     underlying must not leave a stale-but-acknowledged entry in
 //     the cache.
 //   - Delete: removes the cache entry first, then deletes underlying.
@@ -35,7 +35,7 @@ import (
 //
 // This wrapper is correct for TTL=0 (no expiry, current default).
 // With non-zero TTL, the underlying expires rows but the cache
-// doesn't — a tradeoff documented at NewCachedVault. Memory backend
+// doesn't; a tradeoff documented at NewCachedVault. Memory backend
 // users don't need this wrapper.
 //
 // Concurrency: the LRU is goroutine-safe. We add a small RWMutex
@@ -100,7 +100,7 @@ func (c *CachedVault) Get(ctx context.Context, tenantID, token string) (core.Vau
 }
 
 // Stats forwards to the underlying. The cache itself does not add
-// entries to the vault — it only mirrors a subset of them — so the
+// entries to the vault, it only mirrors a subset of them, so the
 // underlying's count is the authoritative value to publish.
 func (c *CachedVault) Stats() core.VaultStats { return c.underlying.Stats() }
 

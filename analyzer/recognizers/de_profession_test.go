@@ -24,7 +24,7 @@ func TestDEProfessionRecognizer(t *testing.T) {
 		{"Rentnerin standalone", "Die Rentnerin stellt sich vor.", []string{"Rentnerin"}},
 		{"Lehrer standalone", "Hauptberuf: Lehrer. Verheiratet.", []string{"Lehrer"}},
 
-		// Must NOT match — Arzt is a clinical role mention, not a patient
+		// Must NOT match; Arzt is a clinical role mention, not a patient
 		// occupation.
 		{"Arzt not matched", "Der behandelnde Arzt war Dr. Müller.", nil},
 		{"Ärztin not matched", "Vorgestellt durch Ärztin Dr. Schmidt.", nil},

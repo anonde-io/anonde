@@ -12,11 +12,11 @@ import (
 // complementary patterns:
 //
 //  1. STRUCTURAL: an English honorific or clinical label immediately followed
-//     by 1–4 capitalised name tokens — "Dr. Sarah Williams", "Patient: Omar
+//     by 1–4 capitalised name tokens; "Dr. Sarah Williams", "Patient: Omar
 //     Hassan". Emitted at score 0.85.
 //
 //  2. BARE: 1–4 contiguous capitalised name-shaped tokens with no preceding
-//     title — "John Smith was admitted". Emitted at score 0.25, deliberately
+//     title; "John Smith was admitted". Emitted at score 0.25, deliberately
 //     below the typical 0.30 score threshold so it is filtered out unless a
 //     context-keyword boost lifts it. The +0.35 enhancement adds when nearby
 //     words match the recognizer's PERSON cues ("patient", "doctor",
@@ -58,7 +58,7 @@ import (
 // "Best,"). Tested by recognizers_test.go::TestENAnomalyAnchorOrder.
 var enAnomalyTitledRE = regexp.MustCompile(
 	`\b(?:` +
-		// Honorifics — period optional ("Mr Smith" vs "Mr. Smith")
+		// Honorifics; period optional ("Mr Smith" vs "Mr. Smith")
 		`Mr\.?|Mrs\.?|Ms\.?|Miss|Mister|Madam|Sir|` +
 		// Medical honorifics
 		`Dr\.?|Prof\.?|Doctor|Professor|` +
@@ -82,25 +82,25 @@ var enAnomalyTitledRE = regexp.MustCompile(
 )
 
 // enAnomalyBareRE matches 1–4 contiguous capitalised name-shaped tokens.
-// Whitespace between tokens is [ \t]+ only — \s+ would let the pattern
+// Whitespace between tokens is [ \t]+ only; \s+ would let the pattern
 // eat across a newline boundary and capture a section header as the next
 // name token.
 var enAnomalyBareRE = regexp.MustCompile(
 	`\b[A-Z][a-zA-Z'-]{1,30}(?:[ \t]+[A-Z][a-zA-Z'-]{1,30}){0,3}\b`,
 )
 
-// enClosedClassPrefixes — English words that should never be the lead token of
+// enClosedClassPrefixes; English words that should never be the lead token of
 // a PERSON span. When the first capitalised token of a bare match is one of
 // these, the whole sequence is dropped.
 //
 // Coverage:
-//   - Articles, demonstratives, prepositions, conjunctions, pronouns — these
+//   - Articles, demonstratives, prepositions, conjunctions, pronouns; these
 //     legitimately appear capitalised at sentence starts.
-//   - English honorifics (Mr, Dr, Patient, …) — the structural path already
+//   - English honorifics (Mr, Dr, Patient, …); the structural path already
 //     captures these followed by a name; the bare path emitting "Mr" alone
 //     when followed by a period (so the title-anchored regex can't span
 //     them) is pure noise.
-//   - Days/months — capitalised calendar tokens that are dates, not names.
+//   - Days/months; capitalised calendar tokens that are dates, not names.
 //
 // Deliberately NOT included: clinical section headers ("Diagnosis",
 // "Treatment", "Discharge", …). Those over-fire as PERSON in clinical
@@ -129,10 +129,10 @@ var enClosedClassPrefixes = map[string]struct{}{
 	"is": {}, "are": {}, "was": {}, "were": {}, "be": {}, "been": {},
 	"will": {}, "would": {}, "could": {}, "should": {}, "may": {},
 	"might": {}, "must": {}, "can": {},
-	// English honorifics — the structural path captures these + a name;
+	// English honorifics. The structural path captures these + a name;
 	// the bare path should not emit them when stripped from a name (e.g.
 	// "Mr." with trailing period breaks the title-anchored regex and the
-	// bare regex matches "Mr" alone — pure noise).
+	// bare regex matches "Mr" alone, pure noise).
 	"mr": {}, "mrs": {}, "ms": {}, "miss": {}, "mister": {}, "madam": {},
 	"sir": {}, "dr": {}, "prof": {}, "doctor": {}, "professor": {},
 	"pt": {}, "patient": {}, "nurse": {}, "physician": {},
@@ -144,13 +144,13 @@ var enClosedClassPrefixes = map[string]struct{}{
 	"november": {}, "december": {},
 }
 
-// enPersonContextKeywords — words that, when appearing within the analyzer's
+// enPersonContextKeywords; words that, when appearing within the analyzer's
 // context window of a bare-name finding, boost its score (default +0.35).
 // Curated for clinical / records context: surrounding language about
 // patients, providers, encounters, and admin metadata.
 //
 // Non-clinical PERSON cues (self-introductions, email signatures, customer
-// support text) are NOT keywords — they are handled by structural anchors
+// support text) are NOT keywords; they are handled by structural anchors
 // in enAnomalyTitledRE ("I am", "Sincerely,", "Regards,", …) so that the
 // anchor + 1–4 caps token shape is required, instead of any nearby
 // business word boosting any capitalised pair (which produced many FPs:
@@ -167,7 +167,7 @@ var enPersonContextKeywords = []string{
 	"presented", "complained",
 	// Identification / metadata
 	"name", "named", "born", "dob", "mrn", "id", "patientid",
-	// Common honorific cues (lowercase forms — uppercase forms are handled
+	// Common honorific cues (lowercase forms; uppercase forms are handled
 	// by the structural recognizer path)
 	"mr", "mrs", "ms", "dr", "prof",
 	// Generic person-ish narrative

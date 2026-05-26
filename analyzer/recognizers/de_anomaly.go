@@ -19,14 +19,14 @@ import (
 //      individual tokens are NOT in the embedded medical/common-German
 //      vocabulary. The intuition: clinical text is dominated by medical
 //      terminology; capitalised tokens that aren't medical are usually
-//      proper nouns — names, places, hospitals.
+//      proper nouns; names, places, hospitals.
 //
 // This recognizer is the "innovative" coverage stage: zero LLM cost,
 // no external NER model, fires in microseconds. Combined with the
 // existing regex / OAS-list recognizers it pushes leak rate on German
 // clinical text down without requiring any inference at all.
 //
-// The vocabulary lists are deliberately *not* exhaustive — they're a
+// The vocabulary lists are deliberately *not* exhaustive; they're a
 // hand-curated kernel covering the highest-frequency medical and
 // general-German tokens. Customers extend via AnalysisConfig.AllowList
 // at runtime as their domain reveals new terms.
@@ -41,7 +41,7 @@ import (
 //
 // Separators between title and name (and between name tokens) are
 // horizontal whitespace only ([ \t]+). Allowing \s+ here would let the
-// pattern eat across a newline into the next paragraph — e.g.
+// pattern eat across a newline into the next paragraph; e.g.
 // "Dr. med. Hans Müller\nKlinik" was incorrectly capturing "Hans
 // Müller Klinik" as a 3-token name.
 var deAnomalyTitledRE = regexp.MustCompile(
@@ -55,7 +55,7 @@ var deAnomalyTitledRE = regexp.MustCompile(
 // horizontal-whitespace separated. Each token must be ≥2 chars to skip
 // initials. \s+ between tokens would let the pattern eat across newlines
 // into the next paragraph header ("Notiz\n\nPatient", "Rehabilitation\n\n
-// Entlassungsbericht\n\nPatient") — see precision-probe FPs.
+// Entlassungsbericht\n\nPatient"); see precision-probe FPs.
 var deAnomalyMultiTokenRE = regexp.MustCompile(
 	`\b[A-ZÄÖÜ][a-zäöüß-]{1,30}(?:[ \t]+[A-ZÄÖÜ][a-zäöüß-]{1,30}){1,4}\b`,
 )
@@ -66,12 +66,12 @@ var deAnomalyMultiTokenRE = regexp.MustCompile(
 
 // deClinicalCoreVocab holds the *medical* core: anatomy, conditions,
 // procedures, drugs, medical roles, calendar. These tokens are also good
-// signals of medical/clinical CONTEXT — e.g. a year appearing right
+// signals of medical/clinical CONTEXT; e.g. a year appearing right
 // after one of these is almost always a date in clinical text.
 // Exported via deClinicalContextSet for use by DEDateContextRecognizer.
 //
 // deClinicalCommonVocab holds general German words (articles, pronouns,
-// common nouns, adjectives, letter-structure terms) — useful only for
+// common nouns, adjectives, letter-structure terms); useful only for
 // anomaly *exclusion*, not for clinical-context signals.
 //
 // deClinicalVocab is the UNION used by the anomaly recognizer to decide
@@ -147,7 +147,7 @@ var deClinicalCoreVocab = [][]string{
 		"pfleger", "pflegerin", "professor", "professorin", "schwester",
 		"stationsarzt", "kollege", "kollegin", "kollegen", "kolleginnen",
 	},
-	// Calendar — full month / day names that pattern-match as capitalised
+	// Calendar; full month / day names that pattern-match as capitalised
 	{
 		"januar", "februar", "märz", "maerz", "april", "mai", "juni", "juli",
 		"august", "september", "oktober", "november", "dezember",
@@ -155,7 +155,7 @@ var deClinicalCoreVocab = [][]string{
 	},
 }
 
-// deClinicalCommonVocab — general German words. Used ONLY for anomaly
+// deClinicalCommonVocab; general German words. Used ONLY for anomaly
 // skipping, never as clinical-context signals.
 var deClinicalCommonVocab = [][]string{
 	// Common German nouns that appear capitalised in clinical text
@@ -242,13 +242,13 @@ var deClinicalCommonVocab = [][]string{
 	},
 }
 
-// deClinicalContextSet is the clinical/medical subset — the vocabulary
+// deClinicalContextSet is the clinical/medical subset; the vocabulary
 // of tokens that signal medical context to other recognizers (notably
 // the bare-year fallback in DEDateContextRecognizer).
 var deClinicalContextSet = buildVocabSet(deClinicalCoreVocab)
 
 // deAnomalyDenySet is the union of the clinical core and general-German
-// vocabulary — used by the anomaly recognizer to decide which capitalised
+// vocabulary; used by the anomaly recognizer to decide which capitalised
 // tokens to SKIP (anything in here is presumed not-PII).
 var deAnomalyDenySet = func() map[string]struct{} {
 	out := make(map[string]struct{}, 2000)
@@ -272,11 +272,11 @@ func buildVocabSet(groups [][]string) map[string]struct{} {
 	return out
 }
 
-// deAnomalyClosedClassPrefixes — German closed-class words that legitimately
+// deAnomalyClosedClassPrefixes; German closed-class words that legitimately
 // appear capitalised at the start of multi-word sequences (sentence start,
 // determiners, prepositions, conjunctions, demonstratives). When the FIRST
 // token of a multi-word capitalised sequence is one of these, the sequence
-// is German narrative, not PII — even if subsequent tokens are unfamiliar
+// is German narrative, not PII; even if subsequent tokens are unfamiliar
 // nouns. Without this gate the Wikipedia precision probe sees 89 FPs/doc
 // because German capitalises all nouns and all sentence-start words.
 var deAnomalyClosedClassPrefixes = map[string]struct{}{
@@ -370,7 +370,7 @@ func (r *DEAnomalyRecognizer) SupportedLanguages() []string { return []string{"d
 
 // Analyze scans text for title-prefixed names and anomalous capitalised
 // sequences. Header (first 600 chars) and footer (last 400 chars) get a
-// modest score boost — most identifying PII clusters in those positions
+// modest score boost; most identifying PII clusters in those positions
 // in German clinical letters.
 func (r *DEAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
 	if text == "" {
@@ -418,7 +418,7 @@ func (r *DEAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 
 	// 2. Multi-token capitalised sequences whose tokens are not all in the
 	// medical/common vocabulary AND don't start with a closed-class word.
-	// The closed-class gate is the dominant precision lever — without it,
+	// The closed-class gate is the dominant precision lever; without it,
 	// German narrative ("Diese Störungen", "Die Lehre", "Im Gegensatz") is
 	// flagged as PERSON because German capitalises every noun.
 	for _, m := range deAnomalyMultiTokenRE.FindAllStringIndex(text, -1) {

@@ -136,7 +136,7 @@ func TestCachedVault_DeleteInvalidates(t *testing.T) {
 	}
 
 	if _, err := v.Get(ctx, "demo", "<T>"); err == nil {
-		t.Fatalf("Get after Delete: expected error, got nil — cache served stale entry")
+		t.Fatalf("Get after Delete: expected error, got nil; cache served stale entry")
 	}
 	// Get-after-Delete must reach the underlying (one Get).
 	if got := under.gets.Load(); got != 1 {
@@ -146,7 +146,7 @@ func TestCachedVault_DeleteInvalidates(t *testing.T) {
 
 // ─── Failing underlying Put leaves cache unchanged ─────────────────
 
-// errPutVault always fails Put — verifies write-through ordering: the
+// errPutVault always fails Put; verifies write-through ordering: the
 // cache must not learn about a Put the underlying rejected.
 type errPutVault struct{ *countingVault }
 
@@ -188,7 +188,7 @@ func TestCachedVault_ErrorsAreNotCached(t *testing.T) {
 			t.Fatalf("iteration %d: expected underlying error", i)
 		}
 	}
-	// All 3 Gets should have hit the underlying — errors are not cached.
+	// All 3 Gets should have hit the underlying; errors are not cached.
 	if got := under.gets.Load(); got != 3 {
 		t.Fatalf("expected 3 underlying Gets when errors are not cached, got %d", got)
 	}

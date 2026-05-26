@@ -65,7 +65,7 @@ func (v *MemoryVault) Delete(_ context.Context, tenantID, token string) error {
 // Stats walks the live entry map under the mutex. The map is small
 // in practice (the in-memory vault is reset every restart, so it
 // never accumulates indefinitely) and computing both entries and
-// bytes in one pass is cheap enough to run on every scrape — the
+// bytes in one pass is cheap enough to run on every scrape; the
 // alternative of maintaining live counters would add a write under
 // every Put/Delete just to feed metrics, which isn't worth it.
 func (v *MemoryVault) Stats() core.VaultStats {
@@ -141,7 +141,7 @@ func (s *MemoryStore) Delete(_ context.Context, tenantID, id string) (bool, erro
 }
 
 // Stats walks the records under the mutex. AnonymizedContent
-// dominates the byte count — the token slice is small enough that we
+// dominates the byte count; the token slice is small enough that we
 // ignore it here to keep the loop cheap. Approximation, not audit.
 func (s *MemoryStore) Stats() core.StoreStats {
 	s.mu.Lock()

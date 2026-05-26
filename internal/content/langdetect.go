@@ -12,7 +12,7 @@ import (
 // language.
 //
 // Why a heuristic and not a model: anonde runs in-process, often as a
-// sidecar — we don't want to ship a language-detection model or pay
+// sidecar; we don't want to ship a language-detection model or pay
 // cold-start latency for sub-millisecond classification. >99% accuracy
 // in practice on the targets we care about (clinical letters, log
 // lines, business prose).
@@ -20,11 +20,11 @@ import (
 // Algorithm:
 //
 //  1. Look for German-specific characters (ä, ö, ü, ß, ÄÖÜ). Each
-//     occurrence is a strong DE marker — English essentially never uses
+//     occurrence is a strong DE marker; English essentially never uses
 //     umlauts/eszett. We weight each at deRunesWeight points.
 //  2. Lowercase + tokenise the first detectSampleBytes on non-letter
 //     boundaries. Count tokens in deStopwords and enStopwords (disjoint
-//     lists — every entry is a function word unique to that language).
+//     lists; every entry is a function word unique to that language).
 //  3. Combine: deScore = umlautCount*deRunesWeight + deStopwordHits;
 //     enScore = enStopwordHits. Whichever score is strictly larger
 //     wins. Returns "" on a true zero/zero tie so caller can default.
@@ -39,7 +39,7 @@ const (
 	deRunesWeight     = 3
 )
 
-// germanSpecificRunes — characters German uses but English doesn't.
+// germanSpecificRunes; characters German uses but English doesn't.
 var germanSpecificRunes = map[rune]struct{}{
 	'ä': {}, 'ö': {}, 'ü': {}, 'ß': {},
 	'Ä': {}, 'Ö': {}, 'Ü': {},

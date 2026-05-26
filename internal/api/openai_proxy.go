@@ -23,14 +23,14 @@ import (
 //
 // The route is a single OpenAI-shaped endpoint, POST /v1/chat/completions,
 // so the client base URL is byte-identical to a real OpenAI swap
-// (http://host/v1). The upstream provider is selected in-band — the
-// OpenRouter convention — by a "provider/model" prefix on the `model`
+// (http://host/v1). The upstream provider is selected in-band; the
+// OpenRouter convention; by a "provider/model" prefix on the `model`
 // field: "openai/gpt-4o" routes to OpenAI and forwards the bare model
 // "gpt-4o" upstream. A model with no prefix defaults to OpenAI. v0.1
 // proxies OpenAI only; any other provider prefix is rejected with a
 // clear error. Anthropic / Gemini routing lands in v0.2.
 //
-// v0.1 is non-streaming only — a `stream: true` request is rejected
+// v0.1 is non-streaming only; a `stream: true` request is rejected
 // rather than silently downgraded, because SSE de-anonymization needs
 // a placeholder re-assembler (a `<PERSON_1>` token can split across
 // two chunks). Streaming lands in v0.1.1; see launch_plan.md.
@@ -58,7 +58,7 @@ const (
 
 // OpenAIProxyConfig configures the OpenAI upstream the proxy forwards
 // to (POST /v1/chat/completions, model ids prefixed "openai/"). It is
-// per-provider by design — a future AnthropicProxyConfig will be its
+// per-provider by design; a future AnthropicProxyConfig will be its
 // sibling, selected by the "anthropic/" model prefix. Every field has safe
 // zero-value behaviour: an empty UpstreamBaseURL defaults to OpenAI, an
 // empty UpstreamAPIKey forwards no Authorization header (which is what
@@ -86,7 +86,7 @@ type OpenAIProxyConfig struct {
 
 // openAIProxy holds the resolved proxy configuration and the core
 // Service it delegates anonymize / reveal to. It does not duplicate
-// any orchestration — anonymizeSegments calls Service.Ingest and
+// any orchestration; anonymizeSegments calls Service.Ingest and
 // revealResponse calls Service.Reveal.
 type openAIProxy struct {
 	svc    *core.Service
@@ -141,7 +141,7 @@ func (p *openAIProxy) chatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	if rawBool(req["stream"]) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
-			"streaming responses are not supported yet — set stream:false "+
+			"streaming responses are not supported yet; set stream:false "+
 				"(anonde v0.1 limitation; streaming lands in v0.1.1)")
 		return
 	}
@@ -154,7 +154,7 @@ func (p *openAIProxy) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	provider, bareModel, hadPrefix := parseModelProvider(req["model"])
 	if provider != defaultProvider {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
-			fmt.Sprintf("model provider %q is not supported yet — anonde v0.1 proxies "+
+			fmt.Sprintf("model provider %q is not supported yet; anonde v0.1 proxies "+
 				"%q only; use a %q-prefixed model id (e.g. %q/gpt-4o) or none",
 				provider, defaultProvider, defaultProvider, defaultProvider))
 		return
@@ -239,7 +239,7 @@ func (p *openAIProxy) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pass an upstream error (non-2xx) straight through — it carries no
+	// Pass an upstream error (non-2xx) straight through; it carries no
 	// revealable content and the client expects the upstream's own
 	// error shape. Same for the (rare) request with nothing to reveal.
 	if upstream.StatusCode < 200 || upstream.StatusCode >= 300 || anonID == "" {
@@ -260,7 +260,7 @@ func (p *openAIProxy) chatCompletions(w http.ResponseWriter, r *http.Request) {
 // anonymizeSegments anonymizes every segment in one Service.Ingest call
 // by packing them into a JSON object keyed by index. Doing it in one
 // call (rather than one per segment) means the same cleartext gets the
-// same token across messages — the upstream model sees a consistent
+// same token across messages; the upstream model sees a consistent
 // conversation. Returns the anonymized segments in input order plus the
 // minted anonymization id used later to reveal the response.
 func (p *openAIProxy) anonymizeSegments(ctx context.Context, tenant string, segs []string) ([]string, string, error) {
@@ -293,7 +293,7 @@ func (p *openAIProxy) anonymizeSegments(ctx context.Context, tenant string, segs
 
 // revealResponse de-anonymizes choices[].message.content in an OpenAI
 // chat-completion response. A body we can't parse as the expected shape
-// is returned unchanged rather than treated as an error — the worst
+// is returned unchanged rather than treated as an error; the worst
 // case is the client sees tokens, never raw PII, and never a 500 on a
 // response shape we simply didn't anticipate.
 func (p *openAIProxy) revealResponse(ctx context.Context, tenant, id string, body []byte) ([]byte, error) {
@@ -323,7 +323,7 @@ func (p *openAIProxy) revealResponse(ctx context.Context, tenant, id string, bod
 		var content string
 		if json.Unmarshal(msg["content"], &content) != nil || content == "" {
 			// content is absent, empty, or non-string (e.g. a
-			// tool-call-only message) — nothing to reveal.
+			// tool-call-only message); nothing to reveal.
 			continue
 		}
 		rev, err := p.svc.Reveal(ctx, core.RevealRequest{
@@ -414,7 +414,7 @@ func collectSegmentJobs(msg map[string]json.RawMessage) []*segJob {
 			set: func(v string) {
 				b, _ := json.Marshal(v)
 				part["text"] = b
-				// Re-marshal the whole parts array — the maps are
+				// Re-marshal the whole parts array; the maps are
 				// mutated in place, so this picks up every part.
 				full, _ := json.Marshal(parts)
 				msg["content"] = full

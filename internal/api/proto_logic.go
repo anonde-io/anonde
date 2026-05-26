@@ -14,7 +14,7 @@ import (
 // pull the inner message out, call the executeX functions here, then
 // wrap the returned native error in the protocol's error type.
 //
-// Service stays unaware of proto — it owns business logic against the
+// Service stays unaware of proto; it owns business logic against the
 // internal IngestRequest / DetokenizeRequest / … types.
 
 func executeCreate(ctx context.Context, svc *core.Service, msg *anondev1.CreateAnonymizationRequest) (*anondev1.CreateAnonymizationResponse, error) {
@@ -196,7 +196,7 @@ func intMapToInt32Map(in map[string]int) map[string]int32 {
 //
 // score_threshold_set is the explicit "field present" signal. Without
 // it, score_threshold=0 is ambiguous between "include everything" and
-// "use service default" — see TODO.md.
+// "use service default"; see TODO.md.
 func applyAnalyzerOptions(
 	language *string,
 	entities *[]string,

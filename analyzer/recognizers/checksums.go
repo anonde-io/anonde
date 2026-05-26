@@ -97,8 +97,8 @@ func validateAUMedicare(s string) bool {
 	return sum%10 == int(s[8]-'0')
 }
 
-// IN PAN: AAAAA9999A — 5 letters + 4 digits + 1 letter. Fourth letter
-// indicates entity type (P=Individual, F=Firm, etc.) — we don't enforce it
+// IN PAN: AAAAA9999A; 5 letters + 4 digits + 1 letter. Fourth letter
+// indicates entity type (P=Individual, F=Firm, etc.); we don't enforce it
 // strictly to allow forward compatibility, but reject obviously malformed
 // values up to the regex check.
 func validateINPAN(s string) bool {
@@ -258,7 +258,7 @@ func validateESNIE(s string) bool {
 
 // PL PESEL: 11 digits. Weights [1,3,7,9,1,3,7,9,1,3] over first 10, sum mod 10,
 // check = (10 - sum%10) mod 10 must equal digit 11. Also, embedded date must
-// be plausible — month encodes century via offsets (0,20,40,60,80).
+// be plausible; month encodes century via offsets (0,20,40,60,80).
 func validatePLPESEL(s string) bool {
 	if len(s) != 11 || !digitsOnly(s) {
 		return false
@@ -400,7 +400,7 @@ func validateDESteuerID(s string) bool {
 }
 
 // UK NHS number: 10 digits, weights [10,9,8,7,6,5,4,3,2] over the first 9,
-// check = 11 - (sum%11). 11 → invalid; 10 → invalid; otherwise must equal digit 10.
+// check = 11 - (sum%11). 11 → invalid, 10 → invalid, otherwise must equal digit 10.
 func validateUKNHS(s string) bool {
 	if len(s) != 10 || !digitsOnly(s) {
 		return false

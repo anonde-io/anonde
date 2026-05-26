@@ -12,14 +12,14 @@ import (
 // Each instance holds:
 //
 //   - one or more regex variants with distinct base scores ("strong" /
-//     "medium" / "weak" — matching Presidio's pattern naming convention),
+//     "medium" / "weak"; matching Presidio's pattern naming convention),
 //   - an optional Validate hook to bump (or reject) findings via a checksum
 //     or format check,
 //   - context keywords used by analyzer.ContextEnhancer to boost confidence
 //     when suggestive words appear nearby.
 //
 // New regional recognizers should just declare data via NewValidatedRecognizer
-// rather than implement EntityRecognizer from scratch — keeps each file thin
+// rather than implement EntityRecognizer from scratch; keeps each file thin
 // and the behavior auditable in one place.
 type validatedRecognizer struct {
 	name      string
@@ -50,7 +50,7 @@ type scoredPattern struct {
 // NewValidatedRecognizer builds a regional recognizer.
 //
 // `patterns` is a list of (regex source, base score) pairs. They're compiled
-// at construction time; a malformed regex panics — appropriate for package
+// at construction time, a malformed regex panics, appropriate for package
 // initialization, since all recognizers live behind constructor functions.
 func NewValidatedRecognizer(
 	name, entity string,
@@ -95,7 +95,7 @@ func (r *validatedRecognizer) Analyze(_ context.Context, text string, _ []string
 	if text == "" {
 		return nil, nil
 	}
-	// De-dup overlapping spans from multiple variants — keep the highest
+	// De-dup overlapping spans from multiple variants; keep the highest
 	// pattern score on identical (start,end). Conflict resolution at the
 	// engine level handles broader overlaps.
 	type span struct{ s, e int }
@@ -154,7 +154,7 @@ func (r *validatedRecognizer) Analyze(_ context.Context, text string, _ []string
 	return out, nil
 }
 
-// stripSeparators removes spaces, dots, dashes, and slashes — common formatters
+// stripSeparators removes spaces, dots, dashes, and slashes; common formatters
 // across the regional ID schemes we support.
 func stripSeparators(s string) string {
 	rep := strings.NewReplacer(" ", "", "-", "", ".", "", "/", "")

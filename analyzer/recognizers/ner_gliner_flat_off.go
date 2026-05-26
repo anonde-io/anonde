@@ -21,7 +21,7 @@ import (
 )
 
 // errGLiNERFlatDisabled is the canned error returned by every Analyze
-// call when the hugot tag is absent. It's a sentinel — callers can check
+// call when the hugot tag is absent. It's a sentinel; callers can check
 // via errors.Is for clean handling in tests.
 var errGLiNERFlatDisabled = errors.New("gliner-flat: backend not available: " +
 	"this binary was built without -tags hugot. " +
@@ -34,7 +34,7 @@ type GLiNERFlatRecognizer struct {
 }
 
 // NewGLiNERFlatRecognizer returns the stub. Construction always
-// succeeds — the error surfaces only at Analyze-time so a wired-up engine
+// succeeds; the error surfaces only at Analyze-time so a wired-up engine
 // can still boot and report which backend is missing.
 func NewGLiNERFlatRecognizer(cfg GLiNERConfig) *GLiNERFlatRecognizer {
 	return &GLiNERFlatRecognizer{cfg: cfg}

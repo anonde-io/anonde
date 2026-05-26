@@ -22,7 +22,7 @@ import (
 // The list is curated for German clinical text. Customers can extend it
 // at runtime via AnalysisConfig.DenyList for org-specific place names.
 
-// Countries — German names. Closed list, ~unambiguous in clinical text.
+// Countries; German names. Closed list, ~unambiguous in clinical text.
 var dePlaceCountries = makeSet(
 	"Deutschland", "Österreich", "Schweiz", "Liechtenstein", "Luxemburg",
 	"Frankreich", "Italien", "Spanien", "Portugal", "Niederlande", "Belgien",
@@ -44,7 +44,7 @@ var dePlaceCountries = makeSet(
 	"Australien", "Neuseeland",
 )
 
-// States — German Bundesländer + Austrian states + Swiss cantons.
+// States; German Bundesländer + Austrian states + Swiss cantons.
 var dePlaceStates = makeSet(
 	// Germany
 	"Baden-Württemberg", "Bayern", "Berlin", "Brandenburg", "Bremen",
@@ -62,11 +62,11 @@ var dePlaceStates = makeSet(
 	"Wallis", "Neuenburg", "Genf", "Jura",
 )
 
-// Cities — top German/Austrian/Swiss cities by population, plus a
+// Cities; top German/Austrian/Swiss cities by population, plus a
 // selection of medium cities common in clinical text. Lower score (0.65)
 // because some overlap with German surnames.
 var dePlaceCities = makeSet(
-	// Germany — top 60+
+	// Germany; top 60+
 	"Berlin", "Hamburg", "München", "Köln", "Frankfurt", "Stuttgart",
 	"Düsseldorf", "Leipzig", "Dortmund", "Essen", "Bremen", "Dresden",
 	"Hannover", "Nürnberg", "Duisburg", "Bochum", "Wuppertal", "Bielefeld",

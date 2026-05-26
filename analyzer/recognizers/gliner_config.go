@@ -1,7 +1,7 @@
 // gliner_config.go is intentionally NOT build-tagged. GLiNERConfig and
 // DefaultPIILabels are pure-data declarations (no hugot/onnxruntime
 // dependency in any field type), so they can be defined and referenced in
-// non-hugot builds — the stub `DefaultAnalyzerEngineWithGLiNERConfig` in
+// non-hugot builds; the stub `DefaultAnalyzerEngineWithGLiNERConfig` in
 // ../../hugot_off.go uses GLiNERConfig in its signature so the public API
 // surface stays stable across build variants.
 
@@ -20,7 +20,7 @@ type GLiNERConfig struct {
 	ModelsDir string
 
 	// ModelName is the HuggingFace model ID to use.
-	// Defaults to "knowledgator/gliner-pii-base-v1.0" — a DeBERTa-v3-small
+	// Defaults to "knowledgator/gliner-pii-base-v1.0"; a DeBERTa-v3-small
 	// uni-encoder span-level GLiNER fine-tuned on broad PII data.
 	//
 	// Any GLiNER uni-encoder-span ONNX export with the same input/output
@@ -63,7 +63,7 @@ type GLiNERConfig struct {
 
 	// MaxTokens is the upper bound on the encoder sequence length per
 	// chunk (subword tokens including the prompt prefix + specials).
-	// Defaults to 384 — leaves headroom inside DeBERTa-v3's 512-token
+	// Defaults to 384; leaves headroom inside DeBERTa-v3's 512-token
 	// position embedding. Lower values shrink each chunk and increase
 	// the chunk count.
 	MaxTokens int
@@ -96,7 +96,7 @@ type GLiNERConfig struct {
 // recall; keep the list narrow to avoid noisy false positives, but wide
 // enough to cover common anonde entity types.
 //
-// Order matters only for determinism — the model treats labels as a set.
+// Order matters only for determinism; the model treats labels as a set.
 var DefaultPIILabels = []string{
 	"person",
 	"first name",

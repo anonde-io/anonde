@@ -19,7 +19,7 @@ import (
 //  2. Vocabulary fallback: a closed list of unambiguous German
 //     occupation words (Rentnerin, Lehrer, Ingenieurin, Bäcker, …).
 //     Excludes words that appear too often in non-occupation roles in
-//     clinical text — most importantly "Arzt"/"Ärztin", which almost
+//     clinical text; most importantly "Arzt"/"Ärztin", which almost
 //     always refer to a treating physician (a NAME_DOCTOR context, not
 //     patient profession).
 
@@ -35,14 +35,14 @@ var (
 			`)` +
 			// Single token (capital initial + lowercase tail) with an
 			// optional hyphenated continuation that must also be capitalised
-			// (e.g. "Maschinenbau-Techniker"). No space-joined continuation —
+			// (e.g. "Maschinenbau-Techniker"). No space-joined continuation,
 			// that would greedily eat the next sentence word.
 			`([A-ZÄÖÜ][A-Za-zäöüß]+(?:-[A-ZÄÖÜ][A-Za-zäöüß]+)?)\b`,
 	)
 
 	// Closed vocabulary of German profession words that are
 	// unambiguous patient-occupation tokens. Deliberately excludes
-	// "Arzt", "Ärztin" — those mean *treating physician* in clinical
+	// "Arzt", "Ärztin"; those mean *treating physician* in clinical
 	// text, not patient profession.
 	deProfessionVocabRE = regexp.MustCompile(`\b(?:` +
 		`Rentner(?:in)?|` +

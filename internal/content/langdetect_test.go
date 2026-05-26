@@ -34,7 +34,7 @@ func TestDetectLanguage(t *testing.T) {
 			"",
 		},
 		{
-			"Bare phone returns unknown — no function words",
+			"Bare phone returns unknown; no function words",
 			"+49 89 1234567",
 			"",
 		},

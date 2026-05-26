@@ -17,7 +17,7 @@ import "regexp"
 // resolver keeps the highest-score match on overlaps.
 
 var (
-	// 0AAAA/NNNNN — area code "0…" of 3–6 digits, slash, 4–10 local digits.
+	// 0AAAA/NNNNN; area code "0…" of 3–6 digits, slash, 4–10 local digits.
 	dePhoneSlashRE = regexp.MustCompile(
 		`\b0\d{2,5}\/\s?\d{3,10}(?:[-\s]\d{1,8})?\b`,
 	)

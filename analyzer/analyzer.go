@@ -64,7 +64,7 @@ func stripANSI(text string) (cleaned string, offsetMap []int) {
 
 // translateFindings remaps Start/End offsets from cleaned-text space
 // to original-text space using the offset map produced by stripANSI.
-// A nil offsetMap is a no-op — used when stripANSI found no escapes.
+// A nil offsetMap is a no-op; used when stripANSI found no escapes.
 func translateFindings(findings []RecognizerResult, offsetMap []int) []RecognizerResult {
 	if offsetMap == nil {
 		return findings
@@ -101,7 +101,7 @@ type AnalysisConfig struct {
 	//
 	// Pattern-based PERSON / LOCATION / ORGANIZATION recognizers
 	// (ENAnomalyRecognizer, DEAnomalyRecognizer, DEPlaceRecognizer, …) are
-	// NOT gated by this flag — they're cheap regex / vocabulary work and
+	// NOT gated by this flag; they're cheap regex / vocabulary work and
 	// silently disabling them under DisableNER would drop substantial
 	// recall on the patterns-only deployment path.
 	DisableNER bool
@@ -112,7 +112,7 @@ type AnalysisConfig struct {
 	AllowList []string
 	// DenyList forces findings for the given strings even if no recognizer
 	// fired. Matches are emitted with EntityType="DENY_LIST" and score 1.0.
-	// Use sparingly — for code-names / brand strings that must always be
+	// Use sparingly; for code-names / brand strings that must always be
 	// redacted regardless of recognizer coverage.
 	DenyList []string
 
@@ -129,7 +129,7 @@ type AnalyzerEngine struct {
 	Registry *RecognizerRegistry
 
 	// metrics records per-finding and per-conflict observations. Nil
-	// is safe — the analyzer treats it as a no-op. Set via
+	// is safe; the analyzer treats it as a no-op. Set via
 	// SetMetrics(r) from cmd/anonde wiring after the engine is built;
 	// it's separate from the constructor because the constructor sees
 	// fan-out through many helper functions (DefaultAnalyzerEngine,
@@ -140,7 +140,7 @@ type AnalyzerEngine struct {
 
 // SetMetrics attaches a metrics Recorder for per-finding and
 // per-conflict instrumentation. Pass metrics.NewNoop() to explicitly
-// disable, or just don't call this — nil and noop behave identically.
+// disable, or just don't call this; nil and noop behave identically.
 // Safe to call once at boot; not goroutine-safe to reassign at
 // runtime (no use case for that yet).
 func (e *AnalyzerEngine) SetMetrics(r metrics.Recorder) {
@@ -159,7 +159,7 @@ func (e *AnalyzerEngine) recorder() metrics.Recorder {
 // metric labels for anonde_conflicts_resolved_total: "ner" for
 // findings produced by a model-backed recognizer, "pattern" for
 // everything else (regex, checksum, vocabulary). Keeps the conflict
-// metric's cardinality at 2×2 — the alternative of labelling by
+// metric's cardinality at 2×2; the alternative of labelling by
 // recognizer name would explode to 52×52.
 func conflictKind(r RecognizerResult) string {
 	if isNERRecognizer(r) {
@@ -169,7 +169,7 @@ func conflictKind(r RecognizerResult) string {
 }
 
 // hasCapitalisedWords returns true if the text contains at least one word that
-// starts with an uppercase letter — a necessary (not sufficient) condition for
+// starts with an uppercase letter; a necessary (not sufficient) condition for
 // NER entities to be present. We deliberately accept a leading-position capital:
 // short inputs like a single CSV cell ("John Smith"), a log line ("Smith called
 // support"), or any sentence where the only entity is the first token would
@@ -193,7 +193,7 @@ func hasCapitalisedWords(text string) bool {
 // neural model (ONNX / LLM). The patterns-only mode of the engine skips
 // these to avoid loading models or making external calls.
 //
-// Identified by name suffix, not by the entity types emitted — regex
+// Identified by name suffix, not by the entity types emitted; regex
 // and lookup-based recognizers also emit PERSON / LOCATION /
 // ORGANIZATION (DEAnomalyRecognizer, DEPlaceRecognizer, the German org
 // pattern recognizer, …) and skipping them in patterns-only mode would
@@ -291,7 +291,7 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		wg.Add(1)
 		go func(r EntityRecognizer) {
 			defer wg.Done()
-			// Defensive recovery — a misbehaving recognizer (notably
+			// Defensive recovery; a misbehaving recognizer (notably
 			// upstream model bindings) must not bring down the whole batch.
 			// We surface the panic to the caller as a normal error.
 			defer func() {
@@ -306,18 +306,18 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	// Wait-or-cancel: spawn a sentinel goroutine that closes `done`
 	// once every recognizer has returned. If `ctx` fires first we stop
 	// blocking and harvest whatever results landed on the buffered
-	// channel — partial coverage is still useful (the bench scores
+	// channel; partial coverage is still useful (the bench scores
 	// per-recognizer leaks, and an HTTP caller that just timed out
 	// would rather have something than nothing).
 	//
 	// Recognizers SHOULD honour ctx in their inner loops (GLiNER chunk
 	// loop, Ollama HTTP, etc.); the select-on-ctx here is the bounded
-	// guard against the ones that don't — a single hung recognizer
+	// guard against the ones that don't; a single hung recognizer
 	// would otherwise stall the whole pipeline forever.
 	//
 	// Note: `ch` is buffered to len(candidates), so the laggard
 	// goroutines can still send their result after we've returned and
-	// will not leak — they exit on their own.
+	// will not leak; they exit on their own.
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -330,7 +330,7 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	case <-ctx.Done():
 		ctxErr = ctx.Err()
 		log.Printf("analyzer: ctx cancelled before all recognizers returned (%v); harvesting partial results", ctxErr)
-		// Do NOT close ch — slow goroutines still hold a send token
+		// Do NOT close ch; slow goroutines still hold a send token
 		// and would panic on send-to-closed. Drain non-blocking by
 		// switching to a different receive pattern below.
 	}
@@ -432,7 +432,7 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	// Emit per-finding metrics over the surviving set. Done here (vs.
 	// upstream of conflict resolution) because we want the
 	// score histogram + entities counter to reflect what the
-	// anonymizer actually tokenizes — losers in a conflict don't
+	// anonymizer actually tokenizes; losers in a conflict don't
 	// show up downstream and shouldn't be double-counted as
 	// "detected".
 	for _, r := range all {

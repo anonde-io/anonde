@@ -12,7 +12,7 @@ import (
 // proxyHarness wires a real Service-backed HTTPServer in front of a
 // mock OpenAI upstream. The mock records the body it received (so a
 // test can assert no raw PII reached it) and echoes the inbound user
-// content straight back as the assistant message — so a correct
+// content straight back as the assistant message; so a correct
 // round-trip reveals the original PII to the client.
 type proxyHarness struct {
 	client      *httptest.Server
@@ -52,7 +52,7 @@ func (h *proxyHarness) post(t *testing.T, body string) (*http.Response, string) 
 }
 
 // echoLastMessage replies with a chat-completion whose assistant
-// content is the text of the last message in the request — i.e. it
+// content is the text of the last message in the request; i.e. it
 // echoes back whatever (anonymized) text the proxy forwarded. It
 // understands both the string and the multimodal-array content shapes.
 func echoLastMessage(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +69,7 @@ func echoLastMessage(w http.ResponseWriter, r *http.Request) {
 	if n := len(req.Messages); n > 0 {
 		raw := req.Messages[n-1].Content
 		if json.Unmarshal(raw, &content) != nil {
-			// Multimodal array — concatenate the text parts.
+			// Multimodal array; concatenate the text parts.
 			var parts []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -205,7 +205,7 @@ func TestOpenAIProxy_ModelProviderPrefix(t *testing.T) {
 	h := newProxyHarness(t, echoLastMessage)
 
 	// An OpenRouter-style "openai/" prefix must be stripped before the
-	// request reaches the upstream — OpenAI itself doesn't know the
+	// request reaches the upstream; OpenAI itself doesn't know the
 	// "openai/gpt-4o" id.
 	resp, out := h.post(t, `{"model":"openai/gpt-4o","messages":[{"role":"user","content":"hi a@b.com"}]}`)
 	if resp.StatusCode != http.StatusOK {

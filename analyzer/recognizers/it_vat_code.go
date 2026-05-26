@@ -4,8 +4,8 @@ package recognizers
 //
 // We only match with the "IT" prefix or near explicit context (handled by
 // the engine's context enhancer). A bare 11-digit pattern here would collide
-// with PL_PESEL — both validators happen to accept some of the same
-// strings — so we keep the regex strict and rely on context to win
+// with PL_PESEL; both validators happen to accept some of the same
+// strings; so we keep the regex strict and rely on context to win
 // disambiguation.
 func NewITVATCodeRecognizer() *validatedRecognizer {
 	r := NewValidatedRecognizer(

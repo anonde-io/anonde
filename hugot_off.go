@@ -11,7 +11,7 @@ import (
 
 // DefaultAnalyzerEngineWithHugot is a fail-fast stub used when the binary
 // is built **without** the `hugot` tag. The real hugot backend, its ONNX
-// runtime, and the tokenizer wrappers are not compiled in — calling this
+// runtime, and the tokenizer wrappers are not compiled in; calling this
 // terminates the process with an actionable message rather than returning
 // a partially functional engine.
 //
@@ -38,7 +38,7 @@ func DefaultAnalyzerEngineWithHugotConfig(_ recognizers.HugotNERConfig) *analyze
 
 // DefaultAnalyzerEngineWithGLiNERConfig is the fail-fast stub for the
 // Go-native GLiNER recognizer. Same rationale as
-// DefaultAnalyzerEngineWithHugot — the real implementation needs CGO
+// DefaultAnalyzerEngineWithHugot; the real implementation needs CGO
 // onnxruntime + tokenizers (both pulled in by the `hugot` build tag).
 func DefaultAnalyzerEngineWithGLiNERConfig(_ recognizers.GLiNERConfig) *analyzer.AnalyzerEngine {
 	log.Fatalf("gliner backend not available: this binary was built without -tags hugot. " +
@@ -49,7 +49,7 @@ func DefaultAnalyzerEngineWithGLiNERConfig(_ recognizers.GLiNERConfig) *analyzer
 
 // DefaultAnalyzerEngineWithGLiNERFlatConfig is the fail-fast stub for the
 // flat-decoder GLiNER recognizer. Same rationale as
-// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// DefaultAnalyzerEngineWithGLiNERConfig; the real implementation needs
 // CGO onnxruntime + tokenizers (both pulled in by the `hugot` build tag).
 func DefaultAnalyzerEngineWithGLiNERFlatConfig(_ recognizers.GLiNERConfig) *analyzer.AnalyzerEngine {
 	log.Fatalf("gliner-flat backend not available: this binary was built without -tags hugot. " +
@@ -60,7 +60,7 @@ func DefaultAnalyzerEngineWithGLiNERFlatConfig(_ recognizers.GLiNERConfig) *anal
 
 // DefaultAnalyzerEngineWithGLiNEREnsemble is the fail-fast stub for the
 // GLiNER ensemble recognizer. Same rationale as
-// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// DefaultAnalyzerEngineWithGLiNERConfig; the real implementation needs
 // `-tags hugot`.
 func DefaultAnalyzerEngineWithGLiNEREnsemble(_ *recognizers.EnsembleGLiNERRecognizer) *analyzer.AnalyzerEngine {
 	log.Fatalf("gliner-ensemble backend not available: this binary was built without -tags hugot. " +
@@ -71,7 +71,7 @@ func DefaultAnalyzerEngineWithGLiNEREnsemble(_ *recognizers.EnsembleGLiNERRecogn
 
 // DefaultAnalyzerEngineWithGLiNERPool is the fail-fast stub for the
 // span-decoder GLiNER pool. Same rationale as
-// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// DefaultAnalyzerEngineWithGLiNERConfig; the real implementation needs
 // `-tags hugot`.
 func DefaultAnalyzerEngineWithGLiNERPool(_ *recognizers.GLiNERPool) *analyzer.AnalyzerEngine {
 	log.Fatalf("gliner pool not available: this binary was built without -tags hugot. " +
@@ -82,7 +82,7 @@ func DefaultAnalyzerEngineWithGLiNERPool(_ *recognizers.GLiNERPool) *analyzer.An
 
 // DefaultAnalyzerEngineWithGLiNERFlatPool is the fail-fast stub for the
 // flat-decoder GLiNER pool. Same rationale as
-// DefaultAnalyzerEngineWithGLiNERConfig — the real implementation needs
+// DefaultAnalyzerEngineWithGLiNERConfig; the real implementation needs
 // `-tags hugot`.
 func DefaultAnalyzerEngineWithGLiNERFlatPool(_ *recognizers.GLiNERFlatPool) *analyzer.AnalyzerEngine {
 	log.Fatalf("gliner flat pool not available: this binary was built without -tags hugot. " +

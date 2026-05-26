@@ -22,7 +22,7 @@ import (
 //   - pdfMarshaler: a runtime.Marshaler keyed on Content-Type
 //     "application/pdf" so the REST gateway reads/writes raw PDF bytes
 //     instead of base64-in-JSON. The wildcard JSONPb marshaler still
-//     handles every other content type — this only kicks in when a
+//     handles every other content type; this only kicks in when a
 //     caller explicitly asks for / sends application/pdf.
 //
 //   - tenantMetadataAnnotator: pulls X-Anonde-Tenant from the inbound
@@ -37,7 +37,7 @@ import (
 
 // mimeApplicationPDF is the request / response Content-Type the PDF
 // endpoints use over REST. Kept here (not in pdf.go) because pdf.go is
-// going away — this file owns the gateway-side PDF wiring.
+// going away; this file owns the gateway-side PDF wiring.
 const mimeApplicationPDF = "application/pdf"
 
 // metadataKeyTenant is the gRPC metadata key the REST gateway carries
@@ -77,7 +77,7 @@ func tenantFromIncomingMD(ctx context.Context) string {
 }
 
 // pdfMarshaler implements runtime.Marshaler for raw application/pdf
-// payloads. It's intentionally narrow on the success path — it only
+// payloads. It's intentionally narrow on the success path; it only
 // knows about the PDF request/response messages and the *[]byte form
 // grpc-gateway uses when `body: "pdf_content"` binds a single bytes
 // field.
@@ -203,7 +203,7 @@ func (m pdfMarshaler) NewEncoder(w io.Writer) runtime.Encoder {
 // to write a successful body but before the body is sent, so headers
 // are still mutable.
 //
-// Returns nil unconditionally — failure here would mean a programmer
+// Returns nil unconditionally; failure here would mean a programmer
 // error (response shape changed without updating this fn) and we'd
 // rather log and continue than block the body. The Set/Add calls are
 // already best-effort once the response has been touched.

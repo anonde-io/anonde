@@ -54,7 +54,7 @@ func TestEnhanceWithContext_NoMatch(t *testing.T) {
 
 func TestEnhanceWithContext_WordBoundary(t *testing.T) {
 	t.Parallel()
-	// "lessness" must NOT match the keyword "less" on its own — word boundary required.
+	// "lessness" must NOT match the keyword "less" on its own; word boundary required.
 	text := "uselessness 123-45-6789"
 	results := []RecognizerResult{
 		{Start: 12, End: 23, Score: 0.5, EntityType: "X"},
@@ -88,7 +88,7 @@ func TestAnalyze_ContextBoostLetsWeakHitsClearThreshold(t *testing.T) {
 		fakeRec: &fakeRec{
 			name:     "WeakSSN",
 			entities: []string{"US_SSN"},
-			// "weak" finding at 0.3, threshold 0.5 — without context boost this drops.
+			// "weak" finding at 0.3, threshold 0.5; without context boost this drops.
 			results: []RecognizerResult{{Start: 10, End: 21, Score: 0.3, EntityType: "US_SSN"}},
 		},
 		keywords: map[string][]string{"US_SSN": {"ssn"}},

@@ -45,13 +45,13 @@ anonde/
 
 ## Conflict resolution (the non-obvious part)
 
-`RemoveConflicts` keeps the highest-scoring span when two overlap — **except** for entity types where NER is more reliable than heuristic patterns (PERSON, ORGANIZATION, LOCATION, AGE, PROFESSION, NRP). For those, an NER finding beats a pattern finding regardless of score.
+`RemoveConflicts` keeps the highest-scoring span when two overlap, **except** for entity types where NER is more reliable than heuristic patterns (PERSON, ORGANIZATION, LOCATION, AGE, PROFESSION, NRP). For those, an NER finding beats a pattern finding regardless of score.
 
 Why: pattern recognizers like `DEAnomalyRecognizer` produce fixed scores (0.85); GLiNER produces sigmoid floats (0.4–0.85). Without this rule, patterns always won and the NER's contextual judgement was wasted.
 
-For structured types (IBAN, PHONE_NUMBER, DATE_TIME, EMAIL_ADDRESS, …) the score-only rule still applies — regex+checksum precision matters more than NER context there.
+For structured types (IBAN, PHONE_NUMBER, DATE_TIME, EMAIL_ADDRESS, …) the score-only rule still applies; regex+checksum precision matters more than NER context there.
 
-See [`analyzer/result.go`](../analyzer/result.go) — `shouldReplace`.
+See [`analyzer/result.go`](../analyzer/result.go), `shouldReplace`.
 
 ## Per-recognizer error visibility
 
@@ -59,4 +59,4 @@ Silent failures in the analyzer pipeline are logged via `analyzer: recognizer er
 
 ## In-memory vault
 
-The anonde server ships an in-memory vault (token ↔ cleartext) with configurable TTL — no DB required for ephemeral workloads. TTLs and the request-size cap are env-tunable; see [DEPLOYMENT.md](DEPLOYMENT.md#env-vars).
+The anonde server ships an in-memory vault (token ↔ cleartext) with configurable TTL; no DB required for ephemeral workloads. TTLs and the request-size cap are env-tunable; see [DEPLOYMENT.md](DEPLOYMENT.md#env-vars).

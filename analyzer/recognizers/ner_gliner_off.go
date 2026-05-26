@@ -6,8 +6,8 @@
 // all of that and surface a clear error message when something tries to
 // construct or call a GLiNERRecognizer.
 //
-// Mirror of ner_gliner.go's public API surface — same Name(), same
-// SupportedEntities() shape — so callers that link both build variants
+// Mirror of ner_gliner.go's public API surface; same Name(), same
+// SupportedEntities() shape; so callers that link both build variants
 // don't see a type-shape mismatch. Only Analyze() and Destroy() raise.
 
 package recognizers
@@ -21,7 +21,7 @@ import (
 )
 
 // errGLiNERDisabled is the canned error returned by every Analyze call
-// when the hugot tag is absent. It's a sentinel — callers can check via
+// when the hugot tag is absent. It's a sentinel; callers can check via
 // errors.Is for clean handling in tests.
 var errGLiNERDisabled = errors.New("gliner: backend not available: " +
 	"this binary was built without -tags hugot. " +
@@ -33,7 +33,7 @@ type GLiNERRecognizer struct {
 	cfg GLiNERConfig
 }
 
-// NewGLiNERRecognizer returns the stub. Construction always succeeds —
+// NewGLiNERRecognizer returns the stub. Construction always succeeds,
 // the error surfaces only at Analyze-time so a wired-up engine can
 // still boot and report which backend is missing.
 func NewGLiNERRecognizer(cfg GLiNERConfig) *GLiNERRecognizer {

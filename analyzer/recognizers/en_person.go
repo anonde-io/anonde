@@ -8,7 +8,7 @@ import "regexp"
 //	Mr.       Mrs.      Ms.    Dr.     Prof.    Sir   Madam
 //	Roma_Altenwerth     Joe_Schuster53   Edwin_Nitzsche
 //
-// The honorifics are a closed list — emit as PERSON so a leak-rate
+// The honorifics are a closed list; emit as PERSON so a leak-rate
 // overlap counts even when the NER misses the bound name on the right.
 // The underscored-username shape matches the
 // First_Last(digits) pattern these synthetic corpora use; deliberately
@@ -19,7 +19,7 @@ import "regexp"
 var (
 	// Honorifics with a trailing period, optionally followed by a
 	// capitalised name. The trailing-boundary is intentionally
-	// permissive — the period followed by ANYTHING that isn't a word
+	// permissive; the period followed by ANYTHING that isn't a word
 	// character used to be a clean boundary, but ai4privacy gold has
 	// run-together surfaces like "Hello Mr.Kerluke" where the period
 	// is followed by an uppercase letter. We accept that case too: an
@@ -30,7 +30,7 @@ var (
 		`\b(?:Mr|Mrs|Ms|Mx|Dr|Prof|Sir|Madam|Lord|Lady|Hon|Rev|Capt|Lt|Sgt|Col|Gen|Adm)\.`,
 	)
 
-	// First_Last underscored username — capitalised first segment,
+	// First_Last underscored username; capitalised first segment,
 	// underscore, capitalised second segment, optional digit suffix.
 	enUnderscoredNameRE = regexp.MustCompile(
 		`\b[A-Z][a-z]{2,30}_[A-Z][a-z]{2,30}\d{0,4}\b`,
@@ -41,7 +41,7 @@ var (
 	// The 4-letter minimum on the stem rules out "Section4", "Article2",
 	// "Iso27001", and similar short-word + digit collocations that
 	// commonly appear in tech and legal prose. Score is intentionally
-	// lower than the underscored variant — bare "Name#" is more
+	// lower than the underscored variant; bare "Name#" is more
 	// ambiguous than "First_Last#" so a contradictory signal should
 	// be able to override it.
 	enNamePlusDigitsRE = regexp.MustCompile(

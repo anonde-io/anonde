@@ -9,11 +9,11 @@ import (
 )
 
 var (
-	// Bitcoin legacy (P2PKH/P2SH) addresses — base58, 25–34 chars, leading "1" or "3".
+	// Bitcoin legacy (P2PKH/P2SH) addresses; base58, 25–34 chars, leading "1" or "3".
 	btcRE = regexp.MustCompile(`\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b`)
-	// Bitcoin bech32 (segwit) — leading "bc1" then 6–87 lowercase base32 chars.
+	// Bitcoin bech32 (segwit); leading "bc1" then 6–87 lowercase base32 chars.
 	bech32RE = regexp.MustCompile(`\bbc1[ac-hj-np-z02-9]{6,87}\b`)
-	// Ethereum addresses — fixed-length hex.
+	// Ethereum addresses; fixed-length hex.
 	ethRE = regexp.MustCompile(`\b0x[0-9a-fA-F]{40}\b`)
 )
 
@@ -23,9 +23,9 @@ var (
 //   - Ethereum 0x-addresses: pure-format match, no checksum (EIP-55 mixed-case
 //     checksumming is non-standard for many real-world emissions). Score 0.9.
 //   - Bitcoin bech32: leading "bc1" + base32 charset. Score 0.85 (no checksum
-//     verification yet — pull request welcome).
+//     verification yet; pull request welcome).
 //   - Bitcoin legacy (P2PKH/P2SH): Base58Check validated. Score 1.0 on pass,
-//     finding dropped on fail. This eliminates the bulk of false positives —
+//     finding dropped on fail. This eliminates the bulk of false positives,
 //     the 25–34 base58 character pattern is otherwise loose enough to match
 //     random hashes / IDs that aren't real Bitcoin addresses.
 type CryptoRecognizer struct{}
@@ -72,7 +72,7 @@ func (c *CryptoRecognizer) Analyze(_ context.Context, text string, _ []string, _
 }
 
 // validateBase58Check returns true if `s` is a valid base58-encoded payload
-// whose final 4 bytes equal SHA-256(SHA-256(prefix)) — Bitcoin's legacy
+// whose final 4 bytes equal SHA-256(SHA-256(prefix)); Bitcoin's legacy
 // address checksum. Used to reject random base58-shaped strings that aren't
 // real wallet addresses.
 func validateBase58Check(s string) bool {
@@ -87,7 +87,7 @@ func validateBase58Check(s string) bool {
 	return string(check) == string(second[:4])
 }
 
-// base58 alphabet (Bitcoin variant — no 0/O/I/l).
+// base58 alphabet (Bitcoin variant; no 0/O/I/l).
 const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 var base58Index [128]int8

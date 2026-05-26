@@ -20,7 +20,7 @@ var (
 	// Numbered street: "390 Wiza Spur", "123 Main Street", "1525 N Hampton Blvd".
 	// The ai4privacy gold also splits the address into "390" and
 	// "Wiza Spur" as two separate LOCATION spans on the surface
-	// "390, Wiza Spur" — so the separator between the house number
+	// "390, Wiza Spur"; so the separator between the house number
 	// and the street name accepts an optional comma. The full match
 	// then overlaps both gold spans (the number AND the street).
 	// Optional direction qualifier ("N", "S", "E", "W", "NE", "NW", "SE", "SW")

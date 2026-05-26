@@ -2,14 +2,14 @@
 
 // gliner_flat_pool.go is an OPTIONAL, opt-in wrapper that lets a caller
 // run up to N flat-decoder GLiNER inferences in parallel. Direct mirror
-// of gliner_pool.go — same channel-of-instances design, same lifecycle
-// contract — but each instance is a `*GLiNERFlatRecognizer` (4-input
+// of gliner_pool.go; same channel-of-instances design, same lifecycle
+// contract; but each instance is a `*GLiNERFlatRecognizer` (4-input
 // token / BIO decoder) instead of a span-decoder `*GLiNERRecognizer`.
 //
 // Why this exists
 // ---------------
 // `GLiNERFlatRecognizer.Analyze` serialises every call behind its mutex
-// for the same reason the span recognizer does — the hftokenizer and
+// for the same reason the span recognizer does; the hftokenizer and
 // the *ort.DynamicAdvancedSession both hold mutable state that two
 // concurrent calls would corrupt. The only way to get parallel
 // inference is N independent recognizers, each with its own tokenizer
@@ -23,7 +23,7 @@
 // pools. The canonical LARGE PII flat export
 // (`knowledgator/gliner-pii-large-v1.0`) is FP32 ONNX at ~1.4 GB
 // resident per session, vs ~500 MB for the BASE quint8 span model.
-// N=2 already peaks around 2.8 GB RSS — that's a comfortable fit on
+// N=2 already peaks around 2.8 GB RSS; that's a comfortable fit on
 // a 4 GB VM but anything smaller will OOM. Size the LARGE pool
 // against your VM's memory budget; in a stack deployment the BASE
 // pool can almost always be larger than the LARGE pool.
@@ -43,7 +43,7 @@
 //
 // Naming caveat
 // -------------
-// `Name()` returns "GLiNERFlatPool" — it does NOT end in
+// `Name()` returns "GLiNERFlatPool"; it does NOT end in
 // "NERRecognizer", which means the analyzer engine's `DisableNER`
 // suffix-check WILL NOT suppress the pool. Callers that want
 // per-request NER disable while using the pool must enforce it higher
@@ -71,14 +71,14 @@ import (
 
 // GLiNERFlatPool is an N-instance flat-decoder GLiNER recognizer pool.
 // Each instance owns its own tokenizer + ONNX session, so up to N
-// `Analyze` calls run truly in parallel — the (N+1)th caller blocks
+// `Analyze` calls run truly in parallel; the (N+1)th caller blocks
 // on the channel until an instance is returned.
 //
 // The zero value is NOT usable; construct via `NewGLiNERFlatPool`.
 //
 // LARGE flat models are substantially heavier than BASE span models
 // (~1.4 GB FP32 vs ~500 MB quint8), so the pool size should reflect
-// that — in a stack deployment the flat pool is usually smaller than
+// that; in a stack deployment the flat pool is usually smaller than
 // the span pool.
 type GLiNERFlatPool struct {
 	// instances is a buffered channel that holds exactly `size`
@@ -121,7 +121,7 @@ type GLiNERFlatPool struct {
 //
 // The recognizers are NOT pre-warmed: each one lazily initialises on
 // its first `Analyze` call, matching `GLiNERFlatRecognizer`'s own
-// behaviour. Pool construction is therefore cheap — the first N
+// behaviour. Pool construction is therefore cheap; the first N
 // concurrent `Analyze` calls will each pay the model-loading cost in
 // parallel.
 //
@@ -213,7 +213,7 @@ func (p *GLiNERFlatPool) Analyze(ctx context.Context, text string, entities []st
 // It fires `p.size` Analyze() calls in parallel against a trivial
 // fixture ("John Smith works at Mercy Hospital."). Each one acquires a
 // distinct instance from the pool, which on first use loads the
-// tokenizer + ONNX session — the same 5-30 s model-load that the
+// tokenizer + ONNX session; the same 5-30 s model-load that the
 // FIRST N user requests would otherwise see staggered across them.
 // LARGE flat ONNX exports cost ~1.4 GB per session, so on small VMs
 // pre-warming may surface OOM at boot rather than mid-request; that's
@@ -229,13 +229,13 @@ func (p *GLiNERFlatPool) Analyze(ctx context.Context, text string, entities []st
 // safely start listening before Warmup returns. The per-recognizer
 // mutex inside GLiNERFlatRecognizer.Analyze serialises any race
 // between the warmup goroutine for instance i and an external request
-// that also lands on instance i — the external request just queues
+// that also lands on instance i; the external request just queues
 // briefly on r.mu and then runs; it never blocks on the pool itself.
 //
 // Error handling: the first non-nil error from any instance is
 // returned; subsequent errors are dropped (matching the "first
 // failure wins" convention used by Destroy). All N goroutines are
-// awaited regardless — partial warmup leaves the pool in a usable
+// awaited regardless; partial warmup leaves the pool in a usable
 // state (the failed instance retries on its next Analyze).
 func (p *GLiNERFlatPool) Warmup(ctx context.Context) error {
 	var (
@@ -272,7 +272,7 @@ func (p *GLiNERFlatPool) Warmup(ctx context.Context) error {
 //
 // Graceful shutdown: callers no longer need to stop dispatching new
 // Analyze calls before invoking Destroy. Closing `p.done` is the
-// first thing the function does — after that, any new Analyze
+// first thing the function does; after that, any new Analyze
 // acquirer receives ErrPoolClosed instead of blocking on the empty
 // channel. In-flight Analyzes complete normally and return their
 // instance, which the drain loop then picks up. The drain still

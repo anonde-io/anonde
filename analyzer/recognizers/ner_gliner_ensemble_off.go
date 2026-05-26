@@ -59,7 +59,7 @@ func NewEnsembleGLiNERRecognizer(modelIDs []string, _ float64, _ string) *Ensemb
 //     loudly (a patterns-only image shouldn't be asked to run an
 //     ensemble; better to refuse than to silently disable NER)
 //   - we never reach the (*EnsembleGLiNERRecognizer, nil) branch in the
-//     stub — the backend isn't available
+//     stub; the backend isn't available
 func EnsembleFromEnv(_ float64, _ string) (*EnsembleGLiNERRecognizer, error) {
 	if strings.TrimSpace(os.Getenv("ANONDE_NER_STACK")) == "" {
 		return nil, nil

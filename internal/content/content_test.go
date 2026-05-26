@@ -94,7 +94,7 @@ func TestResolveAutoContentFormat_Text(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extractAnalyzableText — text / json pass-through
+// extractAnalyzableText; text / json pass-through
 // ---------------------------------------------------------------------------
 
 func TestExtractAnalyzableText_Text(t *testing.T) {
@@ -150,7 +150,7 @@ func TestExtractAnalyzableText_PDF_NotAPDF(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// extractAnalyzableText — PDF fixture
+// extractAnalyzableText; PDF fixture
 // ---------------------------------------------------------------------------
 
 func TestExtractAnalyzableText_PDF_ExtractsText(t *testing.T) {

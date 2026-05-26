@@ -18,7 +18,7 @@ Three peer entry points; all build the same image you'd ship.
 | Compose | `docker compose --profile patterns up` | `docker compose --profile ner up` | `docker compose --profile ner-stack up` |
 | Raw docker | `docker build -f Dockerfile.anonde -t anonde:patterns . && docker run --rm -p 8081:8080 anonde:patterns` | see [`Dockerfile.anonde-ner`](../Dockerfile.anonde-ner) header | see [`Dockerfile.anonde-ner-stack`](../Dockerfile.anonde-ner-stack) header |
 
-Compose profiles are mutually exclusive: only one runs per `docker compose up`. All publish the API on `${ANONDE_PORT:-8081}`; the NER profiles additionally expose Prometheus on `${METRICS_PORT:-9090}`. No volumes — models are baked into the NER images; persist the vault with a bbolt path (see "Vault + request limits" below) if you need state across restarts.
+Compose profiles are mutually exclusive: only one runs per `docker compose up`. All publish the API on `${ANONDE_PORT:-8081}`; the NER profiles additionally expose Prometheus on `${METRICS_PORT:-9090}`. No volumes; models are baked into the NER images; persist the vault with a bbolt path (see "Vault + request limits" below) if you need state across restarts.
 
 ## NER image internals
 

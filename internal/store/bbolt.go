@@ -26,7 +26,7 @@ import (
 // Why a single file: trivially backup-able (`cp anonde.db`), atomic
 // crash semantics from bbolt's 2-page meta swap, and one fd at runtime.
 // The two buckets share the same writer lock, but at our RPS that's
-// invisible — the bottleneck is fsync on commit, not lock contention.
+// invisible; the bottleneck is fsync on commit, not lock contention.
 //
 // Why NUL as the tenant/key separator: tenant IDs and tokens are
 // human-controlled but never legitimately contain a NUL byte, so the
@@ -36,13 +36,13 @@ import (
 //
 // Why JSON for the payload: small fields, schema-stable across the
 // project's life, debuggable with `bbolt buckets / get` plus `jq`.
-// We considered protobuf — saves bytes, but we lose ad-hoc inspection
+// We considered protobuf; saves bytes, but we lose ad-hoc inspection
 // and add a build-time codegen dependency on the store package. The
 // vault payload is tiny (token + cleartext + entity_type, usually
 // well under 200 bytes); the size win is theoretical.
 //
-// TTL handling: same shape as MemoryVault — every value carries an
-// ExpiresAt; Get returns "not found" for expired rows; a background
+// TTL handling: same shape as MemoryVault; every value carries an
+// ExpiresAt, Get returns "not found" for expired rows, a background
 // sweeper periodically deletes them so disk doesn't grow forever.
 // Expiry is stored alongside the value (not as a separate index)
 // because cleanup is a full-scan sweep and the keys themselves give
@@ -54,7 +54,7 @@ const (
 )
 
 // envelope is the on-disk record shape. The same struct serves both
-// buckets — the difference is that vault Body is encrypted bytes
+// buckets; the difference is that vault Body is encrypted bytes
 // while store Body is plaintext JSON. Keeping the format identical
 // makes the sweeper schema-blind.
 type envelope struct {
@@ -79,7 +79,7 @@ type BoltStore struct {
 // BoltVault is the persistent core.Vault implementation. When constructed
 // with a key, values are AES-256-GCM sealed and the key never lands on
 // disk. When constructed with a nil/empty key, values are written as
-// plaintext JSON — operators opt into encryption by setting
+// plaintext JSON; operators opt into encryption by setting
 // ANONDE_VAULT_KEY.
 type BoltVault struct {
 	db            *bolt.DB
@@ -97,7 +97,7 @@ type BoltVault struct {
 // both BoltVault and BoltStore against the same file. The caller owns
 // `Close()` and should defer it.
 //
-// File mode 0600: only the running user can read the vault — matters
+// File mode 0600: only the running user can read the vault; matters
 // when the host is shared (Fly machine, multi-tenant dev box).
 func OpenDB(path string) (*bolt.DB, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{
@@ -159,7 +159,7 @@ func NewBoltStore(db *bolt.DB, ttl time.Duration) *BoltStore {
 
 // Close stops the background sweeper and waits for any in-flight
 // sweep tick to settle. Idempotent. Does NOT close the underlying
-// *bolt.DB — the caller (cmd/anonde/main.go) owns its lifecycle since
+// *bolt.DB; the caller (cmd/anonde/main.go) owns its lifecycle since
 // two adapters share one file.
 //
 // The sweepMu lock-after-stop is what gives the caller a real
@@ -261,7 +261,7 @@ func (v *BoltVault) deleteRaw(tenantID, token string) error {
 
 // Stats reports entry count from bbolt's KeyN metadata (O(1), no
 // bucket scan) and returns Bytes=-1 because computing the real byte
-// total would require a full bucket walk on every scrape — a non-
+// total would require a full bucket walk on every scrape; a non-
 // starter on a multi-MB vault. Operators who want a byte signal can
 // look at the file size on disk, which bbolt grows in page-sized
 // increments and is a strictly better metric than the JSON-payload
@@ -351,7 +351,7 @@ func (s *BoltStore) deleteRaw(tenantID, id string) error {
 	})
 }
 
-// Stats — see BoltVault.Stats for the rationale on Bytes=-1.
+// Stats; see BoltVault.Stats for the rationale on Bytes=-1.
 func (s *BoltStore) Stats() core.StoreStats {
 	var entries int64
 	_ = s.db.View(func(tx *bolt.Tx) error {
@@ -368,7 +368,7 @@ func (s *BoltStore) Stats() core.StoreStats {
 // ─── Sweeper ───────────────────────────────────────────────────────
 
 // startSweeperLocked launches the background sweeper in its own
-// goroutine. The shape mirrors MemoryVault/Store's behaviour — we run
+// goroutine. The shape mirrors MemoryVault/Store's behaviour; we run
 // a sweep at most once per sweepInterval and skip entirely when ttl=0.
 func (v *BoltVault) startSweeperLocked() {
 	if v.sweepInterval <= 0 {
@@ -476,6 +476,6 @@ var (
 	_ core.Store = (*BoltStore)(nil)
 )
 
-// ErrBucketMissing — kept as a sentinel for future callers if we ever
+// ErrBucketMissing; kept as a sentinel for future callers if we ever
 // expose lower-level access to the buckets. Not currently surfaced.
 var ErrBucketMissing = errors.New("bbolt bucket missing")

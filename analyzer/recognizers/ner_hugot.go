@@ -1,6 +1,6 @@
 //go:build hugot
 
-// Package-level build tag: this file (and the hugot transitive deps —
+// Package-level build tag: this file (and the hugot transitive deps,
 // onnxruntime-go, tokenizers, …) compile only when building with
 // `go build -tags hugot ...`. Default builds exclude hugot entirely to
 // keep compile time, binary size, and dependency surface small. The
@@ -40,14 +40,14 @@ const (
 // model labels to the entity types used by anonde.
 //
 // Deliberate scope: we ONLY map natural-language entities (people,
-// locations, organizations) from the NER model. Structured PII — emails,
-// phones, IPs, MAC, IBAN, credit cards, SSN, crypto wallets — comes from
+// locations, organizations) from the NER model. Structured PII; emails,
+// phones, IPs, MAC, IBAN, credit cards, SSN, crypto wallets; comes from
 // the regex/checksum recognizers, which produce span-exact matches the
 // model can't. Allowing the model to emit those labels causes overlapping
 // findings with subtly wrong spans that crowd out the precise regex hits at
 // conflict resolution time and tank precision.
 //
-// Models that emit labels outside this table contribute nothing — `ok=false`
+// Models that emit labels outside this table contribute nothing; `ok=false`
 // causes the finding to be dropped.
 var hugotLabelToEntity = map[string]string{
 	// CoNLL-2003 / general NER
@@ -93,13 +93,13 @@ var hugotLabelToEntity = map[string]string{
 
 // defaultNERScoreFloor drops NER predictions below this score before the
 // analyzer's threshold filter sees them. The XLM-R PII model is noisy on
-// clinical German text — many sub-0.6 outputs are spurious. Tunable via
+// clinical German text; many sub-0.6 outputs are spurious. Tunable via
 // HugotNERConfig.ScoreFloor (zero uses this default).
 const defaultNERScoreFloor = 0.60
 
 // MapHugotLabel converts a raw hugot label (e.g. "PER", "B-LOC", "FIRSTNAME")
 // to an anonde entity type string.  Returns ("", false) when the label is
-// unknown — caller drops the finding.
+// unknown; caller drops the finding.
 func MapHugotLabel(label string) (string, bool) {
 	upper := strings.ToUpper(label)
 	if et, ok := hugotLabelToEntity[upper]; ok {
@@ -144,7 +144,7 @@ func NewHugotNERRecognizer(cfg HugotNERConfig) *HugotNERRecognizer {
 		// onnx-community/multilang-pii-ner-ONNX is XLM-RoBERTa-base
 		// fine-tuned for PII detection across EN/DE/IT/FR. Trained on
 		// PII-labelled data (GIVENNAME, SURNAME, CITY, STREET,
-		// BUILDINGNUM, ZIPCODE, AGE, …) rather than CoNLL-2003 news —
+		// BUILDINGNUM, ZIPCODE, AGE, …) rather than CoNLL-2003 news,
 		// substantially better recall on German clinical text than the
 		// previous Xenova/distilbert-multilingual default.
 		cfg.ModelName = "onnx-community/multilang-pii-ner-ONNX"
@@ -260,7 +260,7 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 
 	// Build the batch of inputs. Trailing-space workaround for upstream
 	// hugot bug (gatherPreEntities slice-bounds panic on certain text
-	// lengths) — the space doesn't shift entity offsets relative to the
+	// lengths); the space doesn't shift entity offsets relative to the
 	// chunk start.
 	inputs := make([]string, len(chunks))
 	for i, c := range chunks {
@@ -288,7 +288,7 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 
 	// We collect candidates first, then dedupe by overlap (not just exact
 	// match). With overlapping chunks the same entity is often picked up
-	// twice at slightly different boundaries — keep the higher-scoring
+	// twice at slightly different boundaries; keep the higher-scoring
 	// span and drop the smaller overlap.
 	cands := make([]hugotCand, 0, len(chunks)*8)
 
@@ -331,7 +331,7 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 	// any group that mutually overlaps. Two same-type overlapping
 	// detections almost always refer to the same entity; the higher score
 	// is the better-anchored span. Inter-type overlaps are passed through
-	// — the analyzer's conflict resolver decides between them.
+	// the analyzer's conflict resolver decides between them.
 	byType := map[string][]hugotCand{}
 	for _, c := range cands {
 		byType[c.typ] = append(byType[c.typ], c)
@@ -359,13 +359,13 @@ func (r *HugotNERRecognizer) Analyze(ctx context.Context, text string, entities 
 		}
 		// Adjacent same-type spans are intentionally NOT merged here.
 		// Many PII corpora (ai4privacy/pii-masking-200k included) annotate
-		// each name component as a separate span — "John Smith" is two
+		// each name component as a separate span; "John Smith" is two
 		// gold PERSON entries, "Dr. Feeney" is two PERSON entries, etc.
 		// Merging at the recognizer level breaks span-exact comparison
 		// against those corpora (~25% of docs in ai4privacy contain at
 		// least one adjacent pair, dropping PERSON F1 from 0.83 to 0.63).
 		// The anonymizer applies an adjacency merge at tokenization time
-		// instead — see anonymizer.Anonymize — so user-facing output
+		// instead, see anonymizer.Anonymize, so user-facing output
 		// produces one <PERSON> token per name even though the analyzer
 		// emits two.
 		for _, c := range kept {
@@ -403,7 +403,7 @@ type nerChunk struct {
 // by overlapChars to catch entities sitting near chunk boundaries.
 //
 // All cuts are made at ASCII whitespace bytes (' ' or '\n'), which are
-// always at rune boundaries — so the returned chunks are valid UTF-8 even
+// always at rune boundaries; so the returned chunks are valid UTF-8 even
 // when the input contains multi-byte runes like ä/ö/ü/ß.
 //
 // If text is short enough to fit in one chunk, returns a single chunk
@@ -434,7 +434,7 @@ func chunkForNER(text string, chunkChars, overlapChars int) []nerChunk {
 		} else if idx := strings.LastIndex(text[start:end], " "); idx > 0 {
 			end = start + idx + 1
 		} else {
-			// No whitespace anywhere in this window — exotic in
+			// No whitespace anywhere in this window; exotic in
 			// natural text. Back up to a rune boundary so the slice
 			// stays valid UTF-8.
 			for end > start && (text[end]&0xC0) == 0x80 {
@@ -493,7 +493,7 @@ func (r *HugotNERRecognizer) Destroy() error {
 }
 
 // sanitizeModelName converts a HuggingFace model ID (e.g. "dslim/bert-base-NER")
-// to the local directory name hugot.DownloadModel uses internally — slashes
+// to the local directory name hugot.DownloadModel uses internally; slashes
 // become underscores. Keep this in lock-step with hugot's downloader; if the
 // upstream convention changes, prefer the path returned by DownloadModel.
 func sanitizeModelName(name string) string {

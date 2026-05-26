@@ -7,7 +7,7 @@ import (
 	"github.com/anonde-io/anonde/analyzer"
 )
 
-// ISIN — International Securities Identification Number (ISO 6166).
+// ISIN; International Securities Identification Number (ISO 6166).
 // 12 alphanumeric chars: 2-letter ISO country code + 9 alphanumeric
 // NSIN + 1 numeric Luhn check digit. Examples from the finance_de
 // brokerage-statement corpus:
@@ -84,7 +84,7 @@ func (r *ISINRecognizer) Name() string { return "ISINRecognizer" }
 // ISIN is canonicalised to ID in the label map (anonde.ID -> ID).
 func (r *ISINRecognizer) SupportedEntities() []string { return []string{"ID"} }
 
-// SupportedLanguages reports `*` — ISIN format is language-independent.
+// SupportedLanguages reports `*`; ISIN format is language-independent.
 func (r *ISINRecognizer) SupportedLanguages() []string { return []string{"*"} }
 
 // Analyze scans text for ISIN candidates and validates each via the

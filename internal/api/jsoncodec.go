@@ -17,7 +17,7 @@ import (
 // we use elsewhere in the API.
 //
 // Input still accepts BOTH snake_case and lowerCamelCase per the
-// proto3 JSON spec — that's mandated by protojson and is not something
+// proto3 JSON spec; that's mandated by protojson and is not something
 // we need to opt into.
 //
 // DiscardUnknown lets older servers tolerate new optional fields a

@@ -14,7 +14,7 @@ import (
 // Synthesize replaces PII with realistic synthetic data of the same entity type,
 // preserving format and structure (Luhn-valid credit cards, MOD-97 IBANs,
 // class-preserving IP addresses, etc.). Unlike Redact or Replace, the resulting
-// document stays readable and structurally intact — useful for test-data
+// document stays readable and structurally intact; useful for test-data
 // generation, LLM fine-tuning datasets, and privacy-safe log sharing.
 //
 // Consistency modes:
@@ -22,13 +22,13 @@ import (
 //   - Default (Consistent=false): a fresh random fake on every call.
 //
 //   - Consistent=true: the same (text, entityType) pair always produces the
-//     same synthetic value. Seeded deterministically from the input — consistent
+//     same synthetic value. Seeded deterministically from the input; consistent
 //     across processes and restarts. "John Smith" is always the same alias.
 //
 //   - Consistent=true + DocumentScoped=true: an in-memory cache maps
 //     original→fake within this operator instance. Call Reset() between
 //     documents. Different Synthesize instances produce independent mappings for
-//     the same input, so "John Smith" in doc A and doc B get different aliases —
+//     the same input, so "John Smith" in doc A and doc B get different aliases,
 //     limiting cross-document linkability while remaining consistent within a doc.
 type Synthesize struct {
 	Consistent     bool
@@ -83,7 +83,7 @@ func (s *Synthesize) fromCache(text, entityType string) (string, error) {
 	s.mu.Lock()
 	// Re-check the map: between the first unlock and this re-lock,
 	// Reset() may have raced in and set s.cache = nil. Without this
-	// guard the next assignment panics on a nil map. Do NOT remove —
+	// guard the next assignment panics on a nil map. Do NOT remove,
 	// the Reset() race is a real, documented contract.
 	if s.cache == nil {
 		s.cache = make(map[string]string)

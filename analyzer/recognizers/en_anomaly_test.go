@@ -27,7 +27,7 @@ func TestENAnomalyRecognizer(t *testing.T) {
 		{"Dr.", "Reviewed by Dr. Sarah Williams.", []string{"Sarah Williams", "Reviewed"}},
 		{"Prof.", "Prof. Alan Turing consulted.", []string{"Alan Turing"}},
 
-		// Clinical labels — MRN is filtered by isLeadTokenGated's short-all-caps rule.
+		// Clinical labels; MRN is filtered by isLeadTokenGated's short-all-caps rule.
 		{"Patient: colon", "Patient: Omar Hassan, MRN 982341", []string{"Omar Hassan"}},
 		{"Patient no colon", "Patient Omar Hassan presented today.", []string{"Omar Hassan"}},
 		{"Pt.", "Pt. Robert James Brown reports pain.", []string{"Robert James Brown"}},
@@ -93,7 +93,7 @@ func TestENAnomalyRecognizer(t *testing.T) {
 }
 
 // TestENAnomalyScores asserts the score difference between the structural
-// (title-anchored) and bare paths — important because the analyzer's context-
+// (title-anchored) and bare paths; important because the analyzer's context-
 // keyword boost relies on the bare path landing below the default 0.30 score
 // threshold so that non-clinical capitalised sequences are dropped, and only
 // context-boosted (clinical) names rise above threshold.

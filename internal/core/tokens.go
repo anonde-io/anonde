@@ -15,7 +15,7 @@ import (
 
 // newAnonymizationID returns a Stripe-style identifier:
 // `anon_<16 hex chars>` (64 bits of entropy from crypto/rand). Used
-// when the caller omits an explicit id at ingest time. Non-secret —
+// when the caller omits an explicit id at ingest time. Non-secret,
 // the ID is a routing key, not an authorization token.
 func newAnonymizationID() string {
 	var b [8]byte
@@ -35,7 +35,7 @@ func newAnonymizationID() string {
 // isn't required.
 //
 // Cross-document token reuse for the same cleartext is intentionally
-// NOT supported here — see TODO.md ("Tenant-scoped token reuse").
+// NOT supported here; see TODO.md ("Tenant-scoped token reuse").
 func (s *Service) mintToken(tenantID, entityType string) string {
 	s.tokenSeqMu.Lock()
 	idx := s.tokenSeqByTenant[tenantID]

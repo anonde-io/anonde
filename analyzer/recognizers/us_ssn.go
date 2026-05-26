@@ -63,7 +63,7 @@ func (r *USSocialSecurityRecognizer) Analyze(_ context.Context, text string, _ [
 			EntityType: "US_SSN", RecognizerName: "USSocialSecurityRecognizer",
 		})
 	}
-	// Dotted alternative form. No structural validation — the dotted
+	// Dotted alternative form. No structural validation; the dotted
 	// shape is generator-specific (ai4privacy_en), so the leading-area
 	// rule (no 000/666/9xx) doesn't apply consistently. Lower score so
 	// a real 3-2-4 SSN beats the dotted form in any conflict.

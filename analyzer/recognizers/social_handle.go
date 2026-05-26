@@ -21,11 +21,11 @@ import (
 //                          to escape FP land on normal English prose.
 
 var (
-	// Explicit `@handle` — high precision. Twitter limits handles to
+	// Explicit `@handle`; high precision. Twitter limits handles to
 	// 15 chars, Bluesky to 18; the pattern allows 3-30 for the
 	// general case (covers Mastodon `@user@server` too if you'd want
 	// to extend; for now we capture just the leading `@user` token).
-	// Whitespace after the `@` is optional — wnut_17's tokenisation
+	// Whitespace after the `@` is optional; wnut_17's tokenisation
 	// produces "RT @ beatfaceleah :" with a space between sigil and
 	// handle, which the no-space form would miss.
 	socialAtHandleRE = regexp.MustCompile(
@@ -57,11 +57,11 @@ func (r *SocialHandleRecognizer) SupportedEntities() []string {
 	return []string{"PERSON", "ORGANIZATION"}
 }
 
-// SupportedLanguages — handles are language-agnostic syntactic shapes.
+// SupportedLanguages; handles are language-agnostic syntactic shapes.
 func (r *SocialHandleRecognizer) SupportedLanguages() []string { return []string{"*"} }
 
 // Analyze emits explicit `@handle` matches. The bare-handle pattern is
-// intentionally NOT emitted as a recognizer hit — its FP risk on normal
+// intentionally NOT emitted as a recognizer hit; its FP risk on normal
 // English prose is too high without local context analysis. Bare
 // handles are caught by the open-set NER backend when one is loaded.
 func (r *SocialHandleRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {

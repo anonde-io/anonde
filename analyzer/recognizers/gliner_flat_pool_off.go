@@ -3,7 +3,7 @@
 // gliner_flat_pool_off.go is the fail-fast stub for GLiNERFlatPool,
 // used when the binary is built WITHOUT the `hugot` tag. Mirror of
 // gliner_pool_off.go for the flat / token decoder pool. Same
-// rationale — keep the public surface stable so cmd/anonde/main.go
+// rationale; keep the public surface stable so cmd/anonde/main.go
 // compiles regardless of build tag, and fail loudly at boot rather
 // than silently disabling NER.
 
@@ -40,15 +40,15 @@ func NewGLiNERFlatPool(_ GLiNERConfig, size int) (*GLiNERFlatPool, error) {
 // nerRecognizerNames lookup remains consistent across build tags.
 func (p *GLiNERFlatPool) Name() string { return "GLiNERFlatPool" }
 
-// Size returns the size the stub was constructed with — purely for
+// Size returns the size the stub was constructed with; purely for
 // diagnostic parity with the real implementation. Always 0 here since
 // NewGLiNERFlatPool errors out before storing it.
 func (p *GLiNERFlatPool) Size() int { return p.size }
 
-// SupportedEntities returns an empty slice — the stub can't infer.
+// SupportedEntities returns an empty slice; the stub can't infer.
 func (p *GLiNERFlatPool) SupportedEntities() []string { return nil }
 
-// SupportedLanguages returns an empty slice — the stub can't infer.
+// SupportedLanguages returns an empty slice; the stub can't infer.
 func (p *GLiNERFlatPool) SupportedLanguages() []string { return nil }
 
 // Analyze always returns errFlatPoolDisabled in the stub.

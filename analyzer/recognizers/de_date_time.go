@@ -12,9 +12,9 @@ import "regexp"
 //   November 2018     Monat YYYY (month + year, no day)
 //
 // Patterns deliberately do NOT match:
-//   - Bare years (2002, 2007) — too many false positives in clinical text
+//   - Bare years (2002, 2007); too many false positives in clinical text
 //     (lab values, sample IDs). Catching these requires NER or context.
-//   - Partial dates (19.3.) without a year — collide with section numbers.
+//   - Partial dates (19.3.) without a year; collide with section numbers.
 
 var (
 	// DD.MM.YYYY  or  D.M.YY  with day 1-31 and month 1-12.
@@ -22,9 +22,9 @@ var (
 		`\b(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.\d{2,4}\b`,
 	)
 
-	// DD.MM YYYY — a data quirk in GraSCCo where the second dot is missing.
+	// DD.MM YYYY; a data quirk in GraSCCo where the second dot is missing.
 	// Lower score: more ambiguous, looks like "ratio.month year".
-	// Horizontal whitespace only between month and year — "23.04\n2029" is
+	// Horizontal whitespace only between month and year; "23.04\n2029" is
 	// almost certainly not a date.
 	deDateNumericLooseRE = regexp.MustCompile(
 		`\b(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])[ \t]\d{4}\b`,
@@ -40,7 +40,7 @@ var (
 	)
 
 	// Monat YYYY (month name + 4-digit year, no day). Horizontal
-	// whitespace only — "Oktober\n2012" came up as a cross-newline FP
+	// whitespace only; "Oktober\n2012" came up as a cross-newline FP
 	// where a month label at end of line wrapped into the next paragraph
 	// header that happened to start with a 4-digit number.
 	deMonthYearRE = regexp.MustCompile(

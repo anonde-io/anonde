@@ -76,7 +76,7 @@ type RedactStats struct {
 }
 
 // ErrPDFRedactorUnconfigured is returned when SetPDFRedactor has not been
-// called — the operator didn't opt in via ANONDE_PDF_ENABLED=1. Mapped
+// called; the operator didn't opt in via ANONDE_PDF_ENABLED=1. Mapped
 // to codes.Unimplemented / HTTP 501 by the transport layer so callers
 // see a clear "not configured" signal.
 var ErrPDFRedactorUnconfigured = fmt.Errorf("pdf redactor not configured: start the server with ANONDE_PDF_ENABLED=1 (requires the NER image or a -tags hugot build)")
@@ -93,7 +93,7 @@ func (s *Service) SetPDFRedactor(r PDFRedactor) {
 // can return the original later. The returned id matches the
 // `anon_<hex>` shape used by the text endpoints.
 //
-// Returns ErrPDFRedactorUnconfigured when no redactor is wired — the
+// Returns ErrPDFRedactorUnconfigured when no redactor is wired; the
 // transport layer maps that to HTTP 501.
 func (s *Service) RedactPDF(ctx context.Context, tenantID string, raw []byte, opts RedactOptions) (id string, redacted []byte, stats RedactStats, err error) {
 	if s.pdfRedactor == nil {
@@ -122,7 +122,7 @@ func (s *Service) RedactPDF(ctx context.Context, tenantID string, raw []byte, op
 	if saveErr := s.store.Put(ctx, rec); saveErr != nil {
 		// Best-effort: the redaction itself succeeded, so we still
 		// return the redacted bytes. The caller learns about the save
-		// failure via the err return — they can decide whether to
+		// failure via the err return; they can decide whether to
 		// surface it (server logs it via the gRPC error path) or
 		// silently use the redacted PDF without later /reveal-pdf
 		// capability. Mirrors the X-Anonde-Save-Error header behaviour

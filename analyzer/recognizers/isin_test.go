@@ -21,7 +21,7 @@ func TestISINRecognizer(t *testing.T) {
 		{"iShares MSCI World", "iShares IE00B4L5Y983 EUR", []string{"IE00B4L5Y983"}},
 		{"Lyxor STOXX Europe 600", "LU0290358497 Lyxor STOXX", []string{"LU0290358497"}},
 
-		// Must NOT match — random 12-char strings that fail the check
+		// Must NOT match; random 12-char strings that fail the check
 		// digit or have an unsupported country code.
 		{"random 12-char", "ABCDEFGHIJK1 random fragment", nil},
 		{"wrong country", "ZZ0008404005 ZZ is unassigned", nil},

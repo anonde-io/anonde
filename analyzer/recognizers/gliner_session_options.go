@@ -9,7 +9,7 @@
 // CONTRACT: callers MUST invoke initOrtEnvironment() FIRST. ORT's
 // NewSessionOptions() requires IsInitialized() to be true, and will
 // otherwise return NotInitializedError. The init() flow in both
-// recognizers already does this — keep that order if you ever reorder
+// recognizers already does this; keep that order if you ever reorder
 // init blocks.
 //
 // Returns (nil, nil) when no env knob is set, so the caller can pass
@@ -35,7 +35,7 @@ import (
 //
 // Bad env values are LOGGED and ignored (the knob falls back to ORT's
 // default). Same precedent as GLINER_THRESHOLD and GLINER_POOL_SIZE in
-// cmd/anonde/main.go — a typo in a tuning knob must never keep the
+// cmd/anonde/main.go; a typo in a tuning knob must never keep the
 // server from booting.
 //
 // On any unrecoverable ORT error (e.g. NewSessionOptions itself failing,

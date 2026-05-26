@@ -19,13 +19,13 @@ import "regexp"
 
 // Two regex shapes, tuned for high precision on clinical text:
 //
-//  1. Compound (single word) — only high-specificity lowercase suffixes
+//  1. Compound (single word); only high-specificity lowercase suffixes
 //     (-straße, -str., -pfad, -gasse, -allee, -platz, -kamp). Lowercase
 //     "-weg", "-gang", "-ring", "-steig" are deliberately omitted because
 //     they collide with common clinical words ("Vorgang", "Anstieg",
 //     "Ohrring", "Vorweg").
 //
-//  2. Separated (with whitespace) — any capitalized street suffix
+//  2. Separated (with whitespace); any capitalized street suffix
 //     including Str., Weg, Ring, etc. The space-then-Capital form rarely
 //     occurs accidentally in clinical prose.
 //
@@ -42,7 +42,7 @@ var (
 
 	// Compound -weg / -ring / -steig / -gang form, MANDATORY house-number
 	// suffix. These suffixes are individually deliberately excluded from
-	// the no-number compound form (they collide with clinical words —
+	// the no-number compound form (they collide with clinical words,
 	// Vorgang, Anstieg, Vorweg, Ohrring). Requiring a trailing 1-4 digit
 	// number with optional letter ("12 a") restores recall on legal /
 	// finance / general-prose addresses while keeping clinical text safe.
@@ -62,7 +62,7 @@ var (
 
 	// Preposition form: "Am Rathaus 138", "Im Tal 12", "An der Mühle 3".
 	// Common German address shape where the street name is a place rather
-	// than a -straße compound. MANDATORY trailing house number — without
+	// than a -straße compound. MANDATORY trailing house number; without
 	// it the clinical-text collisions are constant ("Am Bauch", "Im Bett",
 	// "An der Niere"). With a 1-4-digit number the FP risk drops sharply.
 	deStreetPrepNumberedRE = regexp.MustCompile(
@@ -73,7 +73,7 @@ var (
 )
 
 // NewDEStreetRecognizer detects German street-address spans.
-// Emits STREET_ADDRESS — distinct from LOCATION so downstream operators
+// Emits STREET_ADDRESS; distinct from LOCATION so downstream operators
 // can redact street + number while preserving city information.
 func NewDEStreetRecognizer() *PatternRecognizer {
 	return NewPatternRecognizerWithContext(

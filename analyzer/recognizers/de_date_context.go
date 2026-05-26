@@ -13,7 +13,7 @@ import (
 // appears within deDateContextWindow chars before the candidate.
 //
 // Bare 4-digit numbers are too common in clinical text to emit
-// unconditionally — they collide with lab values, dosages, document IDs.
+// unconditionally; they collide with lab values, dosages, document IDs.
 // Partial dates collide with section numbers like "siehe 19.3.". The
 // keyword window is the only defense against those false positives.
 //
@@ -25,19 +25,19 @@ var (
 	// Bare 4-digit year; the surrounding context check decides if it's a date.
 	deBareYearRE = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
 
-	// Partial date DD.MM. — day 1-31, month 1-12, mandatory trailing dot.
+	// Partial date DD.MM.; day 1-31, month 1-12, mandatory trailing dot.
 	// Overlaps with a full DD.MM.YYYY are resolved by the analyzer's conflict
 	// pass (full match has a higher score and wins).
 	dePartialDateRE = regexp.MustCompile(
 		`\b(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.`,
 	)
 
-	// Obfuscated / typo-perturbed date — adversarial corpora insert one
+	// Obfuscated / typo-perturbed date; adversarial corpora insert one
 	// digit between month and year ("02.081.954" for "02.08.1954") or
 	// produce other malformed DD.MMM.YYY shapes. Day still 1-31; the
 	// month and year groups are loosened to {2,3} and {2,4} digits.
 	// FP risk on German thousands-separated numbers ("12.345.678") is
-	// real — that's why this is gated through the context window, never
+	// real; that's why this is gated through the context window, never
 	// emitted unconditionally.
 	deObfuscatedDateRE = regexp.MustCompile(
 		`\b(?:0?[1-9]|[12]\d|3[01])\.\d{2,3}\.\d{2,4}\b`,
@@ -46,7 +46,7 @@ var (
 	// Time of day HH:MM, plus the adversarial-obfuscated form HHH:M
 	// ("101:1" for "10:11", "185:7" for "18:57"). Hour 0-23 nominally
 	// but extended to 0-299 to absorb the digit-shift perturbations
-	// that adversarial_de produces. Context-gated — bare scores like
+	// that adversarial_de produces. Context-gated; bare scores like
 	// "5:0" in sports text or "1:2" in ratios will not match (hour
 	// group needs at least 2 digits).
 	deTimeOfDayRE = regexp.MustCompile(
@@ -55,7 +55,7 @@ var (
 )
 
 // Trigger phrases scanned in a lower-cased window before each candidate.
-// Each entry is matched as a plain substring after lowercasing the text — so
+// Each entry is matched as a plain substring after lowercasing the text; so
 // boundary characters (leading/trailing space) are significant. Avoid bare
 // short words like "am" without surrounding spaces, since they would fire on
 // any word ending in "am".
@@ -126,7 +126,7 @@ func (r *DEDateContextRecognizer) Analyze(_ context.Context, text string, _ []st
 		}
 		// Pass 2: medical-vocabulary context (lower confidence).
 		// Catches patterns like "Polytrauma 1995", "Mamma-CA 2037",
-		// "Pankreatitis 2022" — a year appearing right after a disease
+		// "Pankreatitis 2022"; a year appearing right after a disease
 		// or procedure name is almost always a date in clinical text.
 		// We tokenise the lookback window on non-letter chars and
 		// check whether any token is in the embedded medical vocab.
@@ -156,7 +156,7 @@ func (r *DEDateContextRecognizer) Analyze(_ context.Context, text string, _ []st
 	for _, m := range dePartialDateRE.FindAllStringIndex(text, -1) {
 		tryEmit(m[0], m[1], 0.80)
 	}
-	// Obfuscated dates score lower than clean ones — the clean
+	// Obfuscated dates score lower than clean ones; the clean
 	// DD.MM.YYYY (from de_date_time's deDateNumericRE at 0.85) wins
 	// the conflict resolver when both fire on a real date.
 	for _, m := range deObfuscatedDateRE.FindAllStringIndex(text, -1) {

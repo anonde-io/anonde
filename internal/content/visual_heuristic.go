@@ -16,7 +16,7 @@ import (
 //  1. Tile the page into TileSize-px squares.
 //  2. For each tile, count "dark" pixels (luma < darkThreshold). Tiles
 //     with density above tileDensityFloor are flagged as "inky."
-//  3. Subtract tiles that overlap a HIGH-confidence OCR word — those
+//  3. Subtract tiles that overlap a HIGH-confidence OCR word; those
 //     are just printed text the analyzer is already handling via the
 //     word-bbox path. Confidence threshold is configurable
 //     (textConfFloor) so OCR-jitter on legitimate text doesn't fall
@@ -31,7 +31,7 @@ import (
 // logos, and barcode-like shapes. It MISSES logos that are mostly
 // white-space with a thin outline. It can FALSE-POSITIVE on tables
 // with heavy borders. Both classes are acceptable for a redaction
-// tool — over-redacting a table border costs nothing; missing a
+// tool, over-redacting a table border costs nothing, missing a
 // signature leaks PII. Tunable via VisualHeuristicOptions.
 type VisualHeuristicOptions struct {
 	TileSize          int     // pixels per square tile (default 24)
@@ -39,7 +39,7 @@ type VisualHeuristicOptions struct {
 	TileDensityFloor  float64 // fraction of dark pixels needed to flag a tile (default 0.10)
 	TextConfFloor     float64 // tesseract conf above which a word is treated as printed text (default 55)
 	MinComponentTiles int     // smallest connected blob worth reporting (default 3)
-	MinBoxHeight      int     // pixels — drops thin horizontal rules (default 16)
+	MinBoxHeight      int     // pixels; drops thin horizontal rules (default 16)
 	// MaxBoxAreaFrac caps the size of any single emitted box as a
 	// fraction of the page area. Components above this fraction are
 	// almost always false positives from tables / paragraphs whose
@@ -53,7 +53,7 @@ type VisualHeuristicOptions struct {
 }
 
 func defaultVisualOpts() VisualHeuristicOptions {
-	// Tuned against scanned government forms (the target corpus —
+	// Tuned against scanned government forms (the target corpus,
 	// Romanian garnishment notices, German clinical letters, English
 	// contracts). Handwritten signatures are sparse ink at the page
 	// edges; the floor needs to be low enough to catch them but high
@@ -71,7 +71,7 @@ func defaultVisualOpts() VisualHeuristicOptions {
 }
 
 // isLikelyTextOnlyPage cheaply classifies whether a page is text-only
-// — i.e. has no signature / logo / stamp / face / barcode that the
+// i.e. has no signature / logo / stamp / face / barcode that the
 // vision detector would ever fire on. Callers use this to short-
 // circuit the ~500 ms YOLOS inference on born-digital text PDFs and
 // the many text-only pages in marketing decks.
@@ -166,7 +166,7 @@ func detectVisualPIIHeuristic(img image.Image, words []OCRWord, opts VisualHeuri
 		return nil
 	}
 
-	// Step 1+2: tile density map. inky[y*tilesX + x] = true if dense.
+	// Tile density map: inky[y*tilesX + x] = true if dense.
 	inky := make([]bool, tilesX*tilesY)
 	for ty := 0; ty < tilesY; ty++ {
 		y0 := ty * opts.TileSize
@@ -198,7 +198,7 @@ func detectVisualPIIHeuristic(img image.Image, words []OCRWord, opts VisualHeuri
 		}
 	}
 
-	// Step 3: subtract tiles overlapping confident OCR words.
+	// Subtract tiles overlapping confident OCR words.
 	for _, w := range words {
 		if w.Conf < opts.TextConfFloor {
 			continue
@@ -220,7 +220,7 @@ func detectVisualPIIHeuristic(img image.Image, words []OCRWord, opts VisualHeuri
 		}
 	}
 
-	// Step 4: connected-component labeling (BFS, 4-connectivity).
+	// Connected-component labeling (BFS, 4-connectivity).
 	labels := make([]int, len(inky))
 	curLabel := 0
 	components := map[int][]image.Point{}
@@ -250,7 +250,7 @@ func detectVisualPIIHeuristic(img image.Image, words []OCRWord, opts VisualHeuri
 		}
 	}
 
-	// Step 5+6: emit bounding rects of large enough components.
+	// Emit bounding rects of large enough components.
 	pageArea := width * height
 	maxAllowed := int(opts.MaxBoxAreaFrac * float64(pageArea))
 	if maxAllowed <= 0 {
@@ -292,7 +292,7 @@ func detectVisualPIIHeuristic(img image.Image, words []OCRWord, opts VisualHeuri
 		}
 		area := rect.Dx() * rect.Dy()
 		if area > maxAllowed {
-			// Almost always a paragraph or table block — skip.
+			// Almost always a paragraph or table block; skip.
 			continue
 		}
 		keep = append(keep, sized{rect: rect, area: area})

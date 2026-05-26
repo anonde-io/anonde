@@ -5,11 +5,11 @@ import (
 )
 
 // Stats is the snapshot shape gauge sources return. Reused for both
-// the vault and the store gauges — they publish the same two
+// the vault and the store gauges; they publish the same two
 // numbers. Kept here (rather than imported from core) so the metrics
 // package has no upward dependency on core; cmd/anonde adapts
 // core.VaultStats/core.StoreStats values into this shape at wiring
-// time. Bytes=-1 means "backend does not report" — published as -1
+// time. Bytes=-1 means "backend does not report"; published as -1
 // so dashboards can distinguish unknown from truly zero.
 type Stats struct {
 	Entries int64
@@ -50,7 +50,7 @@ type gaugesCollector struct {
 // GaugesConfig wires the snapshot-on-scrape gauges to their sources.
 // Each source is a small callback so the metrics package stays
 // import-cycle-free w.r.t. internal/core. Any field left nil simply
-// omits the corresponding metric — useful for tests and for backends
+// omits the corresponding metric; useful for tests and for backends
 // that can't cheaply report their state.
 type GaugesConfig struct {
 	Vault             func() Stats
@@ -62,7 +62,7 @@ type GaugesConfig struct {
 
 // RegisterGauges builds the scrape-time gauges collector against
 // cfg and registers it on reg. Returns the collector so tests can
-// unregister it if they need to. Safe to call once per process —
+// unregister it if they need to. Safe to call once per process,
 // double registration on the same registry will panic via the
 // standard Prometheus duplicate-collector check.
 func RegisterGauges(reg *prometheus.Registry, cfg GaugesConfig) prometheus.Collector {
@@ -113,7 +113,7 @@ func RegisterGauges(reg *prometheus.Registry, cfg GaugesConfig) prometheus.Colle
 	return c
 }
 
-// Describe — Prometheus collector contract.
+// Describe; Prometheus collector contract.
 func (c *gaugesCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.descBuildInfo
 	if c.vaultStats != nil {
@@ -132,7 +132,7 @@ func (c *gaugesCollector) Describe(ch chan<- *prometheus.Desc) {
 	}
 }
 
-// Collect — Prometheus collector contract. Runs on every scrape.
+// Collect; Prometheus collector contract. Runs on every scrape.
 // Each branch is guarded so a partially-wired collector (e.g. tests
 // that pass nil for some sources) doesn't produce zero-valued series
 // that misrepresent the truth.

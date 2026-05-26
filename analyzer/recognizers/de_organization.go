@@ -19,7 +19,7 @@ var (
 	// Suffix form: <stem>-Klinikum / -Krankenhaus / -Klinik / -Zentrum / -Spital
 	// Optionally followed by 1-2 capitalised words ("Klinikum rechts der Isar").
 	//
-	// (?i) makes the whole pattern case-insensitive — clean clinical
+	// (?i) makes the whole pattern case-insensitive; clean clinical
 	// German always title-cases these words, but adversarial corpora
 	// scramble case ("SAnA KLiNiKuM"). The case-insensitive flag costs
 	// nothing on legitimate input (matches the same strings) and recovers
@@ -42,7 +42,7 @@ var (
 			`Praxis[ \t]+(?:Dr\.|Prof\.|für[ \t]+\w+))[ \t]+[a-zäöüß][a-zäöüß-]+(?:[ \t]+[a-zäöüß][a-zäöüß-]+){0,2}`,
 	)
 
-	// Standalone famous German hospital names. Closed list — high precision.
+	// Standalone famous German hospital names. Closed list; high precision.
 	deOrgWellKnownRE = regexp.MustCompile(
 		`(?i)\b(?:Charit[ée]|Vivantes|Asklepios|Helios|Sana|MediClin|` +
 			`Schön[ \t]+Klinik|Rhön-?Klinikum|Diakonissenkrankenhaus)\b`,

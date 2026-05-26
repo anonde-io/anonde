@@ -24,7 +24,7 @@ import (
 // via NewHTTPServer/SetMaxRequestBytes; cmd/anonde/main reads
 // MAX_CONTENT_BYTES. Connect enforces this via connect.WithReadMaxBytes,
 // which returns ResourceExhausted (HTTP 429 over JSON) for oversized
-// payloads. The REST gateway path does not enforce this today — see
+// payloads. The REST gateway path does not enforce this today; see
 // TODO.md.
 const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
 
@@ -110,8 +110,8 @@ func (s *HTTPServer) Routes() http.Handler {
 
 	// REST gateway: dispatches /v1/... requests in-process to the gRPC
 	// server implementation (no separate gRPC port, no networking).
-	// JSON shape mirrors the Connect codec above — snake_case on
-	// output, tolerant of both shapes + unknown fields on input —
+	// JSON shape mirrors the Connect codec above; snake_case on
+	// output, tolerant of both shapes + unknown fields on input,
 	// so callers see one consistent JSON contract across surfaces.
 	//
 	// Two extra marshaler hooks layered in for the PDF surface:
@@ -149,8 +149,8 @@ func (s *HTTPServer) Routes() http.Handler {
 	// response marshaler from the Accept header; with the default
 	// Accept: */* it falls back to JSON, then pdfForwardResponse
 	// declares a Content-Length sized for the raw PDF (from the
-	// response proto field), and the JSON body — which base64-encodes
-	// the PDF — exceeds it. Result: "wrote more than declared
+	// response proto field), and the JSON body; which base64-encodes
+	// the PDF; exceeds it. Result: "wrote more than declared
 	// Content-Length" and a truncated body. A dedicated handler that
 	// writes raw bytes makes the GET behave like an asset fetch
 	// regardless of Accept, matching the pre-PR-#11 hand-rolled shape.
@@ -260,7 +260,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Local dev default: allow browser clients from other localhost
 		// ports. Tighten via a CORS_ALLOW_ORIGINS env var before
-		// exposing the service publicly — see TODO.md.
+		// exposing the service publicly; see TODO.md.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,Connect-Protocol-Version,Connect-Timeout-Ms")

@@ -4,7 +4,7 @@ import "regexp"
 
 // Romanian-specific pattern recognizers. Complement GLiNER NER on the
 // surfaces it consistently misses on Romanian government / legal /
-// banking forms — landline phones (county-prefix format, GLiNER trained
+// banking forms; landline phones (county-prefix format, GLiNER trained
 // on US-shape phones misses these), the 13-digit CNP personal-numeric
 // code, HH:MM:SS times the model classifies as plain dates, and
 // vehicle-registration tags ("R20 0700288") common in police-fine
@@ -18,9 +18,9 @@ var (
 		`\b0\d{3}[-.\s]?\d{6,7}\b`,
 	)
 
-	// CNP — Romanian personal numeric code, 13 digits. First digit is
+	// CNP; Romanian personal numeric code, 13 digits. First digit is
 	// 1-8 (sex + century-of-birth tag); the rest is birthdate + county
-	// + sequence + checksum. Strict shape — long digit strings outside
+	// + sequence + checksum. Strict shape; long digit strings outside
 	// this prefix range are not CNPs.
 	roCNPRE = regexp.MustCompile(
 		`\b[1-8]\d{12}\b`,
@@ -35,7 +35,7 @@ var (
 
 	// Vehicle-registration / fine-record tag: "R20 0700288",
 	// "R190524925", "R18 R18 0697785" (the OCR sometimes doubles).
-	// Strict shape — single uppercase R, 2 digits (year prefix), optional
+	// Strict shape; single uppercase R, 2 digits (year prefix), optional
 	// space, 6-9 digits. Score below the generic ID pattern.
 	roVehicleRegRE = regexp.MustCompile(
 		`\bR\d{2}[-.\s]?\d{6,9}\b`,
@@ -49,7 +49,7 @@ var (
 		`\b\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?\s*(?:lei|LEI|RON|EUR|USD|euro)\b`,
 	)
 
-	// Romanian Treasury (Trezoreria) account references — the "TREZ"
+	// Romanian Treasury (Trezoreria) account references; the "TREZ"
 	// prefix on bank account numbers. The full IBAN form is
 	// "RO<dd>TREZ<dd>..." but OCR commonly fragments this in tables
 	// (loses the "RO<dd>" prefix on subsequent rows, leaving bare
@@ -58,7 +58,7 @@ var (
 	// requires the country code AND strict digit positions so it
 	// misses these. Matching TREZ + 10-30 alphanumerics is strict
 	// enough to avoid arbitrary code/word collisions in clinical or
-	// legal text — and importantly, the TREZ token is preserved by
+	// legal text; and importantly, the TREZ token is preserved by
 	// OCR even when surrounding digits jitter.
 	roTreasuryAccountRE = regexp.MustCompile(
 		// No leading \b on purpose: tesseract sometimes glues a stray
@@ -83,12 +83,11 @@ var (
 	)
 
 	// Observation / annotation fields on Romanian government and
-	// police forms. Format is "Obs:<TEXT>" — usually a brief
+	// police forms. Format is "Obs:<TEXT>", usually a brief
 	// uppercase reason code like "LIPSA ROVINETA" (missing road
 	// tax) or "FARA ROVINIETA" (without). Standalone these are
 	// public violation codes; alongside a named debtor in the same
-	// row they're sensitive enough to redact (matches Private AI /
-	// Limina behaviour, which classifies them as NAME).
+	// row they're sensitive enough to redact.
 	// Stops at the next non-capital token / punctuation / digit.
 	roObservationRE = regexp.MustCompile(
 		`\bObs[:.]\s*[A-ZĂÂÎȘȚŞŢ][A-ZĂÂÎȘȚŞŢ\s]{2,80}`,
@@ -118,7 +117,7 @@ func NewRomanianCNPRecognizer() *PatternRecognizer {
 	)
 }
 
-// NewTimeOfDayRecognizer detects HH:MM[:SS] surfaces — language-agnostic.
+// NewTimeOfDayRecognizer detects HH:MM[:SS] surfaces; language-agnostic.
 func NewTimeOfDayRecognizer() *PatternRecognizer {
 	return NewPatternRecognizerWithContext(
 		"TimeOfDayRecognizer",
@@ -154,7 +153,7 @@ func NewRomanianMoneyRecognizer() *PatternRecognizer {
 }
 
 // NewRomanianTreasuryAccountRecognizer detects Trezoreria (Romanian
-// Treasury) bank-account references — TREZ-prefixed bare account
+// Treasury) bank-account references; TREZ-prefixed bare account
 // fragments that OCR drops the country code from. Complements the
 // generic IBAN recognizer which requires the full RO<dd> prefix.
 func NewRomanianTreasuryAccountRecognizer() *PatternRecognizer {

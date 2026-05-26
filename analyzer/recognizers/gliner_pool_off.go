@@ -8,7 +8,7 @@
 // build tag, and falls through cleanly to a boot-time error when an
 // operator sets GLINER_POOL_SIZE on a patterns-only build.
 //
-// Mirrors the shape of ner_gliner_ensemble_off.go — sentinel error,
+// Mirrors the shape of ner_gliner_ensemble_off.go; sentinel error,
 // minimal struct, constructor returns (nil, err) so the caller's
 // "log.Fatalf on pool construction failure" path fires loudly instead
 // of silently disabling NER.
@@ -48,15 +48,15 @@ func NewGLiNERPool(_ GLiNERConfig, size int) (*GLiNERPool, error) {
 // nerRecognizerNames lookup remains consistent across build tags.
 func (p *GLiNERPool) Name() string { return "GLiNERPool" }
 
-// Size returns the size the stub was constructed with — purely for
+// Size returns the size the stub was constructed with; purely for
 // diagnostic parity with the real implementation. Always 0 here since
 // NewGLiNERPool errors out before storing it.
 func (p *GLiNERPool) Size() int { return p.size }
 
-// SupportedEntities returns an empty slice — the stub can't infer.
+// SupportedEntities returns an empty slice; the stub can't infer.
 func (p *GLiNERPool) SupportedEntities() []string { return nil }
 
-// SupportedLanguages returns an empty slice — the stub can't infer.
+// SupportedLanguages returns an empty slice; the stub can't infer.
 func (p *GLiNERPool) SupportedLanguages() []string { return nil }
 
 // Analyze always returns errPoolDisabled in the stub.

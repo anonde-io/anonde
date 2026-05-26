@@ -19,7 +19,7 @@
 // Compatibility with the Python sidecar (bench/runners/gliner.py): same
 // model id (knowledgator/gliner-pii-base-v1.0) and same canonical-entity
 // mapping. The sidecar exists for parity-check (kept in the bench matrix
-// as `gliner-py`) not as the production path — production is this file.
+// as `gliner-py`) not as the production path; production is this file.
 //
 // Backend lifecycle
 // -----------------
@@ -27,7 +27,7 @@
 // once. We guard it behind a sync.Once. `ort.SetSharedLibraryPath()` must
 // fire BEFORE InitializeEnvironment, so callers wanting a non-default
 // libonnxruntime location set GLiNERConfig.SharedLibraryPath on the FIRST
-// recognizer they construct — later changes are ignored (the env is
+// recognizer they construct; later changes are ignored (the env is
 // already up). The `--ort-library` flag on bench/runners/anonde.go
 // is the usual way to plumb this through.
 //
@@ -45,7 +45,7 @@
 // gomlx/simplego port we don't pad to maxTokens. Per-chunk tensors are
 // freshly allocated, fed to Run(), and Destroy()'d on return. The output
 // tensor is also auto-allocated by onnxruntime (passing a nil slot tells
-// the runtime to figure out the shape) — we read the float32 buffer back,
+// the runtime to figure out the shape); we read the float32 buffer back,
 // destroy the tensor, and decode.
 //
 // Why not BiEncoder / unified API
@@ -55,7 +55,7 @@
 // span_mask). The output is a single "logits" tensor of shape
 // [B, L, K, C]. Swapping in a different GLiNER variant (bi-encoder,
 // flat-decoder, sequence-tag) requires changing the input list and the
-// decoder — out of scope here.
+// decoder; out of scope here.
 
 package recognizers
 
@@ -102,7 +102,7 @@ const (
 	// fix in init(). The tokenizer fix shifts the entire sigmoid distribution upward by
 	// ~0.15–0.20, but the surname-coverage gap on the
 	// "Contact John Doe about it." fixture lands the wider PERSON span at
-	// score 0.221 — just under the previous 0.25 floor. Lowering to 0.22
+	// score 0.221; just under the previous 0.25 floor. Lowering to 0.22
 	// recovers it; other PersonBreadth fixtures keep passing. 0.22 is
 	// still well above the noise floor (sub-0.15 candidates are "it",
 	// "Contact", ".") so false positives do not return.
@@ -111,7 +111,7 @@ const (
 	// defaultOrgThreshold is the per-class threshold for ORGANIZATION
 	// labels. The 2026-05-15 bench-full matrix shows the same fingerprint
 	// PERSON had before its 0.25 fix: ORG strict F1 on wikiann_de is
-	// 0.176 for anonde-gliner vs 0.343 for gliner-py — the model has the
+	// 0.176 for anonde-gliner vs 0.343 for gliner-py; the model has the
 	// signal, but our global 0.40 cuts it off. 0.30 is a conservative
 	// pick between PERSON's 0.25 and the global 0.40; tune later if false
 	// positives spike.
@@ -143,7 +143,7 @@ const (
 	// 1200 bytes this corresponds to ~80 KB of NER coverage per doc;
 	// inputs larger than that fall back to pattern-only coverage for the
 	// tail (pattern recognizers still run on the full text, so structured
-	// PII — emails, phones, IDs — is never silently dropped). 64 chunks
+	// PII, emails, phones, IDs, is never silently dropped). 64 chunks
 	// at ~150-600 ms per chunk caps p95 wall-clock at ~10-40 sec, an
 	// order of magnitude under the previous unbounded behaviour where
 	// pmc_de docs hit 50 sec.
@@ -161,7 +161,7 @@ const (
 // Python `\w` for str patterns is Unicode-aware (letters / digits /
 // underscore from any script). Go's `regexp` `\w` is ASCII-only, so we
 // expand to explicit Unicode classes. The `|\S` alternation catches
-// isolated punctuation as one-character "words" — same behaviour as
+// isolated punctuation as one-character "words"; same behaviour as
 // Python.
 var glinerWordRegex = regexp.MustCompile(`[\p{L}\p{N}_]+(?:[-_][\p{L}\p{N}_]+)*|\S`)
 
@@ -173,7 +173,7 @@ var GLiNERDebug = false
 
 // debugLog is the diagnostic sink used by GLiNERRecognizer when
 // GLiNERDebug is true. It appends to ./gliner_debug.log. Failures are
-// swallowed silently — diagnostics must never break inference.
+// swallowed silently; diagnostics must never break inference.
 func debugLog(format string, args ...any) {
 	f, err := os.OpenFile("./gliner_debug.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -186,7 +186,7 @@ func debugLog(format string, args ...any) {
 // glinerOrtOnce gates the one-time onnxruntime environment init. The
 // first recognizer to call init() wins the race and decides the shared
 // library path; subsequent recognizers with a different
-// SharedLibraryPath have their value silently ignored — onnxruntime
+// SharedLibraryPath have their value silently ignored; onnxruntime
 // only takes the path before InitializeEnvironment.
 var (
 	glinerOrtOnce    sync.Once
@@ -206,7 +206,7 @@ func initOrtEnvironment(libPath string) error {
 			// in the same binary (e.g. the PDF-redaction signature
 			// detector) initialised the ORT environment first. The
 			// environment is process-wide, so subsequent NewSession
-			// calls still work — no need to fail this recognizer.
+			// calls still work; no need to fail this recognizer.
 			msg := err.Error()
 			if !strings.Contains(msg, "already been initialized") &&
 				!strings.Contains(msg, "already initialized") {
@@ -218,7 +218,7 @@ func initOrtEnvironment(libPath string) error {
 }
 
 // GLiNERRecognizer runs a GLiNER ONNX export to detect PII entities.
-// GLiNER is an open-set NER architecture — the label set is supplied
+// GLiNER is an open-set NER architecture; the label set is supplied
 // at inference time via the prompt, so the same loaded model can score
 // arbitrary entity types without retraining.
 //
@@ -310,7 +310,7 @@ func (r *GLiNERRecognizer) SupportedEntities() []string {
 }
 
 // SupportedLanguages: GLiNER models are typically multilingual. The
-// v1.0 PII model card lists EN+DE+ES+FR+IT+NL+PT — extend if you swap
+// v1.0 PII model card lists EN+DE+ES+FR+IT+NL+PT; extend if you swap
 // to a different ModelName.
 func (r *GLiNERRecognizer) SupportedLanguages() []string {
 	return []string{"en", "de", "es", "fr", "it", "nl", "pt"}
@@ -435,7 +435,7 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 
 		// Cache the prompt's tokenisation under the same With() options
 		// runChunk uses (AddSpecialTokens=false). Done here because:
-		//   * the prompt is constant per recognizer — re-encoding it per
+		//   * the prompt is constant per recognizer; re-encoding it per
 		//     chunk was a measurable cost on long-doc multi-chunk runs
 		//     (~5-10 ms × N chunks per Analyze on pmc_de-shaped inputs).
 		//   * doing it inside r.mu-guarded runChunk is fine, but the
@@ -455,13 +455,13 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		// after this fix.
 		//
 		// Fix: encode each piece independently. tok.Encode("<<ENT>>") for
-		// the added-token alone (no leading space — added tokens are atomic
+		// the added-token alone (no leading space; added tokens are atomic
 		// units in the vocab), then tok.Encode(" "+label) which forces SPM
-		// to emit exactly one `▁` on the first subword of the label —
+		// to emit exactly one `▁` on the first subword of the label,
 		// matching Python's `is_split_into_words=True` behaviour. The final
 		// <<SEP>> token is appended the same way. Each per-piece result is
 		// stripped of any boundary CLS/SEP IDs the tokenizer's post-
-		// processor injects (defence-in-depth — AddSpecialTokens=false
+		// processor injects (defence-in-depth; AddSpecialTokens=false
 		// usually suffices, but some HF setups still emit them).
 		//
 		// Do NOT undo this without re-running the mapa_it probe; the
@@ -478,13 +478,13 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		}
 		var promptIDs []int
 		for _, lbl := range r.labels {
-			// <<ENT>> as an atomic added token. No leading space — the
+			// <<ENT>> as an atomic added token. No leading space; the
 			// HF tokenizer vocab treats <<ENT>> as a literal vocab entry;
 			// prefixing a space here would force SPM to emit a stray `▁`
 			// on it (the original bug).
 			promptIDs = append(promptIDs, encodePiece(gliner_entToken)...)
 			// " "+label forces SPM to emit ONE leading `▁` on the first
-			// subword of the label — exactly what HF's
+			// subword of the label; exactly what HF's
 			// `is_split_into_words=True` path produces in Python.
 			promptIDs = append(promptIDs, encodePiece(" "+lbl)...)
 		}
@@ -543,7 +543,7 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 
 		// Optional session tuning from ANONDE_ORT_* env vars. nil
 		// preserves ORT defaults (intra=num cores, inter=1, graph=basic).
-		// MUST be called AFTER initOrtEnvironment — NewSessionOptions
+		// MUST be called AFTER initOrtEnvironment; NewSessionOptions
 		// requires IsInitialized() == true.
 		sessionOpts, optsErr := sessionOptionsFromEnv()
 		if optsErr != nil {
@@ -569,7 +569,7 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 }
 
 // findFirstOnnx walks the given dir and returns the first *.onnx file
-// it finds (deterministic walk order — sorted directory listing). Used
+// it finds (deterministic walk order; sorted directory listing). Used
 // as a fallback when neither cfg.OnnxFilePath nor model.onnx resolves.
 func findFirstOnnx(dir string) (string, error) {
 	var found string
@@ -586,7 +586,7 @@ func findFirstOnnx(dir string) (string, error) {
 }
 
 // Destroy releases the onnxruntime session. The environment itself is
-// process-wide and is intentionally NOT destroyed here — other
+// process-wide and is intentionally NOT destroyed here; other
 // recognizers may still be using it.
 func (r *GLiNERRecognizer) Destroy() error {
 	if r.session != nil {
@@ -634,7 +634,7 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 
 	// Cap chunk count to bound worst-case latency. Inputs longer than
 	// the cap retain pattern-recognizer coverage (the pattern path runs
-	// on the full text, not chunked) — only NER coverage for the tail
+	// on the full text, not chunked); only NER coverage for the tail
 	// is dropped. This is the right trade-off vs the previous unbounded
 	// behaviour where one 200 KB clinical document blocked the
 	// recognizer for ~50 sec (see pmc_de bench tail).
@@ -686,7 +686,7 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 	}
 
 	// Per-call summary at INFO. One line per /v1/ingest is a fine
-	// volume — fly logs already get healthcheck spam at 6/min, and this
+	// volume; fly logs already get healthcheck spam at 6/min, and this
 	// is the diagnostic that tells operators whether GLiNER is the cause
 	// of any "PII missed" complaints. Toggle with GLINER_QUIET=1 if it
 	// gets noisy under bulk traffic.
@@ -742,7 +742,7 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 	// Merge adjacent same-type spans at the NER level. The anonymizer
 	// runs the same pass downstream before tokenisation (see
 	// anonymizer.MergeAdjacentSameType call site), so production
-	// redaction is unaffected — but the bench scores per-cell JSONLs
+	// redaction is unaffected; but the bench scores per-cell JSONLs
 	// emitted directly by the recognizer, and fragmented spans like
 	// ["Maria", "Lopez"] tank strict-F1 vs ["Maria Lopez"]. Doing the
 	// merge here brings the bench numbers in line with what production
@@ -773,7 +773,7 @@ type wordRange struct{ start, end int }
 // metaspace'd word text, not the original input). Instead of trusting
 // `Spans`, we tokenize the prompt prefix and each text word
 // INDEPENDENTLY and concatenate the IDs. Word boundaries are then
-// trivially known by construction — the first subword of word_i is
+// trivially known by construction; the first subword of word_i is
 // 1-indexed `i`, continuations are 0.
 //
 // `AddSpecialTokens` is disabled for the per-piece encodes; we add the
@@ -782,7 +782,7 @@ type wordRange struct{ start, end int }
 //
 // Unlike the previous gomlx port, onnxruntime accepts arbitrary input
 // shapes per call, so we DO NOT pad to maxTokens. Each chunk's tensors
-// are sized to the actual seq_len / num_words / num_spans — same shape
+// are sized to the actual seq_len / num_words / num_spans; same shape
 // regime the Python sidecar feeds the model. `text_lengths = [[numWords]]`
 // (shape `[1, 1]`) matches gliner/data_processing/processor.py:530
 // (`seq_length.unsqueeze(-1)`).
@@ -793,7 +793,7 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		return nil, nil
 	}
 
-	// Hold the recognizer mutex across the entire chunk — both the
+	// Hold the recognizer mutex across the entire chunk; both the
 	// tokenizer dance and the ONNX session Run() share instance-global
 	// state that two concurrent Analyze() calls would otherwise corrupt:
 	//
@@ -804,7 +804,7 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	//     on the struct.
 	//
 	// One mutex covers both. Throughput cost vs the previous Run-only
-	// lock is ~5-15% — tokenisation is fast relative to inference — and
+	// lock is ~5-15%, tokenisation is fast relative to inference, and
 	// it eliminates a class of "PII silently leaks under concurrent
 	// /v1/ingest load" bugs that the single-thread bench never surfaces.
 	r.mu.Lock()
@@ -847,7 +847,7 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		// Prepend a space so the SPM pre-tokenizer treats this as a
 		// new word with a metaspace marker. Without the prefix space
 		// the first word of each input gets tokenized differently
-		// from words mid-sentence — that mismatch ruins recall.
+		// from words mid-sentence; that mismatch ruins recall.
 		ids := r.tokenizer.Encode(" " + piece)
 		ids = stripBoundarySpecials(ids, gliner_clsID(r.tokenizer), gliner_sepID(r.tokenizer))
 		if len(ids) == 0 {
@@ -882,7 +882,7 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	finalMask = append(finalMask, 0) // [SEP]
 
 	// --- 4. Truncate to maxTokens if needed. -----
-	// We don't pad here — onnxruntime accepts dynamic shapes — but we
+	// We don't pad here, onnxruntime accepts dynamic shapes, but we
 	// do honour the configured cap so we don't blow past the model's
 	// position-embedding limit (DeBERTa-v3-small is 512).
 	seqLen := len(finalIDs)
@@ -1059,9 +1059,9 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	//
 	//   * PERSON: "Jane" scores higher than "Jane Doe"; at threshold 0.40
 	//     only the narrow span survives and the surname leaks. 0.25
-	//     recovers full names — see defaultPersonThreshold.
+	//     recovers full names; see defaultPersonThreshold.
 	//   * ORGANIZATION, AGE, ID: the 2026-05-15 bench matrix shows the
-	//     same fingerprint as pre-fix PERSON — anonde-gliner uniformly
+	//     same fingerprint as pre-fix PERSON; anonde-gliner uniformly
 	//     under-recalls vs gliner-py while the model itself has the
 	//     signal. See the default*Threshold constants for per-type
 	//     rationale and source corpora.
@@ -1093,7 +1093,7 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		score   float64
 	}
 	cands := make([]spanCand, 0, 32)
-	// Iterate (s, w) — for each (start word, width) pair, scan classes.
+	// Iterate (s, w); for each (start word, width) pair, scan classes.
 	// The decoder's validity check (`start + width + 1 <= num_words`)
 	// matches the Python reference.
 	for s := 0; s < LDim; s++ {
@@ -1127,11 +1127,11 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	// are above threshold and they overlap. Without this, GLiNER's
 	// decoder discards "Jane Doe" (score 0.55) in favour of "Jane"
 	// (score 0.65) because the higher-scored narrow span is considered
-	// first and the wider span is dropped as overlapping — which means
+	// first and the wider span is dropped as overlapping; which means
 	// the surname ships unmasked to the LLM, a critical PII leak.
 	//
 	// Why PERSON only: production redaction wants "Jane Doe" over
-	// "Jane" — the broader span subsumes the narrower with no
+	// "Jane"; the broader span subsumes the narrower with no
 	// correctness loss for the redactor, and shipping a leaked surname
 	// downstream is worse than emitting a marginally over-broad span.
 	// Other entity types (LOCATION composites like "Greater New York",
@@ -1207,7 +1207,7 @@ func gliner_clsID(_ *hftokenizer.Tokenizer) int {
 	return 1
 }
 
-// gliner_sepID returns the [SEP] token ID — id=2 in DeBERTa.
+// gliner_sepID returns the [SEP] token ID; id=2 in DeBERTa.
 func gliner_sepID(_ *hftokenizer.Tokenizer) int {
 	return 2
 }

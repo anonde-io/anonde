@@ -10,7 +10,7 @@ func NewUKNHSRecognizer() *validatedRecognizer {
 		[][2]any{
 			// Strong: standard 3-3-4 grouping with separators ("123 456 7890" or "123-456-7890").
 			{`\b\d{3}[ -]\d{3}[ -]\d{4}\b`, 0.7},
-			// Medium: bare 10 digits — common in dumps but more false-positive-prone.
+			// Medium: bare 10 digits; common in dumps but more false-positive-prone.
 			{`\b\d{10}\b`, 0.3},
 		},
 		[]string{"nhs", "national health", "patient id", "patient number", "health number"},

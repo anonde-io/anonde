@@ -23,9 +23,9 @@ func TestValidateDESteuerID(t *testing.T) {
 		s    string
 		why  string
 	}{
-		{"00000000000", "all zeros — fails uniqueness"},
-		{"12345678901", "no repeated digit — fails uniqueness"},
-		{"11111111111", "one digit repeated 11x — fails (≥4 rule)"},
+		{"00000000000", "all zeros; fails uniqueness"},
+		{"12345678901", "no repeated digit; fails uniqueness"},
+		{"11111111111", "one digit repeated 11x; fails (≥4 rule)"},
 		{"86095742718", "wrong check digit"},
 		{"8609574271",  "too short"},
 		{"860957427199", "too long"},

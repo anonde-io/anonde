@@ -10,23 +10,21 @@ import (
 
 // RenderTextAsPDF writes the supplied text into a fresh A4 PDF and
 // returns the bytes. Pages are separated by form-feed characters
-// (\f) — the same separator OCRPDFBytes emits — so a round trip
+// (\f), the same separator OCRPDFBytes emits, so a round trip
 // (PDF -> OCR -> anonymize -> PDF) preserves page boundaries.
 //
-// This is intentionally simple: a single fixed font, hard-wrapped
-// at the page margin, no layout reconstruction. It matches what
-// commercial PII gateways (Private AI, Limina) produce for the
-// "give me back a redacted PDF" use case — a readable artefact
-// you can hand to a downstream tool, not a pixel-perfect copy of
-// the input.
+// Intentionally simple: a single fixed font, hard-wrapped at the
+// page margin, no layout reconstruction. A readable artefact you
+// can hand to a downstream tool, not a pixel-perfect copy of the
+// input.
 func RenderTextAsPDF(text string) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(15, 15, 15)
 	pdf.SetAutoPageBreak(true, 15)
 	// The core fpdf fonts (Helvetica/Times/Courier) cover Latin-1
 	// only. For broader coverage (German umlauts, Romanian / Polish
-	// diacritics) we register the bundled DejaVu fallback — a TTF
-	// with Unicode coverage — when present. If the font isn't
+	// diacritics) we register the bundled DejaVu fallback; a TTF
+	// with Unicode coverage; when present. If the font isn't
 	// available we fall back to Courier and best-effort
 	// transliterate to Latin-1 so the output is still readable
 	// instead of erroring.
@@ -50,7 +48,7 @@ func RenderTextAsPDF(text string) ([]byte, error) {
 		pdf.AddPage()
 		page = strings.TrimRight(page, "\n")
 		if page == "" {
-			// Empty page is fine — still emit it so page count
+			// Empty page is fine; still emit it so page count
 			// matches the input PDF when both round-trip through
 			// OCR + render.
 			_ = i

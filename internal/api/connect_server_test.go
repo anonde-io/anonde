@@ -86,7 +86,7 @@ func TestConnect_CreateAnonymization_MintsIDWhenEmpty(t *testing.T) {
 		t.Fatalf("expected minted id length %d, got %d (%q)", len("anon_")+16, len(mintedID), mintedID)
 	}
 
-	// Round-trip the minted ID through reveal — the only ID we hold
+	// Round-trip the minted ID through reveal; the only ID we hold
 	// is the one the server returned.
 	rev, err := client.RevealContent(ctx, connect.NewRequest(&anondev1.RevealContentRequest{
 		TenantId:      "acme",
@@ -158,7 +158,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 		t.Fatalf("expected tokens_deleted > 0")
 	}
 
-	// After deletion, reveal must fail with NotFound-equivalent — Service
+	// After deletion, reveal must fail with NotFound-equivalent; Service
 	// returns an error from store.Get, which connectErrFor maps to
 	// InvalidArgument (no specific NotFound mapping yet). Asserting on
 	// the error string keeps the test stable across that future mapping.

@@ -22,7 +22,7 @@ If no entities are found, return {"entities":[]}.`
 const maxOllamaChunkBytes = 8000
 
 // OllamaNERRecognizer detects named entities by calling a local Ollama instance.
-// All inference runs locally — no data leaves the machine.
+// All inference runs locally; no data leaves the machine.
 type OllamaNERRecognizer struct {
 	endpoint string
 	model    string

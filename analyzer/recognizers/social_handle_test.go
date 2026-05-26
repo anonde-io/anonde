@@ -18,7 +18,7 @@ func TestSocialHandleRecognizer(t *testing.T) {
 		text  string
 		wants []want
 	}{
-		// Explicit `@handle` — PERSON.
+		// Explicit `@handle`; PERSON.
 		{"plain @handle", "Follow @alice for updates.", []want{{"@alice", "PERSON"}}},
 		{"@handle at start", "@alice ping me back.", []want{{"@alice", "PERSON"}}},
 		{"@handle with underscore", "ping @user_name now.", []want{{"@user_name", "PERSON"}}},
@@ -26,7 +26,7 @@ func TestSocialHandleRecognizer(t *testing.T) {
 		{"wnut tokenised space after @", "RT @ beatfaceleah :", []want{{"@ beatfaceleah", "PERSON"}}},
 		{"max length 30 chars after @", "RT @abcdefghijklmnopqrstuvwxyzABCD end.", []want{{"@abcdefghijklmnopqrstuvwxyzABCD", "PERSON"}}},
 
-		// Hashtag — ORGANIZATION.
+		// Hashtag; ORGANIZATION.
 		{"plain #hashtag", "Loving #fitnessblender today.", []want{{"#fitnessblender", "ORGANIZATION"}}},
 		{"#hashtag at start", "#nike just dropped a new shoe.", []want{{"#nike", "ORGANIZATION"}}},
 		{"tokenised space after #", "Brand # fitnessblender rocks.", []want{{"# fitnessblender", "ORGANIZATION"}}},

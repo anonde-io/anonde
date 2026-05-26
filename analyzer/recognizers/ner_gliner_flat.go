@@ -11,7 +11,7 @@
 //
 //	input_ids, attention_mask, words_mask, text_lengths        (4 inputs)
 //
-// (No span_idx / span_mask — the model emits per-word BIO-style logits
+// (No span_idx / span_mask; the model emits per-word BIO-style logits
 // directly instead of scoring pre-enumerated spans.)
 //
 // The output `logits` tensor has shape `[B, L, C, 3]`, where the trailing
@@ -26,7 +26,7 @@
 //   - sigmoid(end[e, c])    > thresh[c] selects candidate ends
 //   - sigmoid(inside[i, c]) > thresh[c] must hold for EVERY i in [s, e]
 //     (otherwise the model is signalling a non-entity word inside the
-//     candidate span — gliner-py's `_calculate_span_score` filters these
+//     candidate span; gliner-py's `_calculate_span_score` filters these
 //     same pairs)
 //   - score = min(start_sig, end_sig, min(inside_sig[s..e]))   (matches
 //     gliner-py's "combined.min()" scoring rule)
@@ -34,10 +34,10 @@
 // Greedy non-overlap dedup mirrors the span decoder (sort-by-score-desc,
 // with the PERSON wider-span tiebreak so surnames don't leak).
 //
-// Everything else — tokenizer setup, prompt encoding (Lever 0: per-piece
+// Everything else; tokenizer setup, prompt encoding (Lever 0: per-piece
 // encode to avoid the metaspace prompt-inflation bug), word splitting,
 // sliding-window chunking, max-chunk cap, error/recover discipline, the
-// per-class threshold table — is identical to ner_gliner.go. Production
+// per-class threshold table; is identical to ner_gliner.go. Production
 // safety of the base path is unaffected: this file does not touch
 // ner_gliner.go, anonymizer/, or the analyzer engine.
 //
@@ -70,7 +70,7 @@ import (
 )
 
 // GLiNERFlatRecognizer runs a flat-decoder GLiNER ONNX export to detect
-// PII entities. Open-set NER architecture — the label set is supplied
+// PII entities. Open-set NER architecture; the label set is supplied
 // at inference time via the prompt, same as GLiNERRecognizer.
 //
 // Naming: ends in "NERRecognizer" so the analyzer engine's DisableNER
@@ -85,7 +85,7 @@ type GLiNERFlatRecognizer struct {
 	tokenizer *hftokenizer.Tokenizer
 
 	// onnxruntime session for this recognizer's (model, label-set).
-	// Serialised by `mu` — see ner_gliner.go for the rationale.
+	// Serialised by `mu`; see ner_gliner.go for the rationale.
 	session *ort.DynamicAdvancedSession
 	mu      sync.Mutex
 
@@ -169,7 +169,7 @@ func (r *GLiNERFlatRecognizer) SupportedLanguages() []string {
 func (r *GLiNERFlatRecognizer) init(ctx context.Context) error {
 	r.once.Do(func() {
 		// Catch panics so a partially-initialised recognizer becomes
-		// a clean error rather than a never-clearing panic loop —
+		// a clean error rather than a never-clearing panic loop,
 		// same rationale as GLiNERRecognizer.init().
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -340,7 +340,7 @@ func (r *GLiNERFlatRecognizer) init(ctx context.Context) error {
 
 		// Optional session tuning from ANONDE_ORT_* env vars. nil
 		// preserves ORT defaults (intra=num cores, inter=1, graph=basic).
-		// MUST be called AFTER initOrtEnvironment — NewSessionOptions
+		// MUST be called AFTER initOrtEnvironment; NewSessionOptions
 		// requires IsInitialized() == true.
 		sessionOpts, optsErr := sessionOptionsFromEnv()
 		if optsErr != nil {
@@ -503,7 +503,7 @@ func (r *GLiNERFlatRecognizer) Analyze(ctx context.Context, text string, entitie
 		}
 	}
 
-	// Same merge step as the span recognizer — see ner_gliner.go for the
+	// Same merge step as the span recognizer; see ner_gliner.go for the
 	// rationale (bench scores per-cell JSONLs emitted directly by the
 	// recognizer, not after the anonymizer's downstream merge).
 	results = anonymizer.MergeAdjacentSameType(results, text)
@@ -621,7 +621,7 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		wordsMask[i] = finalMask[i]
 	}
 
-	// text_lengths: per-batch num-words count. Shape [B, 1] —
+	// text_lengths: per-batch num-words count. Shape [B, 1],
 	// gliner/data_processing/processor.py emits seq_length.unsqueeze(-1).
 	textLengthsData := []int64{int64(numWords)}
 
@@ -706,7 +706,7 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		return nil, fmt.Errorf("gliner-flat: model returned %d classes, expected %d (labels)", numClasses, len(r.labels))
 	}
 	if LDim < numWords {
-		// Defensive — model should always emit one row per word in
+		// Defensive; model should always emit one row per word in
 		// words_mask, but truncation can leave LDim < numWords if the
 		// graph's L axis tracks the dense words tensor. Use whatever
 		// is smaller.
@@ -789,7 +789,7 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 			}
 			// Walk end positions in [s, s+maxWidth) while the inside
 			// gate holds at every step. The moment an inside falls
-			// below threshold, every wider e is invalid — break.
+			// below threshold, every wider e is invalid; break.
 			endLimit := s + r.maxWidth
 			if endLimit > numWords {
 				endLimit = numWords
@@ -812,7 +812,7 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 				if se < thresh {
 					continue
 				}
-				// combined.min() over (start, end, all-inside) —
+				// combined.min() over (start, end, all-inside),
 				// matches gliner-py's scoring rule verbatim.
 				score := ss
 				if se < score {
@@ -830,7 +830,7 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	}
 
 	// Greedy non-overlap dedup. Mirrors the span decoder including the
-	// PERSON wider-span tiebreak — see ner_gliner.go for the rationale
+	// PERSON wider-span tiebreak; see ner_gliner.go for the rationale
 	// (surname-leak regression). Here the span's "width" is `e - s`.
 	isPerson := func(c int) bool {
 		if c < 0 || c >= len(r.labels) {
@@ -861,7 +861,7 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	for _, cd := range cands {
 		conflict := false
 		for _, k := range kept {
-			// Inclusive overlap test — same shape as the span decoder.
+			// Inclusive overlap test; same shape as the span decoder.
 			if cd.s <= k.e && k.s <= cd.e {
 				conflict = true
 				break

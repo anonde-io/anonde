@@ -25,10 +25,10 @@ import (
 
 var (
 	// 5-digit German PLZ followed by a city: "12345 Berlin" or
-	// "12345 Sankt Augustin" — accept 1-3 city tokens.
+	// "12345 Sankt Augustin"; accept 1-3 city tokens.
 	//
 	// Separators are horizontal whitespace only ([ \t]+). \s+ would let
-	// the pattern eat across a newline into the next paragraph header —
+	// the pattern eat across a newline into the next paragraph header,
 	// e.g. "12299 Berlin \n\nHerrn" was incorrectly capturing "Berlin
 	// Herrn" as a 2-token city. Real German addresses keep PLZ + city on
 	// one line by convention.
@@ -41,11 +41,11 @@ var (
 		`\b(?:A|D|CH|FL|L|I|F)-\d{4,5}\b`,
 	)
 
-	// Bare 5-digit number — only emitted with explicit context (see below).
+	// Bare 5-digit number; only emitted with explicit context (see below).
 	dePLZBareRE = regexp.MustCompile(`\b\d{5}\b`)
 )
 
-// dePLZContextTriggers must appear within deDateContextWindow (reused — 40
+// dePLZContextTriggers must appear within deDateContextWindow (reused; 40
 // chars) of a bare 5-digit number for it to be emitted as a PLZ. Same
 // design as DEDateContextRecognizer: lower-cased substring match.
 var dePLZContextTriggers = []string{
@@ -71,7 +71,7 @@ func (r *DEPostalCodeRecognizer) Name() string { return "DEPostalCodeRecognizer"
 
 // SupportedEntities returns the entity types this recognizer emits.
 // POSTAL_CODE is a distinct type so callers can redact postal codes
-// differently from city names (LOCATION) — e.g. keep the city for medical
+// differently from city names (LOCATION); e.g. keep the city for medical
 // statistics but mask the postal code.
 func (r *DEPostalCodeRecognizer) SupportedEntities() []string { return []string{"POSTAL_CODE"} }
 

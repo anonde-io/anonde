@@ -22,7 +22,7 @@ type stubRedactor struct {
 	stats core.RedactStats
 	// lastOpts is set on every Redact call; tests read it after the
 	// HTTP roundtrip to verify request-binding. Not safe for concurrent
-	// requests — fine in test scope.
+	// requests; fine in test scope.
 	lastOpts *core.RedactOptions
 }
 
@@ -86,7 +86,7 @@ func TestRESTPDFEndpoint_TenantViaHeader(t *testing.T) {
 	if len(counts) != 2 {
 		t.Fatalf("X-Anonde-Entity-Count count = %d, want 2: %v", len(counts), counts)
 	}
-	// Order is map-iteration order — just assert membership.
+	// Order is map-iteration order; just assert membership.
 	saw := map[string]bool{}
 	for _, c := range counts {
 		saw[c] = true
@@ -134,7 +134,7 @@ func TestRESTPDFEndpoint_TenantViaQuery(t *testing.T) {
 }
 
 func TestRESTPDFEndpoint_Unconfigured(t *testing.T) {
-	// No SetPDFRedactor call — service stays in the unconfigured state.
+	// No SetPDFRedactor call; service stays in the unconfigured state.
 	svc := newTestService()
 	srv := httptest.NewServer(NewHTTPServer(svc).Routes())
 	t.Cleanup(srv.Close)
@@ -201,7 +201,7 @@ func TestRESTPDFEndpoint_RevealRoundTrip(t *testing.T) {
 	}
 
 	// 2) Reveal: original bytes come back byte-exact. Intentionally NO
-	// Accept header set — proves the dedicated GET handler returns raw
+	// Accept header set; proves the dedicated GET handler returns raw
 	// PDF bytes regardless of Accept, which used to fail with
 	// Accept: */* under the gateway's default JSON marshaler.
 	rev, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/anonymizations/"+id+"/reveal-pdf", nil)
@@ -231,7 +231,7 @@ func TestRESTPDFEndpoint_RevealRoundTrip(t *testing.T) {
 }
 
 // TestRevealPDF_TenantViaQuery confirms the dedicated GET handler honors
-// the ?tenant= query param when no X-Anonde-Tenant header is sent —
+// the ?tenant= query param when no X-Anonde-Tenant header is sent,
 // matching the gateway's tenant-binding behaviour for the POST.
 func TestRevealPDF_TenantViaQuery(t *testing.T) {
 	svc := newTestService()

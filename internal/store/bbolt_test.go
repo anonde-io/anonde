@@ -19,7 +19,7 @@ import (
 // never accidentally line up with a real key.
 func testKey(t *testing.T) []byte {
 	t.Helper()
-	// Deterministic, all-zero key keeps reproduction simple — these
+	// Deterministic, all-zero key keeps reproduction simple; these
 	// tests intentionally don't rotate keys.
 	return bytes.Repeat([]byte{0x42}, 32)
 }
@@ -142,7 +142,7 @@ func TestBoltVault_SurvivesRestart(t *testing.T) {
 	path := filepath.Join(dir, "anonde.db")
 	key := testKey(t)
 
-	// Phase 1: open, write, close.
+	// Open, write, close.
 	{
 		db, err := OpenDB(path)
 		if err != nil {
@@ -163,7 +163,7 @@ func TestBoltVault_SurvivesRestart(t *testing.T) {
 		_ = db.Close()
 	}
 
-	// Phase 2: reopen, read.
+	// Reopen, read.
 	db, err := OpenDB(path)
 	if err != nil {
 		t.Fatalf("re-OpenDB: %v", err)
@@ -209,7 +209,7 @@ func TestBoltVault_OnDiskCiphertext(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	// Force fsync by closing — bbolt's Sync option also works but
+	// Force fsync by closing; bbolt's Sync option also works but
 	// closing is the most-realistic flush path.
 	_ = v.Close()
 	_ = db.Close()
@@ -219,7 +219,7 @@ func TestBoltVault_OnDiskCiphertext(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	if bytes.Contains(raw, []byte(sentinel)) {
-		t.Fatalf("cleartext sentinel found in on-disk bytes — vault encryption failed")
+		t.Fatalf("cleartext sentinel found in on-disk bytes; vault encryption failed")
 	}
 	// The token name (a placeholder) is NOT secret; we don't assert
 	// either way. The entity_type may or may not appear depending on
@@ -256,12 +256,12 @@ func TestBoltVault_WrongKey(t *testing.T) {
 // TestBoltVault_NilKeyPlaintext locks in the opt-in encryption contract:
 // constructed with a nil key, the vault round-trips values correctly AND
 // writes them as plaintext JSON inside the envelope. If someone re-tightens
-// NewBoltVault to reject nil keys, this test fails — which is the point,
+// NewBoltVault to reject nil keys, this test fails; which is the point,
 // because the cmd/anonde wiring depends on the unencrypted path.
 //
 // We assert "plaintext on disk" by reopening the bbolt file with a raw
 // bolt cursor, parsing the envelope, and confirming envelope.Body is
-// directly valid VaultEntry JSON — the AEAD path would leave envelope.Body
+// directly valid VaultEntry JSON; the AEAD path would leave envelope.Body
 // as nonce||ciphertext, which would fail json.Unmarshal.
 func TestBoltVault_NilKeyPlaintext(t *testing.T) {
 	dir := t.TempDir()
@@ -381,7 +381,7 @@ func TestLoadVaultKey(t *testing.T) {
 	})
 
 	t.Run("wrong length", func(t *testing.T) {
-		// 16 bytes (AES-128) — we require AES-256.
+		// 16 bytes (AES-128); we require AES-256.
 		_ = os.Setenv("ANONDE_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 16)))
 		if _, err := LoadVaultKey(); err == nil {
 			t.Fatalf("expected error on wrong length")

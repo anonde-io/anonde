@@ -42,7 +42,7 @@ var ErrPolicyDenied = errors.New("policy denied")
 
 // NewService wires the orchestration spine. The metrics Recorder is
 // the last parameter so callers that don't care can pass
-// metrics.NewNoop() — that's also what the no-instrumentation library
+// metrics.NewNoop(); that's also what the no-instrumentation library
 // path uses. Breaking constructor changes are still acceptable pre-1.0.
 func NewService(
 	analyzerEngine *analyzer.AnalyzerEngine,
@@ -69,14 +69,14 @@ func NewService(
 }
 
 // SetVersionInfo records the build metadata GetVersion returns. Called
-// by cmd/anonde after backend selection — the service has no other
+// by cmd/anonde after backend selection; the service has no other
 // way to know which backend wraps its analyzer.
 func (s *Service) SetVersionInfo(info VersionInfo) {
 	s.versionInfo = info
 }
 
 // statusFromErr maps a Service-method error into the canonical
-// metric label value. Three buckets only — anything else would blow
+// metric label value. Three buckets only; anything else would blow
 // up cardinality. The denied bucket is reserved for the policy
 // surface; all other errors (validation, vault I/O, anonymizer
 // failure, …) fold into "error".
@@ -113,7 +113,7 @@ func (s *Service) SaveRecord(ctx context.Context, rec StoreRecord) error {
 	return s.store.Put(ctx, rec)
 }
 
-// GetRecord returns the stored anonymization for (tenant, id) — the
+// GetRecord returns the stored anonymization for (tenant, id); the
 // raw StoreRecord including OriginalBytes / AnonymizedBytes for
 // binary formats. Errors when the record is missing or expired.
 func (s *Service) GetRecord(ctx context.Context, tenantID, id string) (StoreRecord, error) {
@@ -331,7 +331,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 	anonymizeText := func(input string) (string, []analyzer.RecognizerResult, error) {
 		// All raw input is sanitized: invalid UTF-8 broken before the
 		// recognizers and ANSI escapes stripped. For text/json/pdf paths the
-		// caller hasn't done this; for ndjson/logs the line splitter has —
+		// caller hasn't done this; for ndjson/logs the line splitter has,
 		// idempotent calls are cheap.
 		input = content.SanitizeUTF8(content.StripANSI(input))
 		if strings.TrimSpace(input) == "" {

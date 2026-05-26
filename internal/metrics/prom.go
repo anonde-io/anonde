@@ -8,7 +8,7 @@ import (
 
 // promRecorder is the Prometheus-backed Recorder. All vectors here
 // are owned by the private *prometheus.Registry New() registered them
-// against — callers never see the prometheus types.
+// against; callers never see the prometheus types.
 type promRecorder struct {
 	requests       *prometheus.CounterVec
 	bytesProcessed *prometheus.CounterVec

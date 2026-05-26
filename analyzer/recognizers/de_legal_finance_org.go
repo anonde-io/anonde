@@ -16,10 +16,10 @@ import "regexp"
 // on free prose is low.
 
 var (
-	// Courts. <CourtType> [<City>] — city tail is one to three capitalised
+	// Courts. <CourtType> [<City>]; city tail is one to three capitalised
 	// tokens, each optionally hyphenated to a second capitalised token
 	// ("Frankfurt-Höchst"). The inner `[a-zäöüß]+` deliberately omits `-`
-	// so the explicit `(?:-[A-ZÄÖÜ][a-zäöüß]+)?` continuation can match —
+	// so the explicit `(?:-[A-ZÄÖÜ][a-zäöüß]+)?` continuation can match,
 	// otherwise the inner class greedy-consumes the hyphen and the
 	// hyphenated tail is dropped.
 	deOrgCourtRE = regexp.MustCompile(
@@ -73,7 +73,7 @@ var (
 			`(?:[ \t]+[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?){0,2}\b`,
 	)
 
-	// Law firms. "Kanzlei <Name>" — name is one or more capitalised tokens,
+	// Law firms. "Kanzlei <Name>"; name is one or more capitalised tokens,
 	// optionally joined by "&" or ", ". Closes on "& Kollegen" / "& Partner"
 	// / line end.
 	deOrgKanzleiRE = regexp.MustCompile(

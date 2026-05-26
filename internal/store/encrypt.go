@@ -13,7 +13,7 @@ import (
 
 // AES-256-GCM envelope for vault values.
 //
-// Why GCM specifically: authenticated encryption (AEAD) — we get
+// Why GCM specifically: authenticated encryption (AEAD); we get
 // confidentiality + integrity in one primitive, so a tampered ciphertext
 // fails the Open check instead of silently producing garbage cleartext
 // the analyzer would then operate on.
@@ -21,7 +21,7 @@ import (
 // Wire layout per value: [12-byte random nonce][AES-GCM ciphertext+tag].
 // The nonce is per-value (not per-deploy), so re-encrypting the same
 // cleartext at the same tenant/token coordinates produces different
-// bytes on disk — no info leak from repeated-value comparison.
+// bytes on disk; no info leak from repeated-value comparison.
 //
 // Key source: ANONDE_VAULT_KEY env var, base64-encoded 32 bytes. We
 // fail loud at startup if it isn't set when bbolt is the backend.
@@ -89,7 +89,7 @@ func (c *aeadCipher) seal(plaintext []byte) ([]byte, error) {
 }
 
 // open splits nonce||ciphertext, authenticates and decrypts.
-// Tampered or truncated blobs return an error — there's no partial
+// Tampered or truncated blobs return an error; there's no partial
 // success path.
 func (c *aeadCipher) open(blob []byte) ([]byte, error) {
 	nonceSize := c.aead.NonceSize()

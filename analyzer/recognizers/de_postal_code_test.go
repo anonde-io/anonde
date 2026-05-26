@@ -24,7 +24,7 @@ func TestDEPostalCodeRecognizer(t *testing.T) {
 		// Bare 5-digit with explicit context keyword.
 		{"plz keyword before", "PLZ 80339 für die Adresse.", []string{"80339"}},
 
-		// Negative — bare number with no context.
+		// Negative; bare number with no context.
 		{"bare number no context", "Befund 12345 in der Reihe.", nil},
 	}
 

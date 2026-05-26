@@ -6,8 +6,8 @@
 // Why this exists
 // ---------------
 // `GLiNERRecognizer.Analyze` serialises every call behind `r.mu`. That
-// is correct — both the hftokenizer and the *ort.DynamicAdvancedSession
-// hold mutable state that two concurrent calls would corrupt — but it
+// is correct; both the hftokenizer and the *ort.DynamicAdvancedSession
+// hold mutable state that two concurrent calls would corrupt; but it
 // also means a single recognizer is a strict throughput cap. Under
 // concurrent /v1/ingest load the mutex queues requests.
 //
@@ -23,7 +23,7 @@
 // ----
 // Each instance holds the ONNX session resident, ~500 MB for the
 // default knowledgator/gliner-pii-base-v1.0 quint8 build. N=4 peaks
-// around 2 GB of RSS — it fits on a `shared-cpu-1x:4096MB` Fly machine
+// around 2 GB of RSS; it fits on a `shared-cpu-1x:4096MB` Fly machine
 // with room for the Go heap, but anything smaller will OOM. Size the
 // pool against your VM's memory budget, not your CPU count.
 //
@@ -42,7 +42,7 @@
 //
 // Naming caveat
 // -------------
-// `Name()` returns "GLiNERPool" — it does NOT end in "NERRecognizer",
+// `Name()` returns "GLiNERPool"; it does NOT end in "NERRecognizer",
 // which means the analyzer engine's `DisableNER` suffix-check WILL NOT
 // suppress the pool. Callers that want per-request NER disable while
 // using the pool must enforce it higher in the stack (e.g. skip
@@ -79,7 +79,7 @@ var ErrPoolClosed = errors.New("gliner pool: closed")
 
 // GLiNERPool is an N-instance recognizer pool. Each instance owns its
 // own tokenizer + ONNX session, so up to N `Analyze` calls run truly
-// in parallel — the (N+1)th caller blocks on the channel until an
+// in parallel; the (N+1)th caller blocks on the channel until an
 // instance is returned.
 //
 // The zero value is NOT usable; construct via `NewGLiNERPool`.
@@ -126,7 +126,7 @@ type GLiNERPool struct {
 //
 // The recognizers are NOT pre-warmed: each one lazily initialises on
 // its first `Analyze` call, matching `GLiNERRecognizer`'s own
-// behaviour. Pool construction is therefore cheap — the first N
+// behaviour. Pool construction is therefore cheap; the first N
 // concurrent `Analyze` calls will each pay the model-loading cost in
 // parallel.
 //
@@ -215,7 +215,7 @@ func (p *GLiNERPool) Analyze(ctx context.Context, text string, entities []string
 // It fires `p.size` Analyze() calls in parallel against a trivial
 // fixture ("John Smith works at Mercy Hospital."). Each one acquires a
 // distinct instance from the pool, which on first use loads the
-// tokenizer + ONNX session — the same 5-30 s model-load that the
+// tokenizer + ONNX session; the same 5-30 s model-load that the
 // FIRST N user requests would otherwise see staggered across them.
 // After Warmup returns, every instance has its session resident and
 // the first real /v1/ingest sees ~150 ms latency instead of cold init.
@@ -229,13 +229,13 @@ func (p *GLiNERPool) Analyze(ctx context.Context, text string, entities []string
 // safely start listening before Warmup returns. The per-recognizer
 // mutex inside GLiNERRecognizer.Analyze serialises any race between
 // the warmup goroutine for instance i and an external request that
-// also lands on instance i — the external request just queues briefly
+// also lands on instance i; the external request just queues briefly
 // on r.mu and then runs; it never blocks on the pool itself.
 //
 // Error handling: the first non-nil error from any instance is
 // returned; subsequent errors are dropped (matching the "first
 // failure wins" convention used by Destroy). All N goroutines are
-// awaited regardless — partial warmup leaves the pool in a usable
+// awaited regardless; partial warmup leaves the pool in a usable
 // state (the failed instance retries on its next Analyze).
 func (p *GLiNERPool) Warmup(ctx context.Context) error {
 	var (
@@ -272,7 +272,7 @@ func (p *GLiNERPool) Warmup(ctx context.Context) error {
 //
 // Graceful shutdown: callers no longer need to stop dispatching new
 // Analyze calls before invoking Destroy. Closing `p.done` is the
-// first thing the function does — after that, any new Analyze
+// first thing the function does; after that, any new Analyze
 // acquirer receives ErrPoolClosed instead of blocking on the empty
 // channel. In-flight Analyzes complete normally and return their
 // instance, which the drain loop then picks up. The drain still

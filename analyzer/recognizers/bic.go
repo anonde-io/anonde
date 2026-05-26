@@ -32,7 +32,7 @@ import (
 
 var bicRE = regexp.MustCompile(
 	`\b[A-Z]{4}` +
-		// ISO country-code subset — 30 most-common BIC countries.
+		// ISO country-code subset; 30 most-common BIC countries.
 		`(?:DE|AT|CH|LI|LU|FR|IT|ES|PT|NL|BE|GB|IE|US|CA|DK|SE|NO|FI|IS|` +
 		`PL|CZ|SK|HU|RO|BG|GR|HR|SI|EE|LT|LV|CY|MT|TR|JP|CN|HK|SG|AU|NZ)` +
 		`[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b`,
@@ -52,7 +52,7 @@ func (r *BICRecognizer) Name() string { return "BICRecognizer" }
 // SupportedEntities returns the entity types this recognizer emits.
 func (r *BICRecognizer) SupportedEntities() []string { return []string{"ID"} }
 
-// SupportedLanguages reports `*` — BIC layout is language-independent.
+// SupportedLanguages reports `*`; BIC layout is language-independent.
 func (r *BICRecognizer) SupportedLanguages() []string { return []string{"*"} }
 
 // Analyze scans text for BIC/SWIFT codes.

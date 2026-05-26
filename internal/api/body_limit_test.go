@@ -10,7 +10,7 @@ import (
 // TestConnect_IngestRejectsOversizedBody verifies the Connect handler
 // honors WithReadMaxBytes. Connect maps body-too-large to
 // CodeResourceExhausted, which the Connect/JSON spec renders as HTTP
-// 429 (Too Many Requests). Not HTTP 413 — that's a deliberate Connect
+// 429 (Too Many Requests). Not HTTP 413; that's a deliberate Connect
 // design choice. Asserting on the status code locks in the contract
 // so a future Connect upgrade that changes the mapping fails loudly.
 //

@@ -13,7 +13,7 @@ import (
 // a closed list of well-known institutions. Captures the full
 // institution span (prefix + suffix).
 //
-// Suffix shape — 1-4 capitalised prefix tokens, then a healthcare suffix.
+// Suffix shape; 1-4 capitalised prefix tokens, then a healthcare suffix.
 // Catches:
 //
 //	"Mercy General"                          (Mercy + General)
@@ -22,7 +22,7 @@ import (
 //	"Cleveland Clinic"                       (Cleveland + Clinic)
 //	"Cedars-Sinai Medical Center"            (hyphenated + Medical Center)
 //
-// Well-known list — institutions whose names don't include a generic
+// Well-known list; institutions whose names don't include a generic
 // suffix (e.g. Johns Hopkins, Kaiser Permanente) or where we want a
 // strict high-precision match regardless of suffix greediness.
 //
@@ -34,12 +34,12 @@ import (
 //     lowercased form is a known verb and re-anchor the span.
 //  2. Suffix-vs-well-known overlap dedup: both patterns frequently fire
 //     on the same span ("Mayo Clinic" matches both). Suffix is dropped
-//     when its span overlaps any well-known span — the well-known has a
+//     when its span overlaps any well-known span; the well-known has a
 //     higher score.
 
 var (
 	// Suffix form: "<Prefix Words> <Suffix>".
-	// Horizontal whitespace only between tokens — newlines never start
+	// Horizontal whitespace only between tokens; newlines never start
 	// a continuation of an org name.
 	enOrgSuffixRE = regexp.MustCompile(
 		`\b(?:[A-Z][a-zA-Z']+\.?|[A-Z][a-zA-Z]+-[A-Z][a-zA-Z]+)` +
@@ -171,7 +171,7 @@ func (r *ENOrganizationRecognizer) Analyze(_ context.Context, text string, _ []s
 		if !strings.ContainsAny(text[start:end], " \t") {
 			continue
 		}
-		// Drop if it overlaps any well-known match — that one has the
+		// Drop if it overlaps any well-known match; that one has the
 		// higher score and represents the same entity.
 		overlap := false
 		for _, w := range wellKnown {

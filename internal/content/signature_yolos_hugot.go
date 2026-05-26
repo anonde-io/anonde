@@ -17,21 +17,21 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-// Visual signature-detection via YOLOS — an open-source ViT-based
+// Visual signature-detection via YOLOS; an open-source ViT-based
 // DETR-style detector fine-tuned on Tobacco-800 signatures, published
 // by onnx-community on HF. License: Apache 2.0 end-to-end (base arch
 // hustvl/yolos-base, fine-tuned weights mdefrance/yolos-base-
 // signature-detection, ONNX export, and the tech4humans/signature-
-// detection training dataset — all Apache 2.0).
+// detection training dataset; all Apache 2.0).
 //
 // Architecture: input "pixel_values" [B,3,640,640] float32 in ImageNet
 // normalisation. Outputs "logits" [B,Q,2] (signature, no-object) and
 // "pred_boxes" [B,Q,4] in normalised cxcywh.
 //
 // Quantization variants on HF:
-//   - model.onnx       (FP32) ~487 MB — full precision; recommended.
-//   - model_fp16.onnx          ~318 MB — half precision.
-//   - model_int8.onnx          ~236 MB — INT8; trades recall for size.
+//   - model.onnx       (FP32) ~487 MB, full precision, recommended.
+//   - model_fp16.onnx          ~318 MB; half precision.
+//   - model_int8.onnx          ~236 MB, INT8, trades recall for size.
 //
 // Default is FP32. Same policy as GLiNER (see
 // .claude/memory/bench_int8_vs_fp32_2026_05_23.md): the INT8 bench
@@ -83,7 +83,7 @@ var (
 // startup whenever ANONDE_PDF_ENABLED=1.
 //
 // overridePath, when non-empty, points at an existing local ONNX
-// file and bypasses the download — used by Dockerfile.anonde-ner
+// file and bypasses the download; used by Dockerfile.anonde-ner
 // to bake the model at image-build time.
 //
 // Quantization variant is selected by SIGNATURE_QUANT
@@ -106,7 +106,7 @@ func LoadSignatureDetector(overridePath string) (VisualDetector, error) {
 		}
 		spec := signatureVariants[variant]
 		url := signatureRepoBase + spec.remoteFile
-		fmt.Fprintf(os.Stderr, "anonde: downloading signature model %s (~%d MB) to %s — first run only...\n",
+		fmt.Fprintf(os.Stderr, "anonde: downloading signature model %s (~%d MB) to %s; first run only...\n",
 			variant, spec.approxMB, modelPath)
 		if err := downloadFile(url, modelPath); err != nil {
 			return nil, fmt.Errorf("download signature model: %w", err)
@@ -165,7 +165,7 @@ func signatureVariant() string {
 	if _, ok := signatureVariants[v]; ok {
 		return v
 	}
-	fmt.Fprintf(os.Stderr, "anonde: SIGNATURE_QUANT=%q unknown — falling back to fp32 (valid: fp32, fp16, int8)\n", v)
+	fmt.Fprintf(os.Stderr, "anonde: SIGNATURE_QUANT=%q unknown; falling back to fp32 (valid: fp32, fp16, int8)\n", v)
 	return "fp32"
 }
 

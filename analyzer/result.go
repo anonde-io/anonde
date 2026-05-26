@@ -15,11 +15,11 @@ type RecognizerResult struct {
 // contextual NER findings (open-set, ML-derived) as opposed to regex /
 // checksum / heuristic pattern findings (or pool / ensemble wrappers
 // around one of those). Used by RemoveConflicts to prefer NER for
-// unstructured entity types regardless of raw score — pattern scores
+// unstructured entity types regardless of raw score; pattern scores
 // are deterministic constants (0.85 / 1.0) and would otherwise always
 // beat NER's sigmoid output (typically 0.40 – 0.85), even when the
 // NER span is the more accurate one. Keep in sync with the recognizers
-// package — if a new NER recognizer (or a pool wrapping one) ships,
+// package; if a new NER recognizer (or a pool wrapping one) ships,
 // add its Name() string here.
 var nerRecognizerNames = map[string]bool{
 	"GLiNERRecognizer":            true,
@@ -73,7 +73,7 @@ func (r RecognizerResult) Overlaps(other RecognizerResult) bool {
 //
 // The length tiebreaker is what lets RemoveConflicts merge a full date
 // like "12.08.2025" with two same-score partials emitted on overlapping
-// offsets ("12.08." + "2025") — the longer span sorts first and the
+// offsets ("12.08." + "2025"); the longer span sorts first and the
 // shorter overlapping ones get dropped. Without the tiebreaker, sort
 // order on tied scores is non-deterministic and the shorter span can
 // win, leaving two adjacent fragments in the output.
@@ -93,7 +93,7 @@ func SortResults(results []RecognizerResult) {
 //
 // Resolution rule:
 //  1. For entity types in nerPreferredEntities (PERSON, ORGANIZATION,
-//     LOCATION, AGE, PROFESSION, NRP) — when an NER finding overlaps a
+//     LOCATION, AGE, PROFESSION, NRP); when an NER finding overlaps a
 //     pattern finding, the NER finding wins regardless of score. Pattern
 //     scores for these types come from heuristic recognizers like
 //     DEAnomalyRecognizer (anomaly-based PERSON detection on German
@@ -101,13 +101,13 @@ func SortResults(results []RecognizerResult) {
 //     NER sigmoid outputs (0.40 – 0.85) would always lose under pure
 //     score comparison, wasting the NER's contextual judgement.
 //  2. Otherwise (structured entity types like IBAN, PHONE, DATE, …, or
-//     two findings of the same recognizer class) — keep the
+//     two findings of the same recognizer class); keep the
 //     higher-scoring span. This preserves the regex+checksum precision
 //     win on shapes patterns match exactly.
 //
 // Note: the resolver only compares against the LAST kept finding in the
 // scan, not every prior. With the sort by (start, score desc, length
-// desc) this is the documented anonde behavior — flagged here so future
+// desc) this is the documented anonde behavior; flagged here so future
 // maintainers don't expect optimal-cover behavior.
 func RemoveConflicts(results []RecognizerResult) []RecognizerResult {
 	return RemoveConflictsWithCallback(results, nil)
@@ -150,7 +150,7 @@ func RemoveConflictsWithCallback(results []RecognizerResult, cb func(winner, los
 // they overlap. Implements the NER-preference rule from RemoveConflicts.
 func shouldReplace(kept, candidate RecognizerResult) bool {
 	// Both findings target the same entity type AND it's a type where
-	// we prefer NER — NER wins over pattern, otherwise score decides.
+	// we prefer NER; NER wins over pattern, otherwise score decides.
 	if kept.EntityType == candidate.EntityType && prefersNERFor(kept.EntityType) {
 		keptNER := isNERRecognizer(kept)
 		candNER := isNERRecognizer(candidate)
@@ -160,7 +160,7 @@ func shouldReplace(kept, candidate RecognizerResult) bool {
 		if keptNER && !candNER {
 			return false
 		}
-		// same class on both sides — fall through to score.
+		// same class on both sides; fall through to score.
 	}
 	return candidate.Score > kept.Score
 }

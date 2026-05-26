@@ -4,7 +4,7 @@ import "strings"
 
 // NewUKNINORecognizer detects UK National Insurance Numbers.
 // Format: 2 letters + 6 digits + 1 letter (A-D), with a small list of
-// disallowed prefixes. There's no checksum — validation is by structure.
+// disallowed prefixes. There's no checksum; validation is by structure.
 func NewUKNINORecognizer() *validatedRecognizer {
 	r := NewValidatedRecognizer(
 		"UKNINORecognizer",

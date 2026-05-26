@@ -222,7 +222,7 @@ func TestIngestReveal_AutoWithMixedTextAndJSONSnippet(t *testing.T) {
 
 	// Mixed payload in one message: free text plus an embedded JSON-looking snippet.
 	// This is not valid top-level JSON, so auto mode should treat it as text.
-	// Uses pattern-detectable PII only — DefaultAnalyzerEngine ships without
+	// Uses pattern-detectable PII only; DefaultAnalyzerEngine ships without
 	// NER, so PERSON detection is intentionally not exercised here.
 	input := `Please review this payload {"email":"john@example.com","phone":"+1-800-555-0199"} for processing.`
 

@@ -4,7 +4,7 @@
 // multiple GLiNER variants in the same process and OR-merge their span
 // outputs so each model's blind spots are covered by the others.
 //
-// The single-model FP32 number is the *lower bound* of an ensemble — each
+// The single-model FP32 number is the *lower bound* of an ensemble; each
 // member has different blind spots; the union approaches 100% recall.
 // This file is the wiring that makes that union shape directly visible
 // to the analyzer engine (one EntityRecognizer that returns merged
@@ -16,14 +16,14 @@
 // ------
 // Name() ends in "NERRecognizer" so the analyzer engine's
 // DisableNER suffix-check fires (mirrors GLiNERRecognizer /
-// HugotNERRecognizer). The base name is "GLiNEREnsemble" — adding it to
+// HugotNERRecognizer). The base name is "GLiNEREnsemble"; adding it to
 // analyzer.nerRecognizerNames in a follow-up CL lets the
 // NER-preferred conflict-resolver path (PERSON / ORG / LOC / AGE /
 // PROFESSION / NRP) apply to ensemble findings too. Until that CL lands,
 // ensemble spans still resolve correctly because they carry the
 // per-member RecognizerName == "GLiNERRecognizer" only when the
 // downstream is reading `kept.RecognizerName` after this file's merge
-// — see mergeOverlapping below, which preserves a member's name (always
+// see mergeOverlapping below, which preserves a member's name (always
 // "GLiNERRecognizer") on the winning span, so isNERRecognizer remains
 // true for downstream conflict resolution.
 //
@@ -39,7 +39,7 @@
 // Each member's Analyze() is internally serialised by its own
 // recognizer-level mutex (see ner_gliner.go: `r.mu.Lock()` across the
 // entire runChunk). Running two members in parallel is therefore safe
-// across members — each owns an independent ONNX session — but pays
+// across members, each owns an independent ONNX session, but pays
 // 2× peak RAM for the second session being resident at the same time.
 // Default is sequential to bound steady-state memory; opt into parallel
 // via ANONDE_NER_STACK_PARALLEL=1 when latency matters more than RAM.
@@ -70,7 +70,7 @@ const envNERStack = "ANONDE_NER_STACK"
 const envNERStackParallel = "ANONDE_NER_STACK_PARALLEL"
 
 // defaultEnsembleOnnxFile is the per-member ONNX file used when the
-// caller doesn't supply one. FP32 is the production default — the
+// caller doesn't supply one. FP32 is the production default; the
 // 2026-05 fp32-vs-int8 probe proved INT8 uniformly depresses recall
 // (Σ ALL leak 20.7% FP32 vs 26.6% INT8 across 30 corpora). Ensembles
 // stack recall: pairing two INT8 models with the same depressed-logit
@@ -82,7 +82,7 @@ const defaultEnsembleOnnxFile = "onnx/model.onnx"
 // EnsembleGLiNERRecognizer is an EntityRecognizer that fans Analyze()
 // out to N independent GLiNERRecognizer members and OR-merges their
 // spans. Each member is a full GLiNERRecognizer with its own onnxruntime
-// session — the cost is one resident session per member, the win is
+// session; the cost is one resident session per member, the win is
 // recall stacking (the matrix Σ ALL leak rate drops well below the
 // single-model FP32 number; see the roadmap for projected ranges).
 //
@@ -115,11 +115,11 @@ type EnsembleGLiNERRecognizer struct {
 // NewEnsembleGLiNERRecognizer constructs an ensemble across the given
 // HuggingFace model IDs. Each member is a GLiNERRecognizer with the
 // supplied threshold + ortLib + the FP32 ONNX path
-// (`onnx/model.onnx`) — see defaultEnsembleOnnxFile for the rationale.
+// (`onnx/model.onnx`); see defaultEnsembleOnnxFile for the rationale.
 // Labels / LabelToEntity / MaxWidth / MaxTokens / chunking / MaxChunks
 // fall through to GLiNERRecognizer defaults (DefaultPIILabels +
 // DefaultLabelToEntity), so all members share the same label space and
-// canonical mapping — necessary for the OR-merge to compare like with
+// canonical mapping; necessary for the OR-merge to compare like with
 // like.
 //
 // threshold == 0 selects the per-member default (defaultGLiNERThreshold,
@@ -128,11 +128,11 @@ type EnsembleGLiNERRecognizer struct {
 //
 // ortLib is forwarded to every member's SharedLibraryPath. Note: only
 // the FIRST member to call ort.InitializeEnvironment() decides the
-// actual library path for the whole process — later members' values
+// actual library path for the whole process; later members' values
 // are silently ignored. This matches the documented contract in
 // initOrtEnvironment().
 //
-// Passing zero model IDs is a programmer error — returns a recognizer
+// Passing zero model IDs is a programmer error; returns a recognizer
 // that errors at Analyze-time, so the typo is caught loudly instead of
 // silently degrading to "no NER coverage". Callers should funnel through
 // EnsembleFromEnv() which validates the env-var format before reaching
@@ -176,11 +176,11 @@ func NewEnsembleGLiNERRecognizer(modelIDs []string, threshold float64, ortLib st
 //   - (nil, nil) if ANONDE_NER_STACK is unset or empty after trim
 //   - (nil, error) if ANONDE_NER_STACK is set but, after trimming each
 //     comma-separated entry, contains zero usable model IDs (e.g.
-//     ",,," or "  "). This is a deployer-side typo — surface it loudly
+//     ",,," or "  "). This is a deployer-side typo; surface it loudly
 //     at boot rather than silently booting with no NER.
 //
 // The caller is responsible for choosing the analyzer-engine wiring
-// (registry.Add(...) etc.) — this constructor only builds the recognizer.
+// (registry.Add(...) etc.); this constructor only builds the recognizer.
 func EnsembleFromEnv(threshold float64, ortLib string) (*EnsembleGLiNERRecognizer, error) {
 	raw := strings.TrimSpace(os.Getenv(envNERStack))
 	if raw == "" {
@@ -198,7 +198,7 @@ func EnsembleFromEnv(threshold float64, ortLib string) (*EnsembleGLiNERRecognize
 	}
 	r := NewEnsembleGLiNERRecognizer(ids, threshold, ortLib)
 	// One-shot init log line so deployers can confirm the ensemble is
-	// actually wired (and how) — the pii-engineer canary rule: silent
+	// actually wired (and how); the pii-engineer canary rule: silent
 	// fallback to the single-model path is the highest-cost bug class.
 	log.Printf("gliner-ensemble: configured with %d members (parallel=%v): %s",
 		len(r.members), r.parallel, strings.Join(r.memberIDs, ", "))
@@ -215,7 +215,7 @@ func (e *EnsembleGLiNERRecognizer) Name() string {
 // SupportedEntities returns the deduplicated set of canonical entity
 // types the ensemble can emit. Because every member is constructed with
 // empty Labels / LabelToEntity (i.e. defaults), all members share
-// DefaultLabelToEntity — so the union is identical to member[0]'s
+// DefaultLabelToEntity; so the union is identical to member[0]'s
 // SupportedEntities(). We forward to member[0] for clarity (no need to
 // recompute a union of identical sets). If a future EnsembleMemberConfig
 // API exposes per-member label overrides, this needs to become a real
@@ -241,7 +241,7 @@ func (e *EnsembleGLiNERRecognizer) SupportedLanguages() []string {
 
 // Analyze runs every member on the same input, OR-merges their spans
 // via mergeOverlapping, and returns the union. Recall stacking is the
-// whole point — a span any one member found is kept; a span only one
+// whole point, a span any one member found is kept, a span only one
 // member found is still kept (that's the "blind spot covered" win).
 //
 // Per-member error handling
@@ -260,7 +260,7 @@ func (e *EnsembleGLiNERRecognizer) SupportedLanguages() []string {
 // -----------
 // Sequential by default. ANONDE_NER_STACK_PARALLEL=1 spins one goroutine
 // per member. Each member is internally locked so cross-member
-// parallelism is the only available parallelism — but that's exactly
+// parallelism is the only available parallelism; but that's exactly
 // what we want here.
 func (e *EnsembleGLiNERRecognizer) Analyze(ctx context.Context, text string, entities []string, lang string) ([]analyzer.RecognizerResult, error) {
 	if len(e.members) == 0 {
@@ -283,7 +283,7 @@ func (e *EnsembleGLiNERRecognizer) Analyze(ctx context.Context, text string, ent
 	runOne := func(idx int) {
 		out := memberOut{id: e.memberIDs[idx]}
 		// Per-member panic-recover: one bad model can't kill the batch.
-		// Mirrors GLiNERRecognizer.Analyze's own top-level recover —
+		// Mirrors GLiNERRecognizer.Analyze's own top-level recover,
 		// belts-and-braces because a panic inside a goroutine in the
 		// parallel path would otherwise tear the whole process down.
 		defer func() {
@@ -317,7 +317,7 @@ func (e *EnsembleGLiNERRecognizer) Analyze(ctx context.Context, text string, ent
 
 	// Collect; tolerate per-member errors as long as at least one
 	// member produced spans (or completed without error). All-errored
-	// is escalated — the silent-fallback bug class is precisely
+	// is escalated; the silent-fallback bug class is precisely
 	// "ensemble is supposed to be running but is actually returning
 	// nothing".
 	merged := make([]analyzer.RecognizerResult, 0, 32)
@@ -351,7 +351,7 @@ func (e *EnsembleGLiNERRecognizer) Analyze(ctx context.Context, text string, ent
 //
 // Spans of DIFFERENT types covering the same region are kept SEPARATE.
 // The downstream RemoveConflicts resolver picks the winner using the
-// NER-preferred rule from docs/ARCHITECTURE.md — letting it stay
+// NER-preferred rule from docs/ARCHITECTURE.md; letting it stay
 // type-aware here means a member that finds "Acme Corp" as ORGANIZATION
 // and another that finds the same span as LOCATION doesn't get its
 // disagreement silently flattened; the conflict resolver gets to see

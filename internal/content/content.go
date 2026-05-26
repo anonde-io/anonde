@@ -5,7 +5,7 @@
 // dependency on anonde's analyzer or anonymizer.
 //
 // The package was extracted out of internal/api during the
-// internal/{api,core,content,store} split — both core (Service) and
+// internal/{api,core,content,store} split; both core (Service) and
 // any future caller can use it without pulling transport, storage, or
 // the analyzer.
 package content
@@ -94,7 +94,7 @@ func isNDJSON(content string) bool {
 	return nonEmpty >= 2
 }
 
-// StripANSI removes ANSI escape sequences. Safe to call on any input —
+// StripANSI removes ANSI escape sequences. Safe to call on any input,
 // leaves printable text untouched.
 func StripANSI(s string) string {
 	if !strings.ContainsRune(s, 0x1b) {

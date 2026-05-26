@@ -15,12 +15,12 @@ import (
 // `-tags hugot`. The default build uses hugot_off.go's stub, which
 // log.Fatalfs to fail fast on misconfiguration.
 //
-// modelsDir   — local cache directory (defaults to ~/.cache/anonde/models).
-// modelName   — HuggingFace model ID (recognizer-package default applies
+// modelsDir  ; local cache directory (defaults to ~/.cache/anonde/models).
+// modelName  ; HuggingFace model ID (recognizer-package default applies
 //
 //	when empty).
 //
-// autoDownload — fetch the model from HuggingFace Hub on first use.
+// autoDownload; fetch the model from HuggingFace Hub on first use.
 func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bool) *analyzer.AnalyzerEngine {
 	return DefaultAnalyzerEngineWithHugotConfig(recognizers.HugotNERConfig{
 		ModelsDir:    modelsDir,
@@ -31,7 +31,7 @@ func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bo
 
 // DefaultAnalyzerEngineWithHugotConfig is the full-control variant of
 // DefaultAnalyzerEngineWithHugot. Use this when the model needs a non-default
-// OnnxFilePath (e.g. "onnx/model_quantized.onnx") or tuned chunking — the
+// OnnxFilePath (e.g. "onnx/model_quantized.onnx") or tuned chunking; the
 // short-form constructor exposes only ModelsDir/ModelName/AutoDownload and
 // silently misses these knobs.
 //
@@ -50,8 +50,8 @@ func DefaultAnalyzerEngineWithHugotConfig(cfg recognizers.HugotNERConfig) *analy
 // an open-set NER architecture: the label list is supplied at
 // inference time, not baked into the model weights. This constructor
 // drives the same model that bench/runners/gliner.py uses through
-// the Python sidecar — same prompt format, same canonical-entity
-// mapping — but entirely in-process.
+// the Python sidecar; same prompt format, same canonical-entity
+// mapping; but entirely in-process.
 //
 // Real implementation only; hugot_off.go's stub log.Fatalfs.
 //
@@ -67,8 +67,8 @@ func DefaultAnalyzerEngineWithGLiNERConfig(cfg recognizers.GLiNERConfig) *analyz
 
 // DefaultAnalyzerEngineWithGLiNERFlatConfig wires the flat-decoder
 // (token-decoder) GLiNER recognizer into the standard pattern-recognizer
-// registry. Mirror of DefaultAnalyzerEngineWithGLiNERConfig — same
-// GLiNERConfig, same overall analyzer shape — but the NER slot uses
+// registry. Mirror of DefaultAnalyzerEngineWithGLiNERConfig; same
+// GLiNERConfig, same overall analyzer shape; but the NER slot uses
 // NewGLiNERFlatRecognizer for models whose ONNX export takes 4 inputs
 // and emits BIO-style start/end/inside logits (e.g.
 // knowledgator/gliner-pii-large-v1.0). The span-decoder recognizer used
@@ -86,7 +86,7 @@ func DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg recognizers.GLiNERConfig) *an
 // EnsembleGLiNERRecognizer into the standard pattern-recognizer
 // registry. The ensemble itself is constructed by
 // recognizers.NewEnsembleGLiNERRecognizer / EnsembleFromEnv, so this
-// constructor is intentionally thin — the multi-model stacking logic
+// constructor is intentionally thin; the multi-model stacking logic
 // lives in the ensemble file, and this is only the analyzer-engine
 // glue.
 //
@@ -101,7 +101,7 @@ func DefaultAnalyzerEngineWithGLiNEREnsemble(ens *recognizers.EnsembleGLiNERReco
 // DefaultAnalyzerEngineWithGLiNERPool wires a pre-built GLiNERPool
 // (N parallel span-decoder GLiNER instances) into the standard
 // pattern-recognizer registry. Mirror of
-// DefaultAnalyzerEngineWithGLiNEREnsemble — the pool is constructed by
+// DefaultAnalyzerEngineWithGLiNEREnsemble; the pool is constructed by
 // recognizers.NewGLiNERPool, so this constructor is intentionally thin.
 //
 // The pool's Name() ("GLiNERPool") is registered in

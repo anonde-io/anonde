@@ -53,7 +53,7 @@ func TestDEClinicalIDRecognizer(t *testing.T) {
 		{"Aktenzeichen", "Aktenzeichen: 25 VIII 24/22 vom", []string{"25 VIII 24/22"}},
 		{"Az with citation", "Beweis: Vorlage der Rechnung Nr. 4 VII 532/21 vom", []string{"4 VII 532/21"}},
 
-		// Must NOT match — short standalone numbers, lab values, dates.
+		// Must NOT match; short standalone numbers, lab values, dates.
 		{"date should not match", "vom 12.05.2023 bis 24.06.2023", nil},
 		{"lab value", "Leukozyten 8700", nil},
 		{"dosage", "Insulin 12 IE", nil},

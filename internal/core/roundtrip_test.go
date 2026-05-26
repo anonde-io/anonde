@@ -81,7 +81,7 @@ func TestIngest_NDJSON_RejectsNonJSONLine(t *testing.T) {
 
 func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 	svc := newRoundtripService()
-	// Three lines: colored text log, JSON log, plain text — emails on each.
+	// Three lines: colored text log, JSON log, plain text; emails on each.
 	in := "\x1b[31mERROR\x1b[0m contact alice@example.com about login\n" +
 		`{"level":"info","email":"bob@example.com"}` + "\n" +
 		"plain message charlie@example.com\n"
@@ -126,9 +126,9 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 }
 
 // TestIngest_DisableNER_SkipsModelBackedRecognizers verifies that DisableNER
-// gates off only the model-backed NER recognizers (suffix "NERRecognizer" —
+// gates off only the model-backed NER recognizers (suffix "NERRecognizer",
 // HugotNERRecognizer, OllamaNERRecognizer). Pattern-based PERSON detectors
-// (ENAnomalyRecognizer, DEAnomalyRecognizer) keep firing — that's intentional
+// (ENAnomalyRecognizer, DEAnomalyRecognizer) keep firing; that's intentional
 // and consistent across languages, and it's what makes patterns-only deploys
 // usable for person redaction. Other pattern entities like EMAIL_ADDRESS
 // remain unaffected.
@@ -136,7 +136,7 @@ func TestIngest_DisableNER_SkipsModelBackedRecognizers(t *testing.T) {
 	svc := newRoundtripService()
 	// "Patient John Doe …" triggers ENAnomalyRecognizer's structural path
 	// ("Patient" + 1–4 capitalised tokens), which emits PERSON at score 0.85
-	// — well above the default 0.30 threshold. The bare-name path emits at
+	// well above the default 0.30 threshold. The bare-name path emits at
 	// 0.25 and only clears the threshold via a context-keyword boost; using
 	// the structural anchor here keeps the test stable regardless of the
 	// surrounding text.

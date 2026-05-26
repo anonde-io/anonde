@@ -91,7 +91,7 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewKRRRNRecognizer(),
 
 		// Romania.
-		// Money values intentionally NOT included — user policy says
+		// Money values intentionally NOT included; user policy says
 		// monetary amounts (fine values, line-item amounts on
 		// receipts/invoices/garnishment notices) are not PII. The
 		// Romanian MoneyRecognizer is still defined in ro_patterns.go
@@ -125,7 +125,7 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 }
 
 // DefaultAnalyzerEngine returns an AnalyzerEngine with all pattern recognizers
-// and **no** NER. This is the zero-dependency, no-model-download path —
+// and **no** NER. This is the zero-dependency, no-model-download path,
 // fastest, smallest binary footprint, but PERSON / LOCATION / ORGANIZATION
 // will not be detected.
 //
@@ -138,7 +138,7 @@ func DefaultAnalyzerEngine() *analyzer.AnalyzerEngine {
 }
 
 // DefaultAnalyzerEngineWithOllama returns an engine that uses a local Ollama instance for NER.
-// All inference runs locally — no data leaves the machine.
+// All inference runs locally; no data leaves the machine.
 // endpoint defaults to "http://localhost:11434" if empty; model defaults to "phi3:mini" if empty.
 func DefaultAnalyzerEngineWithOllama(endpoint, model string) *analyzer.AnalyzerEngine {
 	registry := analyzer.NewRecognizerRegistry()

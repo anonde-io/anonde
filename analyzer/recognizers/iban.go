@@ -11,7 +11,7 @@ import (
 )
 
 // ibanRE matches the IBAN structural shape: 2-letter country code, 2 check
-// digits, then 11-30 alphanumeric BBAN characters. Total length 15-34 — the
+// digits, then 11-30 alphanumeric BBAN characters. Total length 15-34; the
 // real-world IBAN range (Norway NO15 is the shortest, Malta MT31 the
 // longest after Saint Lucia's 32). The previous {4,30} bound allowed an
 // 8-char match like "YA334455" to pass the regex, fail MOD-97, and still

@@ -8,7 +8,7 @@ import (
 // ContextProvider is implemented by recognizers that want their findings
 // score-boosted when contextually-suggestive keywords appear nearby in the
 // surrounding text. Returning a nil/empty map disables the boost for the
-// recognizer — equivalent to not implementing the interface at all.
+// recognizer; equivalent to not implementing the interface at all.
 //
 // The map is keyed by the entity type the keywords apply to, since a single
 // recognizer may emit multiple entity types with different context cues.
@@ -59,7 +59,7 @@ func EnhanceWithContext(text string, results []RecognizerResult, keywordsByEntit
 			continue
 		}
 		// Defensive clamps: a misbehaving recognizer could emit spans
-		// outside the original text — never panic over that.
+		// outside the original text; never panic over that.
 		fStart, fEnd := r.Start, r.End
 		if fStart < 0 {
 			fStart = 0
@@ -91,7 +91,7 @@ func EnhanceWithContext(text string, results []RecognizerResult, keywordsByEntit
 }
 
 // hasAnyWord reports whether any of the (already-lowercased) keywords appears
-// in text with word boundaries on both sides. Pure-byte boundary check —
+// in text with word boundaries on both sides. Pure-byte boundary check,
 // adequate for ASCII context keywords, which is all Presidio ships and all
 // we need for English/European-language contexts.
 func hasAnyWord(text string, keywords []string) bool {

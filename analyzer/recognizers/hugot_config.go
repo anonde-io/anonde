@@ -1,6 +1,6 @@
 // hugot_config.go is intentionally NOT build-tagged. HugotNERConfig is a
 // pure-data struct (no hugot library dependency in any field type), so it
-// can be defined and referenced in non-hugot builds — the stub
+// can be defined and referenced in non-hugot builds; the stub
 // `DefaultAnalyzerEngineWithHugotConfig` in ../../hugot_off.go uses it to
 // keep the public API surface stable across build variants.
 
@@ -13,17 +13,17 @@ type HugotNERConfig struct {
 	ModelsDir string
 
 	// ModelName is the HuggingFace model ID to use.
-	// Defaults to "onnx-community/multilang-pii-ner-ONNX" — XLM-RoBERTa-base
+	// Defaults to "onnx-community/multilang-pii-ner-ONNX"; XLM-RoBERTa-base
 	// fine-tuned for PII detection across English, German, Italian, and
 	// French. Substantially better recall on German clinical text than a
 	// generic CoNLL-2003 NER because it was trained on PII-specific labels
 	// (GIVENNAME / SURNAME / CITY / STREET / BUILDINGNUM / ZIPCODE / AGE / …).
 	//
 	// Alternative defaults worth knowing:
-	//   * "Xenova/distilbert-base-multilingual-cased-ner-hrl" — smaller
+	//   * "Xenova/distilbert-base-multilingual-cased-ner-hrl"; smaller
 	//     (~135 MB), CoNLL-2003 news-text labels (PER/LOC/ORG), wider
 	//     language coverage but weaker on clinical text.
-	//   * "Isotonic/distilbert_finetuned_ai4privacy_v2" — English-only,
+	//   * "Isotonic/distilbert_finetuned_ai4privacy_v2"; English-only,
 	//     ai4privacy-tuned, highest core-entity F1 on the English bench
 	//     (see bench/corpora/ai4privacy_en/REPORT.md).
 	ModelName string
@@ -44,7 +44,7 @@ type HugotNERConfig struct {
 	// with their global offsets in the original text.
 	//
 	// Zero uses the recognizer's internal default. This must be smaller
-	// than the model's token context window in chars — a 512-token model
+	// than the model's token context window in chars; a 512-token model
 	// with roughly 4 chars/token (typical for German) caps useful values
 	// near 1800. Smaller values trade throughput for safety on
 	// dense-tokenizing scripts (Chinese, Japanese).

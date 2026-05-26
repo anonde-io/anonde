@@ -1,7 +1,7 @@
 package recognizers
 
 // NewKRRRNRecognizer detects Korean Resident Registration Numbers
-// (주민등록번호) — 13 digits, often formatted YYMMDD-Sxxxxxx.
+// (주민등록번호); 13 digits, often formatted YYMMDD-Sxxxxxx.
 func NewKRRRNRecognizer() *validatedRecognizer {
 	r := NewValidatedRecognizer(
 		"KRRRNRecognizer",

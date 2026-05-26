@@ -25,7 +25,7 @@ func TestDEDateTimeRecognizer(t *testing.T) {
 		{"DD. Monat YYYY ASCII ae", "am 12. Maerz 2024.", "12. Maerz 2024"},
 		{"Monat YYYY no day", "Diagnose im November 2018 gestellt.", "November 2018"},
 
-		// Negative cases — must NOT match.
+		// Negative cases; must NOT match.
 		{"version number", "Library 1.2.3 installed.", ""},
 		{"bare year alone", "Studium 2007.", ""},
 		{"section number", "siehe 19.3. der Anlage.", ""},

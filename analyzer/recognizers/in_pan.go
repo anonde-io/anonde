@@ -3,7 +3,7 @@ package recognizers
 import "strings"
 
 // NewINPANRecognizer detects Indian Permanent Account Numbers.
-// Format: AAAAA9999A — 5 letters, 4 digits, 1 letter.
+// Format: AAAAA9999A; 5 letters, 4 digits, 1 letter.
 func NewINPANRecognizer() *validatedRecognizer {
 	r := NewValidatedRecognizer(
 		"INPANRecognizer",
