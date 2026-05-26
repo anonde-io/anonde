@@ -44,15 +44,14 @@ type HTTPServer struct {
 	connectServer   *ConnectServer
 	grpcServer      *GRPCServer
 	proxy           *openAIProxy
-	pdfRedactor     PDFRedactor
 	maxRequestBytes int64
 }
 
 func NewHTTPServer(svc *core.Service) *HTTPServer {
 	return &HTTPServer{
-		svc:             svc,
-		connectServer:   NewConnectServer(svc),
-		grpcServer:      NewGRPCServer(svc),
+		svc:           svc,
+		connectServer: NewConnectServer(svc),
+		grpcServer:    NewGRPCServer(svc),
 		// The OpenAI-compatible proxy is always mounted; a zero
 		// OpenAIProxyConfig resolves to OpenAI as the upstream.
 		// cmd/anonde overrides this from env via SetOpenAIProxy.
@@ -93,18 +92,6 @@ func (s *HTTPServer) Routes() http.Handler {
 	proxyHandler := http.HandlerFunc(s.proxy.chatCompletions)
 	mux.Handle(chatCompletionsPath, s.limitBody(proxyHandler))
 
-	// PDF anonymization. POST /v1/anonymizations/pdf accepts raw
-	// application/pdf or multipart/form-data (file=...); returns the
-	// redacted PDF bytes. Path is the sub-resource form parallel to
-	// the existing POST /v1/anonymizations (text) so the URL grammar
-	// stays consistent. Wrapped in the body cap because we read
-	// r.Body directly. Go 1.22 mux picks the more-specific
-	// "POST /v1/anonymizations/pdf" over the "/v1/" catch-all.
-	mux.Handle("POST /v1/anonymizations/pdf", s.limitBody(http.HandlerFunc(s.anonymizePDF)))
-	// PDF reveal: returns the original bytes stored at anonymize time.
-	// Tenant-scoped via X-Anonde-Tenant header or ?tenant=… query.
-	mux.HandleFunc("GET /v1/anonymizations/{id}/reveal-pdf", s.revealPDF)
-
 	connectOpts := []connect.HandlerOption{
 		// Replace Connect's default JSON codec with one that uses
 		// snake_case proto names on the wire (UseProtoNames=true).
@@ -123,6 +110,16 @@ func (s *HTTPServer) Routes() http.Handler {
 	// JSON shape mirrors the Connect codec above — snake_case on
 	// output, tolerant of both shapes + unknown fields on input —
 	// so callers see one consistent JSON contract across surfaces.
+	//
+	// Two extra marshaler hooks layered in for the PDF surface:
+	//   - application/pdf is handled by pdfMarshaler (raw bytes in/out,
+	//     no base64-in-JSON). Other content types still flow through
+	//     the JSONPb wildcard marshaler.
+	//   - tenantMetadataAnnotator copies X-Anonde-Tenant from the HTTP
+	//     request into gRPC metadata so executeAnonymizePDF /
+	//     executeRevealPDF can read it as a fallback.
+	//   - pdfForwardResponse writes the X-Anonde-Id / -Entities /
+	//     -Entity-Count headers from the response proto.
 	gw := runtime.NewServeMux(
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
 			MarshalOptions: protojson.MarshalOptions{
@@ -132,6 +129,9 @@ func (s *HTTPServer) Routes() http.Handler {
 				DiscardUnknown: true,
 			},
 		}),
+		runtime.WithMarshalerOption(mimeApplicationPDF, newPDFMarshaler()),
+		runtime.WithMetadata(tenantMetadataAnnotator),
+		runtime.WithForwardResponseOption(pdfForwardResponse),
 	)
 	if err := anondev1.RegisterServiceHandlerServer(context.Background(), gw, s.grpcServer); err != nil {
 		// Programmer error: only fires if codegen + registration drift.

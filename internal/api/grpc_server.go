@@ -86,6 +86,22 @@ func (s *GRPCServer) HealthCheck(_ context.Context, _ *anondev1.HealthCheckReque
 	return executeHealthCheck(), nil
 }
 
+func (s *GRPCServer) AnonymizePDF(ctx context.Context, req *anondev1.AnonymizePDFRequest) (*anondev1.AnonymizePDFResponse, error) {
+	resp, err := executeAnonymizePDF(ctx, s.svc, req)
+	if err != nil {
+		return nil, grpcErrFor(err)
+	}
+	return resp, nil
+}
+
+func (s *GRPCServer) RevealPDF(ctx context.Context, req *anondev1.RevealPDFRequest) (*anondev1.RevealPDFResponse, error) {
+	resp, err := executeRevealPDF(ctx, s.svc, req)
+	if err != nil {
+		return nil, grpcErrFor(err)
+	}
+	return resp, nil
+}
+
 // grpcErrFor maps a Service error to a gRPC status error.
 //
 // Detection rule mirrors connectErrFor + adds "not found" → NotFound so
@@ -99,6 +115,11 @@ func grpcErrFor(err error) error {
 	}
 	if errors.Is(err, core.ErrPolicyDenied) {
 		return status.Error(codes.PermissionDenied, err.Error())
+	}
+	if errors.Is(err, core.ErrPDFRedactorUnconfigured) {
+		// codes.Unimplemented → HTTP 501 over the REST gateway, which
+		// matches the previous ad-hoc handler's response.
+		return status.Error(codes.Unimplemented, err.Error())
 	}
 	if strings.Contains(err.Error(), "not found") {
 		return status.Error(codes.NotFound, err.Error())

@@ -128,6 +128,55 @@ func executeHealthCheck() *anondev1.HealthCheckResponse {
 	}
 }
 
+func executeAnonymizePDF(ctx context.Context, svc *core.Service, msg *anondev1.AnonymizePDFRequest) (*anondev1.AnonymizePDFResponse, error) {
+	tenantID := msg.GetTenantId()
+	if tenantID == "" {
+		// Fall back to the X-Anonde-Tenant header carried in incoming
+		// gRPC metadata by the REST gateway's metadata annotator. gRPC /
+		// Connect callers populate the proto field directly so this
+		// fallback is REST-only.
+		tenantID = tenantFromIncomingMD(ctx)
+	}
+	id, redacted, stats, err := svc.RedactPDF(ctx, tenantID, msg.GetPdfContent())
+	if err != nil {
+		return nil, err
+	}
+	return &anondev1.AnonymizePDFResponse{
+		Id:               id,
+		TenantId:         tenantID,
+		RedactedPdf:      redacted,
+		EntitiesCount:    int32(stats.EntityCount),
+		EntityTypesCount: int32(stats.TypeCount),
+		EntitiesByType:   intMapToInt32Map(stats.ByType),
+	}, nil
+}
+
+func executeRevealPDF(ctx context.Context, svc *core.Service, msg *anondev1.RevealPDFRequest) (*anondev1.RevealPDFResponse, error) {
+	tenantID := msg.GetTenantId()
+	if tenantID == "" {
+		tenantID = tenantFromIncomingMD(ctx)
+	}
+	raw, err := svc.GetOriginalPDF(ctx, tenantID, msg.GetId())
+	if err != nil {
+		return nil, err
+	}
+	return &anondev1.RevealPDFResponse{
+		Id:          msg.GetId(),
+		OriginalPdf: raw,
+	}, nil
+}
+
+func intMapToInt32Map(in map[string]int) map[string]int32 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int32, len(in))
+	for k, v := range in {
+		out[k] = int32(v)
+	}
+	return out
+}
+
 // applyAnalyzerOptions copies AnalyzerOptions from a proto request onto
 // the existing internal-request fields. The internal types are reused
 // verbatim so the Service layer stays unchanged.

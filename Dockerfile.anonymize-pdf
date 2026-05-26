@@ -97,6 +97,7 @@ COPY --from=build /out/lib/libonnxruntime.so.1 /usr/lib/x86_64-linux-gnu/libonnx
 # init — pinned to the COPY target so it works regardless of LD_LIBRARY_PATH.
 ENV ORT_SO_PATH=/usr/lib/x86_64-linux-gnu/libonnxruntime.so.1 \
     GLINER_MODELS_DIR=/root/.cache/anonde/models \
+    SIGNATURE_THRESHOLD=0.20 \
     ANONDE_OCR_LANGS=eng+deu+fra+spa+ita+ron
 
 # Cache directory for downloaded models. Mount this as a volume to

@@ -45,6 +45,8 @@ const (
 	Service_DeleteAnonymization_FullMethodName = "/anonde.v1.Service/DeleteAnonymization"
 	Service_GetVersion_FullMethodName          = "/anonde.v1.Service/GetVersion"
 	Service_HealthCheck_FullMethodName         = "/anonde.v1.Service/HealthCheck"
+	Service_AnonymizePDF_FullMethodName        = "/anonde.v1.Service/AnonymizePDF"
+	Service_RevealPDF_FullMethodName           = "/anonde.v1.Service/RevealPDF"
 )
 
 // ServiceClient is the client API for Service service.
@@ -109,6 +111,36 @@ type ServiceClient interface {
 	//
 	// REST: GET /v1/health (the plain /healthz endpoint also stays).
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
+	// AnonymizePDF runs the visual PDF redactor over a raw PDF body and
+	// returns a redacted PDF. The server stores both the original and
+	// redacted bytes keyed by (tenant_id, minted id) so RevealPDF can
+	// return the original later. Opt-in at server boot via
+	// ANONDE_PDF_ENABLED=1 — without that the RPC returns Unimplemented
+	// (HTTP 501).
+	//
+	// Body binding: `body: "pdf_content"` makes the request body the raw
+	// bytes of the bytes field; the REST gateway uses a custom
+	// `application/pdf` marshaler so callers send raw PDF, not
+	// base64-in-JSON. tenant_id is bound from `?tenant=` / `?tenantId=`
+	// query OR from the `X-Anonde-Tenant` header (forwarded via the
+	// gateway metadata annotator). gRPC / Connect callers populate it on
+	// the message directly.
+	//
+	// The response's id / counts / by-type map are also emitted as
+	// `X-Anonde-Id`, `X-Anonde-Entities`, `X-Anonde-Entity-Types`, and
+	// repeated `X-Anonde-Entity-Count: TYPE=N` headers via the gateway's
+	// ForwardResponseOption, so REST clients can log without parsing the
+	// PDF body.
+	//
+	// REST: POST /v1/anonymizations/pdf
+	AnonymizePDF(ctx context.Context, in *AnonymizePDFRequest, opts ...grpc.CallOption) (*AnonymizePDFResponse, error)
+	// RevealPDF returns the original bytes the server stashed at
+	// AnonymizePDF time. 404 when the record is missing, expired, or was
+	// not created via the PDF endpoint (i.e. no OriginalBytes on the
+	// store record). Same tenant binding as AnonymizePDF.
+	//
+	// REST: GET /v1/anonymizations/{id}/reveal-pdf
+	RevealPDF(ctx context.Context, in *RevealPDFRequest, opts ...grpc.CallOption) (*RevealPDFResponse, error)
 }
 
 type serviceClient struct {
@@ -189,6 +221,26 @@ func (c *serviceClient) HealthCheck(ctx context.Context, in *HealthCheckRequest,
 	return out, nil
 }
 
+func (c *serviceClient) AnonymizePDF(ctx context.Context, in *AnonymizePDFRequest, opts ...grpc.CallOption) (*AnonymizePDFResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AnonymizePDFResponse)
+	err := c.cc.Invoke(ctx, Service_AnonymizePDF_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *serviceClient) RevealPDF(ctx context.Context, in *RevealPDFRequest, opts ...grpc.CallOption) (*RevealPDFResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevealPDFResponse)
+	err := c.cc.Invoke(ctx, Service_RevealPDF_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ServiceServer is the server API for Service service.
 // All implementations must embed UnimplementedServiceServer
 // for forward compatibility.
@@ -251,6 +303,36 @@ type ServiceServer interface {
 	//
 	// REST: GET /v1/health (the plain /healthz endpoint also stays).
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
+	// AnonymizePDF runs the visual PDF redactor over a raw PDF body and
+	// returns a redacted PDF. The server stores both the original and
+	// redacted bytes keyed by (tenant_id, minted id) so RevealPDF can
+	// return the original later. Opt-in at server boot via
+	// ANONDE_PDF_ENABLED=1 — without that the RPC returns Unimplemented
+	// (HTTP 501).
+	//
+	// Body binding: `body: "pdf_content"` makes the request body the raw
+	// bytes of the bytes field; the REST gateway uses a custom
+	// `application/pdf` marshaler so callers send raw PDF, not
+	// base64-in-JSON. tenant_id is bound from `?tenant=` / `?tenantId=`
+	// query OR from the `X-Anonde-Tenant` header (forwarded via the
+	// gateway metadata annotator). gRPC / Connect callers populate it on
+	// the message directly.
+	//
+	// The response's id / counts / by-type map are also emitted as
+	// `X-Anonde-Id`, `X-Anonde-Entities`, `X-Anonde-Entity-Types`, and
+	// repeated `X-Anonde-Entity-Count: TYPE=N` headers via the gateway's
+	// ForwardResponseOption, so REST clients can log without parsing the
+	// PDF body.
+	//
+	// REST: POST /v1/anonymizations/pdf
+	AnonymizePDF(context.Context, *AnonymizePDFRequest) (*AnonymizePDFResponse, error)
+	// RevealPDF returns the original bytes the server stashed at
+	// AnonymizePDF time. 404 when the record is missing, expired, or was
+	// not created via the PDF endpoint (i.e. no OriginalBytes on the
+	// store record). Same tenant binding as AnonymizePDF.
+	//
+	// REST: GET /v1/anonymizations/{id}/reveal-pdf
+	RevealPDF(context.Context, *RevealPDFRequest) (*RevealPDFResponse, error)
 	mustEmbedUnimplementedServiceServer()
 }
 
@@ -281,6 +363,12 @@ func (UnimplementedServiceServer) GetVersion(context.Context, *GetVersionRequest
 }
 func (UnimplementedServiceServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method HealthCheck not implemented")
+}
+func (UnimplementedServiceServer) AnonymizePDF(context.Context, *AnonymizePDFRequest) (*AnonymizePDFResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AnonymizePDF not implemented")
+}
+func (UnimplementedServiceServer) RevealPDF(context.Context, *RevealPDFRequest) (*RevealPDFResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevealPDF not implemented")
 }
 func (UnimplementedServiceServer) mustEmbedUnimplementedServiceServer() {}
 func (UnimplementedServiceServer) testEmbeddedByValue()                 {}
@@ -429,6 +517,42 @@ func _Service_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Service_AnonymizePDF_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnonymizePDFRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServiceServer).AnonymizePDF(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Service_AnonymizePDF_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServiceServer).AnonymizePDF(ctx, req.(*AnonymizePDFRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Service_RevealPDF_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevealPDFRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ServiceServer).RevealPDF(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Service_RevealPDF_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ServiceServer).RevealPDF(ctx, req.(*RevealPDFRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Service_ServiceDesc is the grpc.ServiceDesc for Service service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -463,6 +587,14 @@ var Service_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HealthCheck",
 			Handler:    _Service_HealthCheck_Handler,
+		},
+		{
+			MethodName: "AnonymizePDF",
+			Handler:    _Service_AnonymizePDF_Handler,
+		},
+		{
+			MethodName: "RevealPDF",
+			Handler:    _Service_RevealPDF_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
