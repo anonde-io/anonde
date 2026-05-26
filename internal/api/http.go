@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -162,7 +165,7 @@ func (s *HTTPServer) Routes() http.Handler {
 	// DoS / OOM vector flagged by the e2e + stress suites.
 	mux.Handle("/v1/", s.limitBody(gw))
 
-	return loggingMiddleware(recoverMiddleware(corsMiddleware(mux)))
+	return auditMiddleware(recoverMiddleware(corsMiddleware(mux)))
 }
 
 // revealPDF bypasses grpc-gateway for the reveal-pdf GET so that the
@@ -240,23 +243,153 @@ func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// Audit-log heartbeat cadence. Hardcoded by design — these are
+// operator-facing thresholds for "is this request stuck?" visibility, not
+// per-deploy tuning knobs. The values are `var` (not const) only so tests
+// can override them for fast assertions; do not mutate from production code.
+var (
+	auditHeartbeatThreshold = 2 * time.Second
+	auditHeartbeatInterval  = 5 * time.Second
+)
+
+// requestIDHeader is the response header surfaced to callers so they can
+// correlate their client-side errors with a server-side audit trail.
+const requestIDHeader = "X-Anonde-Request-Id"
+
+type ctxKey int
+
+const requestIDCtxKey ctxKey = 1
+
+// RequestIDFromContext returns the request id assigned by the audit
+// middleware, or "" if the request did not flow through it (e.g. tests
+// calling handlers directly).
+func RequestIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(requestIDCtxKey).(string)
+	return v
+}
+
+// auditLogger is the package-level audit sink. JSON to stderr so
+// self-hosters can pipe into Loki / CloudWatch / Vector without
+// re-parsing. Mixed with the codebase's existing log.Printf lines on the
+// same stream — operators who want one format can migrate the rest.
+var auditLogger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+
+// SetAuditLogger overrides the audit middleware logger. Call before
+// Routes(); intended for tests and embedders that want to route audit
+// events to their own slog handler.
+func SetAuditLogger(l *slog.Logger) {
+	if l != nil {
+		auditLogger = l
+	}
+}
+
+func newRequestID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand can't fail in practice; if it does, fall back to a
+		// timestamp-based id so requests still get a (less unique) tag.
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(b[:])
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status       int
+	bytesOut     int64
+	wroteHeader  bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
+	if r.wroteHeader {
+		return
+	}
+	r.wroteHeader = true
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
+func (r *statusRecorder) Write(p []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(p)
+	r.bytesOut += int64(n)
+	return n, err
+}
+
+// Flush passes through so chunked / streaming responses (e.g. the OpenAI
+// proxy in stream mode) keep working under the audit wrap.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// auditMiddleware logs every request through a structured audit trail:
+//   - request_start on entry (method, path, remote, content_length).
+//   - request_inflight heartbeat after auditHeartbeatThreshold and every
+//     auditHeartbeatInterval after that — surfaces "is the PDF still
+//     working?" without instrumenting individual handlers.
+//   - request_end with status, duration, and bytes written on completion.
+//
+// /healthz is skipped because Fly (and any container scheduler) hits it on
+// a sub-minute cadence and would otherwise drown the audit log.
+func auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		id := newRequestID()
+		w.Header().Set(requestIDHeader, id)
+		ctx := context.WithValue(r.Context(), requestIDCtxKey, id)
+		r = r.WithContext(ctx)
+
 		start := time.Now()
+		auditLogger.LogAttrs(ctx, slog.LevelInfo, "request_start",
+			slog.String("request_id", id),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("remote", r.RemoteAddr),
+			slog.Int64("bytes_in", r.ContentLength),
+		)
+
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+		// Heartbeat goroutine. Does not touch rec.status / rec.bytesOut to
+		// stay race-free with the handler goroutine — heartbeats only
+		// report elapsed time + immutable request metadata.
+		done := make(chan struct{})
+		go func() {
+			timer := time.NewTimer(auditHeartbeatThreshold)
+			defer timer.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-timer.C:
+					auditLogger.LogAttrs(ctx, slog.LevelInfo, "request_inflight",
+						slog.String("request_id", id),
+						slog.String("method", r.Method),
+						slog.String("path", r.URL.Path),
+						slog.Int64("elapsed_ms", time.Since(start).Milliseconds()),
+					)
+					timer.Reset(auditHeartbeatInterval)
+				}
+			}
+		}()
+
 		next.ServeHTTP(rec, r)
-		log.Printf("http request method=%s path=%s status=%d duration_ms=%d remote=%s",
-			r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds(), r.RemoteAddr)
+		close(done)
+
+		auditLogger.LogAttrs(ctx, slog.LevelInfo, "request_end",
+			slog.String("request_id", id),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", rec.status),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+			slog.Int64("bytes_out", rec.bytesOut),
+			slog.String("remote", r.RemoteAddr),
+		)
 	})
 }
 
@@ -267,7 +400,14 @@ func corsMiddleware(next http.Handler) http.Handler {
 		// exposing the service publicly; see TODO.md.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,Connect-Protocol-Version,Connect-Timeout-Ms")
+		// X-Anonde-Tenant is the Stripe-style tenant binding for PDF
+		// (and any future per-tenant) endpoints; allow it on the
+		// inbound side so browser preflights succeed.
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,Connect-Protocol-Version,Connect-Timeout-Ms,X-Anonde-Tenant")
+		// Expose the PDF response headers (id, tenant, entity counts)
+		// so browser-side clients like the lens demo can read them
+		// off fetch responses without parsing the PDF body.
+		w.Header().Set("Access-Control-Expose-Headers", "X-Anonde-Id,X-Anonde-Tenant,X-Anonde-Entities,X-Anonde-Entity-Types,X-Anonde-Entity-Count")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -280,7 +420,13 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("panic serving %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
+				auditLogger.LogAttrs(r.Context(), slog.LevelError, "request_panic",
+					slog.String("request_id", RequestIDFromContext(r.Context())),
+					slog.String("method", r.Method),
+					slog.String("path", r.URL.Path),
+					slog.Any("panic", rec),
+					slog.String("stack", string(debug.Stack())),
+				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})

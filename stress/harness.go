@@ -30,6 +30,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/build"
+	mobyclient "github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -128,16 +131,13 @@ func Start(ctx context.Context, t *testing.T, v Variant) *Container {
 
 	root := repoRoot(t)
 
-	// Dockerfile.anonde-ner{,-stack} use `FROM --platform=$TARGETPLATFORM`
-	// which buildx sets automatically but the legacy `docker build`
-	// path testcontainers-go uses leaves empty — that crashes parse
-	// with `"" is an invalid OS component`. Pass the build args
-	// explicitly so the multi-arch Dockerfiles work under plain docker.
-	platform, arch := dockerBuildPlatform()
-	buildArgs := map[string]*string{
-		"TARGETPLATFORM": &platform,
-		"TARGETARCH":     &arch,
-	}
+	// Dockerfile.anonde-ner{,-stack} use `FROM --platform=$TARGETPLATFORM`,
+	// which is a buildkit-predefined ARG. The legacy classic builder
+	// leaves it empty and crashes parse with `"" is an invalid OS
+	// component`. Force buildkit + set the target platform explicitly
+	// so the Dockerfiles' predefined ARGs (TARGETPLATFORM, TARGETARCH)
+	// resolve correctly under testcontainers-go's docker-build path.
+	targetArch := normalizedTargetArch()
 
 	// FromDockerfile rebuilds on every test boot unless Docker layer
 	// cache hits. That's intentional: stress runs locally + on a
@@ -147,11 +147,17 @@ func Start(ctx context.Context, t *testing.T, v Variant) *Container {
 		FromDockerfile: testcontainers.FromDockerfile{
 			Context:    root,
 			Dockerfile: v.Dockerfile,
-			BuildArgs:  buildArgs,
 			KeepImage:  true,
 			// PrintBuildLog is loud but the alternative is a silent
 			// 15-minute hang on a stale `docker pull`. Loud wins.
 			PrintBuildLog: true,
+			BuildOptionsModifier: func(opts *mobyclient.ImageBuildOptions) {
+				opts.Version = build.BuilderBuildKit
+				opts.Platforms = []ocispec.Platform{{
+					Architecture: targetArch,
+					OS:           "linux",
+				}}
+			},
 		},
 		ExposedPorts: []string{"8080/tcp", "9090/tcp"},
 		Env:          mergeEnv(map[string]string{"METRICS_BIND": "0.0.0.0:9090"}, v.Env),
@@ -259,22 +265,17 @@ func mergeEnv(a, b map[string]string) map[string]string {
 	return out
 }
 
-// dockerBuildPlatform returns the `TARGETPLATFORM` / `TARGETARCH` pair
-// to inject as docker build args. testcontainers-go drives the legacy
-// `docker build`, which (unlike buildx) leaves these empty when the
-// Dockerfile uses `FROM --platform=$TARGETPLATFORM ...`. anonde's
-// NER images do, so we map the runtime arch to the Docker arch
-// shorthand and pass them explicitly. amd64 + arm64 are the only
-// arches the production Dockerfiles handle (see the case-switch in
-// Dockerfile.anonde-ner); fall back to amd64 otherwise so the build
-// still gets a useful error from the Dockerfile rather than a parse
-// crash inside testcontainers.
-func dockerBuildPlatform() (platform, arch string) {
+// normalizedTargetArch maps Go's runtime arch to the Docker / OCI
+// `architecture` string that the ImageBuildOptions.Platforms field
+// expects. anonde's NER Dockerfiles handle amd64 + arm64; everything
+// else falls back to amd64 so the build still surfaces a Dockerfile
+// error rather than a platform parse crash inside testcontainers.
+func normalizedTargetArch() string {
 	switch runtime.GOARCH {
 	case "arm64":
-		return "linux/arm64", "arm64"
+		return "arm64"
 	default:
-		return "linux/amd64", "amd64"
+		return "amd64"
 	}
 }
 

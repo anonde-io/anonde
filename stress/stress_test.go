@@ -191,21 +191,29 @@ func TestStress_BodyCap(t *testing.T) {
 		m, _ := attack.Run(t)
 		Summarize(t, attack.Name, v.Name, m)
 
-		// We want oversized requests bounded, period. Hangs (timeouts)
-		// or connection drops would show up as vegeta errors.
-		if len(m.Errors) > 0 {
-			t.Errorf("oversized body produced non-HTTP errors (likely server hung or RSTed): %v", m.Errors[:min(3, len(m.Errors))])
-		}
-		// The REST gateway is now wrapped in limitBody (commit fixing
-		// rest-gateway-body-cap-gap), so every oversized request must
-		// land in 4xx. A 5xx is server failure on the boundary; a 2xx
-		// would be a regression of the body-cap fix.
+		// Status-code buckets are the authoritative outcome here. The
+		// REST gateway is wrapped in limitBody, so every oversized
+		// request must land in 4xx. 5xx = server failure on the
+		// boundary; 2xx = body-cap regression.
+		//
+		// Vegeta's m.Errors slice is intentionally NOT checked: it
+		// captures every non-2xx response's status text (e.g. "400
+		// Bad Request") alongside real transport errors, which means
+		// a successful cap-rejection looks like an error pile.
 		count2xx, count4xx, count5xx := codeBuckets(m.StatusCodes)
 		if count5xx > 0 {
 			t.Errorf("oversized body produced %d 5xx — server failure on the boundary", count5xx)
 		}
 		if count2xx > 0 {
 			t.Errorf("REST gateway accepted %d oversized requests — body-cap regression. 4xx=%d 5xx=%d", count2xx, count4xx, count5xx)
+		}
+		// Real transport errors (timeouts, RSTs) would show as
+		// zero-status counts — anything not buckable into 2xx/4xx/5xx.
+		// Catch those explicitly via the total-vs-bucketed gap.
+		bucketed := count2xx + count4xx + count5xx
+		if int(m.Requests) > bucketed {
+			t.Errorf("oversized body produced %d transport errors (no HTTP status returned). Requests=%d bucketed=%d. Errors[:3]=%v",
+				int(m.Requests)-bucketed, m.Requests, bucketed, m.Errors[:min(3, len(m.Errors))])
 		}
 		assertContainerAlive(t, c)
 	})
