@@ -1,0 +1,75 @@
+name: pages
+
+# Publishes the auto-generated OpenAPI spec + Swagger UI to GitHub
+# Pages so reviewers can browse the API without running
+# `python3 -m http.server` locally.
+#
+# Output URL: https://anonde-io.github.io/anonde/ (or whatever Pages
+# is configured to serve from this repo).
+#
+# Triggers on changes that could move the surface: the proto file
+# itself, regenerated spec, or the index.html. main only — Pages
+# can't host per-branch sites without subpaths, and we don't want
+# every PR to overwrite the hosted version.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proto/anonde/v1/anonde.proto'
+      - 'gen/anonde/v1/anonde.swagger.json'
+      - 'docs/api/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubicloud-standard-2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          # Flat layout: index.html + the spec live side-by-side so
+          # the swagger UI can fetch the spec with a short relative
+          # path. Source index.html points at "../../gen/...", which
+          # is fine for `python3 -m http.server` from repo root but
+          # wrong for a Pages site rooted at /. Rewrite the URL line
+          # in-place during the copy so we don't fork the source.
+          cp gen/anonde/v1/anonde.swagger.json _site/anonde.swagger.json
+          # Rewrite the swagger.json path in index.html. The source
+          # uses "../../gen/anonde/v1/anonde.swagger.json" so the page
+          # works from `python3 -m http.server` rooted at the repo;
+          # on Pages it's served flat alongside the spec.
+          sed 's|../../gen/anonde/v1/anonde.swagger.json|./anonde.swagger.json|' \
+            docs/api/index.html > _site/index.html
+          # Sanity check: the path got rewritten. If not, fail loudly
+          # rather than ship a broken site.
+          grep -q './anonde.swagger.json' _site/index.html
+          ! grep -q '../../gen/anonde/v1/anonde.swagger.json' _site/index.html
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubicloud-standard-2
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

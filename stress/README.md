@@ -52,10 +52,12 @@ the test stresses is byte-identical to what a self-hoster pulls.
 | `TestStress_PDFLargeDoc` | ner, ner-stack | Visual PDF redaction over a multi-page doc. Catches OCR + GLiNER + draw regressions. |
 | `TestStress_BodyCap` | all | Oversized bodies → 4xx, never 5xx. Currently warns on the REST-gateway gap (see memory `rest-gateway-body-cap-gap`). |
 | `TestStress_MultiTenant` | all | Tenant A blasts the server; tenant B `/v1/health` probe traffic stays under p99 budget. Fairness guard. |
+| `TestStress_Cluster_StatefulRoundTrip` | patterns | N=3 backends behind an in-process sticky-session proxy. Hash `(tenant, id) → backend`, anonymize → reveal across the cluster. Asserts every backend got work AND sticky routing is deterministic (reveal lands on the mint backend). |
 
 Cases queued for follow-up (see `stress_test.go` header comment):
-TTL races, JSON recursion bomb, unicode adversarial, token-namespace
-isolation under load.
+TTL races, JSON recursion bomb, unicode adversarial, backend-down
+failover (needs a shared store first — see [cluster.go](cluster.go)
+header).
 
 ## Pre-flight checks
 

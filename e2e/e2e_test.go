@@ -531,23 +531,18 @@ func (s *server) testEdgeRevealUnknownID(t *testing.T) {
 
 func (s *server) testEdgeOversizedBody(t *testing.T) {
 	// MAX_CONTENT_BYTES is 64 KiB on the test server. Send 128 KiB.
-	// The Connect/REST gateway returns 4xx (typically 400 or 413
-	// depending on the path). Either is acceptable; we just want NOT
-	// 5xx and NOT a hang.
+	// The gateway now wraps the gateway subtree in limitBody so REST
+	// matches Connect's enforcement — a 4xx is mandatory. A 2xx here
+	// would be a regression of the body-cap fix landed alongside this
+	// assertion.
 	big := strings.Repeat("a", 128*1024)
 	status, _ := s.postJSON(t, "/v1/anonymizations", map[string]any{
 		"tenant_id":      "e2e",
 		"content_format": "text",
 		"content":        big,
 	})
-	if status >= 500 || status == 0 {
-		t.Fatalf("oversized body status=%d, want 4xx", status)
-	}
-	if status < 400 {
-		// The server may not enforce the cap on every transport.
-		// Log rather than fail so this case still surfaces the
-		// behaviour without going red on a documented gap.
-		t.Logf("warning: oversized body returned %d (no cap enforcement on this path)", status)
+	if status < 400 || status >= 500 {
+		t.Fatalf("oversized body status=%d, want 4xx (body cap enforced on REST gateway)", status)
 	}
 }
 

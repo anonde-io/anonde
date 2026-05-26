@@ -196,15 +196,16 @@ func TestStress_BodyCap(t *testing.T) {
 		if len(m.Errors) > 0 {
 			t.Errorf("oversized body produced non-HTTP errors (likely server hung or RSTed): %v", m.Errors[:min(3, len(m.Errors))])
 		}
-		// Status histogram: ideally all 4xx. If the REST cap gap
-		// hasn't been fixed yet, some 200s will slip through — log
-		// the gap visibly so it shows in CI output.
+		// The REST gateway is now wrapped in limitBody (commit fixing
+		// rest-gateway-body-cap-gap), so every oversized request must
+		// land in 4xx. A 5xx is server failure on the boundary; a 2xx
+		// would be a regression of the body-cap fix.
 		count2xx, count4xx, count5xx := codeBuckets(m.StatusCodes)
 		if count5xx > 0 {
 			t.Errorf("oversized body produced %d 5xx — server failure on the boundary", count5xx)
 		}
 		if count2xx > 0 {
-			t.Logf("warning: REST gateway accepted %d oversized requests (REST body-cap gap; see memory rest-gateway-body-cap-gap). 4xx=%d 5xx=%d", count2xx, count4xx, count5xx)
+			t.Errorf("REST gateway accepted %d oversized requests — body-cap regression. 4xx=%d 5xx=%d", count2xx, count4xx, count5xx)
 		}
 		assertContainerAlive(t, c)
 	})

@@ -40,10 +40,11 @@ concurrency:
 
 jobs:
   stress:
-    # Matches bench.yml. standard-2 is tight for the ner-stack variant
-    # (~2.8 GB runtime + Docker overhead on 8 GB RAM); bump to
-    # standard-4 if scheduled runs start OOMing on the stack row.
-    runs-on: ubicloud-standard-2
+    # 4 vCPU / 16 GB. standard-2 (8 GB) was too tight for the ner-stack
+    # variant (~2.8 GB runtime + Docker overhead) and starved load
+    # generation of CPU under sustained PII-dense traffic. Bump to
+    # standard-4 so the ner-stack matrix row has actual headroom.
+    runs-on: ubicloud-standard-4
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

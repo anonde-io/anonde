@@ -156,7 +156,11 @@ func (s *HTTPServer) Routes() http.Handler {
 	// regardless of Accept, matching the pre-PR-#11 hand-rolled shape.
 	mux.HandleFunc("GET /v1/anonymizations/{id}/reveal-pdf", s.revealPDF)
 
-	mux.Handle("/v1/", gw)
+	// Body cap on the REST gateway subtree. Connect already enforces
+	// MAX_CONTENT_BYTES via connect.WithReadMaxBytes above; without this
+	// wrap the REST path used to accept arbitrary-size bodies — a real
+	// DoS / OOM vector flagged by the e2e + stress suites.
+	mux.Handle("/v1/", s.limitBody(gw))
 
 	return loggingMiddleware(recoverMiddleware(corsMiddleware(mux)))
 }

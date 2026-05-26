@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://anonde.io">anonde.io</a> ·
-  <a href="https://anonde.io/demo/">Live demo</a> ·
+  <a href="https://anonde.io">Live demo</a> ·
   <a href="docs/QUICKSTART.md">Quickstart</a> ·
   <a href="bench/REPORT_MATRIX.md">Benchmarks</a>
 </p>
@@ -337,7 +337,7 @@ catalogue + how to add a model-backed (NER) recognizer is in
 - **Logs & telemetry.** Application logs, audit trails, SIEM exports, and traces often carry emails, IPs, account IDs, and free-text from users. Run them through anonde before they hit a remote LLM, a log aggregator, or a BI store.
 - **Enterprise.** Internal copilots over support tickets, contracts, HR docs. Audit who reveals what, and why.
 
-Want to see the full flow in the browser? [anonde.io/demo](https://anonde.io/demo/).
+Want to see the full flow in the browser? [anonde.io](https://anonde.io).
 
 ## Benchmarks
 
@@ -364,7 +364,10 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 ## Docs
 
 - [Quickstart](docs/QUICKSTART.md): local round-trip via HTTP
-- [API reference (Swagger)](docs/api/): browsable spec auto-generated from [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto); open `docs/api/index.html` after `make proto`. Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json).
+- **API reference (Swagger)** — browsable spec auto-generated from [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto):
+  - Hosted: https://anonde-io.github.io/anonde/ (redeployed on every `main` push that touches the proto or generated spec; needs Pages enabled in repo settings → source `GitHub Actions`)
+  - Local: open [`docs/api/index.html`](docs/api/) after `make proto` (serve over HTTP, e.g. `python3 -m http.server`)
+  - Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json)
 - [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, per-request PDF knobs, Prometheus metrics
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution

@@ -128,6 +128,17 @@ func Start(ctx context.Context, t *testing.T, v Variant) *Container {
 
 	root := repoRoot(t)
 
+	// Dockerfile.anonde-ner{,-stack} use `FROM --platform=$TARGETPLATFORM`
+	// which buildx sets automatically but the legacy `docker build`
+	// path testcontainers-go uses leaves empty — that crashes parse
+	// with `"" is an invalid OS component`. Pass the build args
+	// explicitly so the multi-arch Dockerfiles work under plain docker.
+	platform, arch := dockerBuildPlatform()
+	buildArgs := map[string]*string{
+		"TARGETPLATFORM": &platform,
+		"TARGETARCH":     &arch,
+	}
+
 	// FromDockerfile rebuilds on every test boot unless Docker layer
 	// cache hits. That's intentional: stress runs locally + on a
 	// scheduled CI workflow, and we want it to fail loudly when the
@@ -136,6 +147,7 @@ func Start(ctx context.Context, t *testing.T, v Variant) *Container {
 		FromDockerfile: testcontainers.FromDockerfile{
 			Context:    root,
 			Dockerfile: v.Dockerfile,
+			BuildArgs:  buildArgs,
 			KeepImage:  true,
 			// PrintBuildLog is loud but the alternative is a silent
 			// 15-minute hang on a stale `docker pull`. Loud wins.
@@ -245,6 +257,25 @@ func mergeEnv(a, b map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// dockerBuildPlatform returns the `TARGETPLATFORM` / `TARGETARCH` pair
+// to inject as docker build args. testcontainers-go drives the legacy
+// `docker build`, which (unlike buildx) leaves these empty when the
+// Dockerfile uses `FROM --platform=$TARGETPLATFORM ...`. anonde's
+// NER images do, so we map the runtime arch to the Docker arch
+// shorthand and pass them explicitly. amd64 + arm64 are the only
+// arches the production Dockerfiles handle (see the case-switch in
+// Dockerfile.anonde-ner); fall back to amd64 otherwise so the build
+// still gets a useful error from the Dockerfile rather than a parse
+// crash inside testcontainers.
+func dockerBuildPlatform() (platform, arch string) {
+	switch runtime.GOARCH {
+	case "arm64":
+		return "linux/arm64", "arm64"
+	default:
+		return "linux/amd64", "amd64"
+	}
 }
 
 // ForEachVariant runs fn as a subtest for every variant in vs. The
