@@ -261,7 +261,12 @@ jobs:
       - name: Install Presidio + spaCy
         run: |
           set -euo pipefail
-          pip install presidio-analyzer spacy
+          # `click` is pinned explicitly because spaCy's CLI imports it
+          # directly but only depends on it transitively via typer. Newer
+          # typer releases (>=0.26) stopped pulling click as a hard dep,
+          # which broke `python -m spacy download` on fresh installs with
+          # ModuleNotFoundError: No module named 'click'.
+          pip install presidio-analyzer spacy click
 
       - name: Download spaCy model for this cell's language
         run: |
