@@ -9,8 +9,15 @@ each such change is called out under a **Changed** or **Removed** heading.
 
 ## [Unreleased]
 
-Working toward the first tagged release, `v0.1.0`. Everything below is
-in `main` but not yet cut as a release.
+Nothing yet. Post-`v0.1.0` work-in-progress lands here.
+
+## [0.1.0] - 2026-05-27
+
+First tagged release. Three image variants published to ghcr.io:
+`ghcr.io/anonde-io/anonde:0.1.0` (patterns-only, ~12 MB),
+`ghcr.io/anonde-io/anonde-ner:0.1.0` (BASE GLiNER, ~770 MB), and
+`ghcr.io/anonde-io/anonde-ner-stack:0.1.0` (BASE + LARGE GLiNER, ~2.1 GB).
+Multi-arch (`linux/amd64` + `linux/arm64`).
 
 ### Added
 
@@ -61,4 +68,5 @@ in `main` but not yet cut as a release.
 - Streaming SSE support for the OpenAI-compatible proxy (`stream: true`).
 - Anthropic and Gemini upstreams for the proxy, selected by model prefix.
 
-[Unreleased]: https://github.com/anonde-io/anonde/commits/main
+[Unreleased]: https://github.com/anonde-io/anonde/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/anonde-io/anonde/releases/tag/v0.1.0

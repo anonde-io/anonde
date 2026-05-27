@@ -1,0 +1,242 @@
+name: release
+
+# Tagged-release publisher for the three image variants:
+#
+#   - ghcr.io/anonde-io/anonde            (patterns-only, ~12 MB)
+#   - ghcr.io/anonde-io/anonde-ner        (BASE GLiNER, CGO, ~770 MB)
+#   - ghcr.io/anonde-io/anonde-ner-stack  (BASE + LARGE GLiNER, ~2.1 GB)
+#
+# Sibling of docker-build.yml — same Dockerfiles, same multi-arch
+# strategy (buildx + QEMU for arm64), same runner sizes (Ubicloud
+# standard-2 for patterns, standard-4 for the two NER variants). The
+# only differences are: push: true, registry login, and the
+# docker/metadata-action tag policy.
+#
+# Triggers:
+#   - push of a vX.Y.Z git tag (or vX.Y.Z-* prerelease) — the production
+#     release path. Pushing v0.1.0 cuts a v0.1.0 release.
+#   - workflow_dispatch — manual re-run for re-publishing a tag (e.g. if
+#     a step failed midway) or smoke-testing the workflow itself. When
+#     triggered manually the SHA tag is the only thing applied; semver /
+#     "latest" only move on a real git tag.
+#
+# Tag policy (docker/metadata-action):
+#   - On tag vX.Y.Z (stable):    :X.Y.Z, :X.Y, :latest, :sha-<short>
+#   - On tag vX.Y.Z-rc1 (prerelease): :X.Y.Z-rc1, :sha-<short> only — no
+#     :latest move, no major/minor float, so a prerelease can never
+#     accidentally replace the stable :latest pointer.
+#   - On workflow_dispatch: :sha-<short> only.
+#
+# Permissions: `contents: write` is needed for the GitHub Release draft;
+# `packages: write` is needed to push to ghcr.io under the org's package
+# namespace. Both are granted only for this workflow, not org-wide.
+#
+# First-push gotcha: ghcr.io creates packages as PRIVATE by default. The
+# first time this workflow publishes a new image name, the package shows
+# up at https://github.com/orgs/anonde-io/packages and must be flipped
+# to public manually (or via `gh api -X PATCH /orgs/anonde-io/packages/
+# container/<name>/visibility -f visibility=public`). Subsequent pushes
+# inherit the existing visibility.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+
+jobs:
+  # ---- patterns-only image: pure Go, cheap multi-arch ---------------
+  anonde:
+    name: publish anonde (patterns, multi-arch)
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/anonde
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          flavor: |
+            latest=auto
+
+      - name: Build and push linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.anonde
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=anonde
+          cache-to: type=gha,scope=anonde,mode=max
+
+  # ---- BASE GLiNER image: multi-arch, CGO + libonnxruntime ----------
+  anonde-ner:
+    name: publish anonde-ner (amd64 + arm64)
+    runs-on: ubicloud-standard-4
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        # Same cleanup as bench-full.yml / docker-build.yml — the NER
+        # build downloads the FP32 ONNX (~370 MB) into the build stage
+        # and stacks two arch images + buildx cache + Docker layers.
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/anonde-ner
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          flavor: |
+            latest=auto
+
+      - name: Build and push linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.anonde-ner
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=anonde-ner
+          cache-to: type=gha,scope=anonde-ner,mode=max
+
+  # ---- BASE + LARGE stack image: multi-arch, biggest build ----------
+  anonde-ner-stack:
+    name: publish anonde-ner-stack (amd64 + arm64)
+    runs-on: ubicloud-standard-4
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/anonde-ner-stack
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          flavor: |
+            latest=auto
+
+      - name: Build and push linux/amd64 + linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.anonde-ner-stack
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=anonde-ner-stack
+          cache-to: type=gha,scope=anonde-ner-stack,mode=max
+
+  # ---- GitHub Release draft ----------------------------------------
+  # Drafts a Release from the tag so the maintainer reviews + publishes.
+  # Auto-generated notes (commit log since the previous tag) seed it;
+  # paste the matching CHANGELOG entry over the top before publishing.
+  # Only runs on a real tag push — not on workflow_dispatch.
+  github-release:
+    name: draft GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [anonde, anonde-ner, anonde-ner-stack]
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}

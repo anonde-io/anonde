@@ -55,7 +55,37 @@ was charged twice on <DATE_TIME_1> for $89.99, please refund.
 - **Reversible, audited.** Tokens map back to cleartext only where you allow it. The reveal call requires `actor` + `purpose` and is the only place plaintext comes back.
 - **Recall-biased.** Missing a span is a leak; tokenising one too many is cheap. The bench tracks this explicitly via `leak_rate` (lower is better).
 
-## Quick start: Go library
+## Quick start
+
+Two ways to run anonde — pick the one that matches how you ship.
+
+### Docker (HTTP server, fastest)
+
+One command, no Go toolchain needed. The patterns-only image is ~12 MB
+and cold-starts in <1s; the NER image (~770 MB) bakes in GLiNER +
+libonnxruntime for PERSON / ORG / LOC detection.
+
+```bash
+# Patterns-only (no model download, no CGO)
+docker run --rm -p 8081:8080 ghcr.io/anonde-io/anonde:latest
+
+# NER (GLiNER + libonnxruntime baked in)
+docker run --rm -p 8081:8080 ghcr.io/anonde-io/anonde-ner:latest
+```
+
+Then anonymize a request:
+
+```bash
+curl -sS -X POST http://localhost:8081/v1/anonymizations \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"demo","content":"Hi, this is Sarah Chen (sarah.chen@acme.example)."}'
+# → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
+```
+
+Image variants, volumes, and docker compose profiles live in
+[Run the HTTP server](#run-the-http-server) below.
+
+### Go library
 
 ```bash
 go get github.com/anonde-io/anonde
