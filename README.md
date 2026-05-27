@@ -49,7 +49,7 @@ was charged twice on <DATE_TIME_1> for $89.99, please refund.
 ## Why anonde
 
 - **Drop-in for any LLM workflow.** Same shape in, same shape out. Plug it between your app and OpenAI, Anthropic, Bedrock, Ollama, or your own model. They see only tokens.
-- **Wins on leak rate.** anonde-gliner has the lowest leak rate on 5 of 6 gold-annotated corpora the bench tracks, including German clinical, German finance, German legal, and English PII. ([numbers](#benchmarks))
+- **Wins on leak rate.** anonde-gliner has the lowest leak rate on 25 of 29 gold-annotated corpora the bench tracks across English, German, Spanish, French and Italian — covering clinical, legal, finance, structured PII, and adversarial / out-of-distribution text. ([numbers](#benchmarks))
 - **Local-first.** Ships as a Go library or a Docker image you run yourself. No cloud calls. NER models are baked into the image, so there is no outbound HuggingFace traffic at request time.
 - **Multilingual.** Open-set NER (GLiNER) plus 52 region-aware pattern recognizers covering 12+ jurisdictions: international IDs, US, UK, Germany, Italy, Spain, Australia, India, Poland, Singapore, Finland, Korea.
 - **Reversible, audited.** Tokens map back to cleartext only where you allow it. The reveal call requires `actor` + `purpose` and is the only place plaintext comes back.
@@ -317,6 +317,9 @@ Extensibility is the part Presidio gets right and we copied. A pattern
 recognizer is a regex, a label, a language list, and an optional set of
 context words that boost the score when they appear nearby.
 
+**In-repo (joins every engine by default).** Drop the file into
+`analyzer/recognizers/` and add one line to `anonde.go`:
+
 ```go
 // analyzer/recognizers/my_id.go
 package recognizers
@@ -337,13 +340,52 @@ func NewMyIDRecognizer() *PatternRecognizer {
 }
 ```
 
-Register it in `anonde.go::patternRecognizers()` and it joins the
-parallel-dispatch pipeline. The conflict resolver handles overlap with
-existing recognizers automatically; NER preferences (PERSON / ORG / LOC
-/ AGE / PROFESSION / NRP) and the full pipeline rules live in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The full 52-recognizer
-catalogue + how to add a model-backed (NER) recognizer is in
-[docs/RECOGNIZERS.md](docs/RECOGNIZERS.md).
+```go
+// anonde.go — register inside patternRecognizers()
+func patternRecognizers() []analyzer.EntityRecognizer {
+	return []analyzer.EntityRecognizer{
+		// Generic / international
+		recognizers.NewEmailRecognizer(),
+		recognizers.NewPhoneRecognizer(),
+		// …
+		recognizers.NewMyIDRecognizer(),   // ← add your recognizer here
+	}
+}
+```
+
+**As a library consumer (no fork).** Implement
+[`analyzer.EntityRecognizer`](analyzer/recognizer.go) in your own
+package and attach it to the engine's registry at startup — useful when
+you `go get` anonde and don't want to maintain a fork:
+
+```go
+type MyIDRecognizer struct{ re *regexp.Regexp }
+
+func (r *MyIDRecognizer) Name() string                 { return "MyIDRecognizer" }
+func (r *MyIDRecognizer) SupportedEntities() []string  { return []string{"MY_ID"} }
+func (r *MyIDRecognizer) SupportedLanguages() []string { return []string{"*"} }
+
+func (r *MyIDRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
+	var out []analyzer.RecognizerResult
+	for _, m := range r.re.FindAllStringIndex(text, -1) {
+		out = append(out, analyzer.RecognizerResult{
+			Start: m[0], End: m[1], Score: 1.0,
+			EntityType: "MY_ID", RecognizerName: "MyIDRecognizer",
+		})
+	}
+	return out, nil
+}
+
+engine := anonde.DefaultAnalyzerEngine()
+engine.Registry.Add(&MyIDRecognizer{re: regexp.MustCompile(`\bMID-\d{6,10}\b`)})
+```
+
+Either path joins the parallel-dispatch pipeline and the conflict
+resolver handles overlap with existing recognizers automatically; NER
+preferences (PERSON / ORG / LOC / AGE / PROFESSION / NRP) and the full
+pipeline rules live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The full 52-recognizer catalogue + how to add a model-backed (NER)
+recognizer is in [docs/RECOGNIZERS.md](docs/RECOGNIZERS.md).
 
 ## Built for
 
@@ -356,23 +398,29 @@ Want to see the full flow in the browser? [anonde.io](https://anonde.io).
 
 ## Benchmarks
 
-Public bench matrix, re-run on every PR. Each row is a gold-annotated corpus; **lower leak rate is better**.
+Public bench matrix, re-run on every PR. The production anonde build
+loads the **FP32 ONNX** GLiNER model by default; the columns below are
+that engine (`anonde-gliner`, FP32). One row per language on the
+clinical de-identification axis (the cleanest apples-to-apples slice
+across all five), plus a structured-PII row and an adversarial / OOD
+row. **Lower leak rate is better.**
 
-| Corpus | Best non-anonde baseline | anonde-gliner | Δ |
-|---|---|---:|---:|
-| `openmed` (German clinical) | gliner-py 50.0% | **17.2%** | ↓ 32.8 pp |
-| `synth_clinical` (German) | gliner-py 25.4% | **11.1%** | ↓ 14.3 pp |
-| `ai4privacy_en` (English PII) | gliner-py 25.8% · Presidio 28.4% | **25.0%** | ↓ 0.8 pp |
-| `finance_de` (German finance) | gliner-py 26.2% | **9.8%** | ↓ 16.4 pp |
-| `legal_de` (German legal) | gliner-py 25.4% | **6.9%** | ↓ 18.5 pp |
-| `wikiann_de` (German Wikipedia) | gliner-py **12.8%** | 15.3% | ↑ 2.5 pp |
+| Corpus | Slice | Best non-anonde baseline | anonde-gliner | Δ |
+|---|---|---|---:|---:|
+| `synth_clinical_en` | English · clinical | presidio 20.3% | **3.3%** | ↓ 17.0 pp |
+| `synth_clinical` | German · clinical | openai-pf 23.5% | **0.6%** | ↓ 22.9 pp |
+| `meddocan_es` | Spanish · clinical | gliner-py 23.7% | **21.0%** | ↓ 2.7 pp |
+| `synth_clinical_fr` | French · clinical | openai-pf 22.1% | **11.9%** | ↓ 10.2 pp |
+| `synth_clinical_it` | Italian · clinical | openai-pf 25.1% | **18.2%** | ↓ 6.9 pp |
+| `ai4privacy_en` | English · structured PII | openai-pf 15.5% | **15.1%** | ↓ 0.4 pp |
+| `adversarial_de` | German · adversarial / OOD | openai-pf 32.1% | **8.2%** | ↓ 23.9 pp |
 
-anonde-gliner has the lowest leak rate on 5 of 6 corpora. On `wikiann_de` it's 2.5 pp behind the Python `gliner-py` sidecar (same model, different runtime; included as a parity check).
+anonde-gliner has the lowest leak rate on every row above. Across the **full matrix (29 corpora, 5 languages)** it's the lowest-leak engine on **25 of 29** corpora; the per-cell roll-up wins 19, ties 1, loses 4 across the 24 populated `(domain × language)` cells.
 
 **Vs external baselines** on the corpora where they were benched:
 
-- **Microsoft Presidio** on `ai4privacy_en` (English PII): anonde-gliner **25.0%** vs Presidio 28.4%.
-- **OpenAI Privacy Filter** on `openmed` (German clinical): anonde-gliner **17.2%** vs OpenAI PF 98.4%.
+- **Microsoft Presidio** on `ai4privacy_en` (English PII): anonde-gliner **15.1%** vs Presidio 56.0%.
+- **OpenAI Privacy Filter** on `openmed` (German clinical): anonde-gliner **13.3%** vs OpenAI PF 35.6%.
 
 Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench harness uses its English pipeline only, and OpenAI Privacy Filter is ~80 s/doc on CPU, which makes it impractical on the larger corpora. Both engines can technically run on more languages; the bench numbers reflect what's been measured, not capability ceilings. Full grid (strict / partial / type-agnostic F1, all corpora, all engines) lives in [bench/REPORT_MATRIX.md](bench/REPORT_MATRIX.md).
 
