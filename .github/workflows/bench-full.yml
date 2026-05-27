@@ -366,7 +366,7 @@ jobs:
       # download every cell-* artifact and reassemble bench/corpora/.
       - name: Upload cell artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cell-${{ matrix.corpus }}
           path: bench/corpora/${{ matrix.corpus }}/data/*.jsonl
@@ -519,7 +519,7 @@ jobs:
 
       - name: Upload combined report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-full-${{ steps.label.outputs.label }}
           path: |
