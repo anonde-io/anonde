@@ -63,12 +63,15 @@ GLINER_ONNX_FILE ?= onnx/model.onnx
 # its lift on the Romance-language cells where the default still
 # leaks.
 GLINER_LARGE_MODEL     ?= knowledgator/gliner-pii-large-v1.0
-# HuggingFace's gliner-pii-large-v1.0 export ships its ONNX at the repo
-# root (`model.onnx`), NOT under `onnx/` like the BASE model does. The
-# flat recognizer's `findFirstOnnx` walker would recover when given the
-# wrong path, but spelling the actual layout here keeps the bench log
-# clean and avoids a wasted dir-walk on every cell.
-GLINER_LARGE_ONNX_FILE ?= model.onnx
+# HuggingFace's knowledgator/gliner-pii-large-v1.0 exports its ONNX at
+# `onnx/model.onnx` — same layout as the BASE model. A prior comment
+# here claimed it shipped at the repo root; that was wrong and broke
+# the LARGE download in the gliner-flat recognizer (the downloader
+# does an exact file lookup via the HF Hub API, not a directory walk,
+# so a missing file 404s and the cell silently falls back to the BASE
+# recognizer only — making anonde-ner-stack byte-equivalent to
+# anonde-ner). Verified against the HF tree API on 2026-05-27.
+GLINER_LARGE_ONNX_FILE ?= onnx/model.onnx
 GLINER_THRESHOLD ?= 0.40
 HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
