@@ -28,8 +28,8 @@ import (
 // via NewHTTPServer/SetMaxRequestBytes; cmd/anonde/main reads
 // MAX_CONTENT_BYTES. Connect enforces this via connect.WithReadMaxBytes,
 // which returns ResourceExhausted (HTTP 429 over JSON) for oversized
-// payloads. The REST gateway path does not enforce this today; see
-// TODO.md.
+// payloads. The REST gateway path does not enforce this today — a
+// gateway-level body-cap middleware is the gap.
 const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
 
 // HTTPServer fans the same Service out across three transports on one
@@ -403,8 +403,9 @@ func auditMiddleware(next http.Handler) http.Handler {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Local dev default: allow browser clients from other localhost
-		// ports. Tighten via a CORS_ALLOW_ORIGINS env var before
-		// exposing the service publicly; see TODO.md.
+		// ports. Becomes unsafe once auth lands (browser pages with
+		// auth cookies could call Reveal); a `CORS_ALLOW_ORIGINS`
+		// env var defaulting to `*` only when empty is the planned fix.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		// X-Anonde-Tenant is the Stripe-style tenant binding for PDF

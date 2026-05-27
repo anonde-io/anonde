@@ -41,13 +41,7 @@ Dockerfile.*
 docker-compose.yml
 .dockerignore
 
-# Planning artifacts (typically untracked / local-only)
-TODO.md
-ROADMAP.md
-*_PLAN.md
-PRIVACY_VAULT_PHASED_PLAN.md
-DETECTION_BACKEND_PLAN.md
-SKYFLOW_PARITY_PLAN.md
+.private/*
 
 # Local scratch dirs (gitignored)
 proxy/

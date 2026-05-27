@@ -196,7 +196,10 @@ func intMapToInt32Map(in map[string]int) map[string]int32 {
 //
 // score_threshold_set is the explicit "field present" signal. Without
 // it, score_threshold=0 is ambiguous between "include everything" and
-// "use service default"; see TODO.md.
+// "use service default". The internal type's float64 zero is currently
+// treated as "default" downstream — threading score_threshold_set into
+// AnalysisConfig (or switching ScoreThreshold to *float64) is the way
+// to honor an explicit 0 as "no filter".
 func applyAnalyzerOptions(
 	language *string,
 	entities *[]string,

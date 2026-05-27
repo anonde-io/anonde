@@ -35,7 +35,9 @@ func newAnonymizationID() string {
 // isn't required.
 //
 // Cross-document token reuse for the same cleartext is intentionally
-// NOT supported here; see TODO.md ("Tenant-scoped token reuse").
+// NOT supported here. Re-adding it requires a `Vault.LookupByCleartext`
+// reverse-index on a persisted backend (the in-memory map can't scan
+// efficiently), and a per-request `dedup_scope` knob to opt in.
 func (s *Service) mintToken(tenantID, entityType string) string {
 	s.tokenSeqMu.Lock()
 	idx := s.tokenSeqByTenant[tenantID]
