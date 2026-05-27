@@ -334,7 +334,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bench/corpora/${{ matrix.corpus }}/data
-          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go') }}-maxdocs${{ env.MAX_DOCS }}-rv2
+          # bench/Makefile must be in the hash inputs: the per-cell make
+          # recipe encodes which ONNX file / model id each cell loads,
+          # and a Makefile-only fix (e.g. correcting GLINER_LARGE_ONNX_FILE
+          # from model.onnx → onnx/model.onnx) would otherwise be served
+          # from the previous run's stale cells. Same reason this workflow
+          # is in the hash — the per-cell run command lives here and
+          # changes to it should also bust the cache. Bump rv* whenever
+          # you want to force a clean refresh across all corpora.
+          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go', 'bench/Makefile', '.github/workflows/bench-full.yml') }}-maxdocs${{ env.MAX_DOCS }}-rv3
 
       - name: Verify hugot build (the bench needs it)
         run: |
@@ -556,23 +564,37 @@ jobs:
           if pairs == 0:
               print("\nGuard rail FAILED: no anonde-ner / anonde-ner-stack cell pairs found")
               sys.exit(1)
-          if differing_docs == 0:
-              print("")
-              print(f"Guard rail FAILED: anonde-ner-stack findings are byte-equivalent")
-              print(f"to anonde-ner on EVERY doc across {pairs} populated corpus pairs.")
-              print("")
-              print("This is the silent-fallback failure mode: the gliner-flat (LARGE)")
-              print("recognizer registered but contributed zero findings — usually")
-              print("because its model download failed and the analyzer swallowed the")
-              print("per-doc error. Scan the bench-cell logs for:")
-              print("  'gliner-flat: INIT FAILED:'")
-              print("  'analyzer: recognizer error (swallowed)'")
-              print("Common cause: GLINER_LARGE_ONNX_FILE points at a path that")
-              print("doesn't exist in the HF repo tree.")
-              sys.exit(1)
+          total_docs = sum(n for _, _, n in per_corpus)
+          corpora_with_diff = sum(1 for _, d, _ in per_corpus if d > 0)
+          # Two-part threshold to catch the "barely diverges" failure mode
+          # (cache-restored stale cells where 9 of 8500 docs happen to
+          # differ in scoring-noise ways but the flat recognizer never
+          # actually fired). A healthy stack should change findings on
+          # >= 1% of docs total AND on >= 25% of populated corpus pairs.
+          min_doc_pct = 1.0  # percent of total docs
+          min_corpus_pct = 25.0  # percent of populated corpus pairs
+          doc_pct = (differing_docs / total_docs * 100.0) if total_docs else 0.0
+          corpus_pct = (corpora_with_diff / pairs * 100.0) if pairs else 0.0
+          fail = doc_pct < min_doc_pct or corpus_pct < min_corpus_pct
           print("")
-          print(f"Guard rail OK: stack diverges from ner on {differing_docs} docs")
-          print(f"across {pairs} corpus pairs — flat recognizer is firing.")
+          print(f"Summary: {differing_docs} of {total_docs} docs diverge ({doc_pct:.2f}%);")
+          print(f"         {corpora_with_diff} of {pairs} corpus pairs show any divergence ({corpus_pct:.1f}%).")
+          if fail:
+              print("")
+              print("Guard rail FAILED: anonde-ner-stack diverges from anonde-ner")
+              print(f"on too few docs/corpora to indicate the LARGE flat recognizer")
+              print(f"is actually firing.")
+              print(f"  - need >= {min_doc_pct}% of docs to diverge; got {doc_pct:.2f}%")
+              print(f"  - need >= {min_corpus_pct}% of corpus pairs to show ANY diff; got {corpus_pct:.1f}%")
+              print("")
+              print("Common causes:")
+              print("  - LARGE model download failed (check bench-cell logs for")
+              print("    'gliner-flat: INIT FAILED:' / 'recognizer error (swallowed)')")
+              print("  - GLINER_LARGE_ONNX_FILE points at a non-existent HF path")
+              print("  - actions/cache restored stale cells from a run with a bug")
+              print("    (bump rv* in the cache key to force fresh re-runs)")
+              sys.exit(1)
+          print("Guard rail OK: flat recognizer is firing across the matrix.")
           PYEOF
 
       - name: Compute snapshot label
