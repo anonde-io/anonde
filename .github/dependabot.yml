@@ -1,0 +1,49 @@
+version: 2
+
+# Two ecosystems: the Go module graph and the pinned action versions in
+# .github/workflows/. Both run weekly on Monday — enough cadence for an
+# OSS project without drowning the queue. Updates are grouped so one PR
+# covers the week's patch bumps per ecosystem instead of N PRs per
+# transitive dep change. Patch + minor bumps auto-PR; major bumps land
+# separately because they tend to require code changes.
+#
+# Docker images (Dockerfile.anonde, Dockerfile.anonde-ner,
+# Dockerfile.anonde-ner-stack) are intentionally NOT polled: the base
+# images are gcr.io/distroless/* pinned for ABI compatibility with the
+# bundled libonnxruntime, and an automatic bump there would silently
+# break the CGO path. Treat those as manual updates.
+
+updates:
+  # ---- Go module graph -----------------------------------------------
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    groups:
+      go-patch-minor:
+        update-types:
+          - patch
+          - minor
+    commit-message:
+      prefix: "deps(go)"
+
+  # ---- GitHub Actions versions in .github/workflows/ -----------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 3
+    groups:
+      actions-patch-minor:
+        update-types:
+          - patch
+          - minor
+    commit-message:
+      prefix: "deps(actions)"

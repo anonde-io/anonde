@@ -138,7 +138,7 @@ docker run -d --restart=always \
   -e ANALYZER_BACKEND=gliner \
   -e WARMUP_ON_START=1 \
   -p 8080:8080 \
-  ghcr.io/moogacs/anonde-ner:latest
+  ghcr.io/anonde-io/anonde-ner:latest
 
 # 4. End-to-end smoke
 curl -sS -X POST http://<host>:8080/v1/anonymizations \
