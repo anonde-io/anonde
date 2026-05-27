@@ -220,7 +220,7 @@ jobs:
 
       - name: Upload bench artifacts
         if: always()  # upload even on guard-rail failure for debugging
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bench-report-${{ github.run_id }}
           path: |
