@@ -26,7 +26,7 @@ def gold_prof(doc):
 
 for name in ("legal_de", "finance_de"):
     pre = load(PROBE / f"{name}_premerge.jsonl")
-    post = load(REPO / "bench" / "corpora" / name / "data" / "anonde_anonde-gliner.jsonl")
+    post = load(REPO / "bench" / "corpora" / name / "data" / "anonde_anonde-ner.jsonl")
     corpus = {
         d["id"]: d
         for d in (

@@ -52,7 +52,7 @@ def only_ascii_ws(text, a, b):
 
 def classify_corpus(name):
     corpus = load_jsonl(REPO / "bench" / "corpora" / name / "data" / "corpus.jsonl")
-    preds = load_jsonl(REPO / "bench" / "corpora" / name / "data" / "anonde_anonde-gliner.jsonl")
+    preds = load_jsonl(REPO / "bench" / "corpora" / name / "data" / "anonde_anonde-ner.jsonl")
     preds_by_id = {p["id"]: p for p in preds}
 
     docs = []

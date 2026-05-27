@@ -26,11 +26,11 @@ then keeps the detailed grids below it as reference:
   * Scorecard — one compact table at most 13 rows: **Σ ALL** + one row
     per domain (Σ across all languages in that domain) + one row per
     language (Σ across all domains in that language). Anonde-anchored
-    on `anonde-gliner-fp32` (the production engine), with a win/loss
-    tally. This is the table a human reads to answer "does anonde beat
+    on `anonde-ner` (the default NER image), with a win/loss tally.
+    This is the table a human reads to answer "does anonde beat
     presidio overall?" in five seconds. Per-(domain × language) detail
     moves into the Detailed breakdown below.
-  * Engine profiles (tier framing for anonde-patterns / anonde-gliner-fp32)
+  * Engine profiles (tier framing for anonde-patterns / anonde-ner / anonde-ner-stack)
   * Domain × language coverage map (which cells exist)
   * "# Detailed breakdown" — leads with the dense per-(domain × language)
     leak-rate grid (the rows demoted off the scorecard), then per
@@ -601,37 +601,36 @@ def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
 # ---- headline scorecard ------------------------------------------------
 # The single roll-ups-only table a human reads first. Rows = Σ ALL +
 # per-domain Σ + per-language Σ (at most 13 rows total); columns = the
-# engines; cell = leak rate %. anonde-gliner-fp32 is the production
-# engine, so its column is the anchor: every row tells you at a glance
-# whether anonde wins or loses on that domain / language slice. The
-# per-(domain × language) detail rows live in the Detailed breakdown
-# below the scorecard.
+# engines; cell = leak rate %. `anonde-ner` is the default NER image
+# (`ghcr.io/anonde-io/anonde-ner`), so its column is the anchor: every
+# row tells you at a glance whether the default NER build wins or loses
+# on that domain / language slice. The per-(domain × language) detail
+# rows live in the Detailed breakdown below the scorecard.
 
-# The anonde column the scorecard anchors on (production engine). The
-# win/verdict logic stays keyed on this one engine: `anonde-gliner-fp32`
-# is what actually ships (FP32 ONNX), so "does anonde beat the field?"
-# is answered for the production build. `anonde-gliner` (INT8) is kept
-# as a legacy reference column for regression tracking, not the anchor.
-SCORECARD_ANCHOR = "anonde-gliner-fp32"
+# The anonde column the scorecard anchors on (default NER image). The
+# win/verdict logic stays keyed on this one engine: `anonde-ner` is
+# what `docker pull ghcr.io/anonde-io/anonde-ner` runs by default, so
+# "does anonde beat the field?" is answered for the default build.
+# `anonde-ner-stack` is the premium variant (separate image,
+# `anonde-ner-stack`); it sits alongside as a tracked column but does
+# not flip the default's verdict.
+SCORECARD_ANCHOR = "anonde-ner"
 
 # Anonde engine columns pinned to the FRONT of the scorecard, in this
-# order, so the three GLiNER variants render side by side: production
-# FP32 first (the verdict anchor), then INT8 (legacy / memory-constrained
-# deployments), then the LARGE FP32 variant (3-4x parameters, probing
-# whether scaling closes the remaining Romance-language cells). Engines
+# order, so the two NER variants render side by side: default NER
+# first (the verdict anchor), then the stack (premium tier). Engines
 # here that are absent from a given run are skipped silently.
-SCORECARD_FRONT = ["anonde-gliner-fp32", "anonde-gliner", "anonde-gliner-large"]
+SCORECARD_FRONT = ["anonde-ner", "anonde-ner-stack"]
 
 
 def _is_rival(engine: str) -> bool:
     """True for engines that count as a *baseline* in the anonde verdict.
 
-    The verdict answers "does the production engine beat the competing
+    The verdict answers "does the default NER image beat the competing
     field?" — so every `anonde-*` engine is excluded. In particular
-    `anonde-gliner` (INT8 legacy) and `anonde-gliner-large` are the same
-    GLiNER PII family as the production `anonde-gliner-fp32`, just a
-    different quantization or model size: they are tracked reference
-    columns, not competitors, and must not flip a ✅ to ❌.
+    `anonde-ner-stack` is the same GLiNER PII family as the anchor,
+    just stacked with the LARGE model on top: it is a tracked
+    premium-tier column, not a competitor, and must not flip a ✅ to ❌.
     """
     return not engine.startswith("anonde")
 
@@ -696,7 +695,7 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     in that domain) + one row per language (Σ across all domains in that
     language). The per-(domain × language) detail rows that used to live
     here move into the Detailed breakdown below. Anonde-anchored on the
-    production engine (`anonde-gliner-fp32`); a win/loss tally beneath
+    default NER image (`anonde-ner`); a win/loss tally beneath
     the table summarises the per-cell verdicts counted from the
     underlying (domain × language) population.
 
@@ -706,10 +705,10 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     """
     anchor = SCORECARD_ANCHOR
     # Column order: the anonde engine columns first, pinned in
-    # SCORECARD_FRONT order so the three GLiNER variants render adjacent
-    # (FP32 production → INT8 legacy → LARGE). The anchor is the FP32
-    # production engine — every row's verdict is judged against it. The
-    # remaining engines follow in the order they were requested.
+    # SCORECARD_FRONT order so the two NER variants render adjacent
+    # (default NER → stack). The anchor is the default NER image —
+    # every row's verdict is judged against it. The remaining engines
+    # follow in the order they were requested.
     front = [e for e in SCORECARD_FRONT if e in engines]
     others = [e for e in engines if e not in front]
     col_engines = front + others
@@ -736,14 +735,14 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         "overall); the per-(domain × language) detail grid lives in the "
         "Detailed breakdown below. Each number is **leak rate** (fraction "
         f"of gold PHI spans missed — lower is better). `{anchor}` is the "
-        "anonde production engine (FP32 ONNX) and the anchor column; "
-        "**Verdict** says whether it beats the field. `anonde-gliner` is "
-        "the same model at INT8 quantization (kept as a legacy / memory-"
-        "constrained reference); `anonde-gliner-large` is the 3-4x-larger "
-        "GLiNER PII variant at FP32 (probing whether scale closes the "
-        "remaining Romance-language cells). Both sit beside the anchor so "
-        "the quantization and scale tradeoffs are visible at a glance, "
-        "but the verdict is keyed on production. 🥇 marks the lowest-leak "
+        "default NER image (`ghcr.io/anonde-io/anonde-ner`) and the "
+        "anchor column; **Verdict** says whether it beats the field. "
+        "`anonde-ner-stack` is the premium variant — same default model "
+        "with the LARGE GLiNER PII flat-decoder stacked on top — shipped "
+        "as a separate image (`ghcr.io/anonde-io/anonde-ner-stack`) for "
+        "the deployments that can spare the extra RAM. It sits beside "
+        "the anchor so the trade-off is visible at a glance, but the "
+        "verdict is keyed on the default image. 🥇 marks the lowest-leak "
         "engine in the row. Roll-up rows pool leaked-over-gold across "
         "the group (doc-weighted, so larger corpora count more).\n")
 
@@ -751,11 +750,9 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     header = "| Slice | Scope |"
     for e in col_engines:
         if e == anchor:
-            tag = " ⬅︎ anonde (FP32, prod)"
-        elif e == "anonde-gliner":
-            tag = " · anonde (INT8, legacy)"
-        elif e == "anonde-gliner-large":
-            tag = " · anonde (LARGE)"
+            tag = " ⬅︎ anonde (default NER)"
+        elif e == "anonde-ner-stack":
+            tag = " · anonde (NER stack, premium)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -880,11 +877,9 @@ def _per_cell_leak_grid(out: list[str], rows: dict, groups: list,
     header = "| Domain | Language |"
     for e in col_engines:
         if e == anchor:
-            tag = " ⬅︎ anonde (FP32, prod)"
-        elif e == "anonde-gliner":
-            tag = " · anonde (INT8, legacy)"
-        elif e == "anonde-gliner-large":
-            tag = " · anonde (LARGE)"
+            tag = " ⬅︎ anonde (default NER)"
+        elif e == "anonde-ner-stack":
+            tag = " · anonde (NER stack, premium)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -964,7 +959,7 @@ def _render(rows, label_map, corpora, engines, meta=None):
       1. TL;DR (one-paragraph headline conclusion)
       2. Scorecard — THE table: 13 rows max (Σ ALL + per-domain Σ +
          per-language Σ), leak rate per engine, anonde-anchored on the
-         FP32 production engine, plus a win/loss tally
+         default NER image (`anonde-ner`), plus a win/loss tally
       3. Engine profiles (tier framing, wrapped in collapsed <details>)
       4. Domain × language coverage map
       5. "# Detailed breakdown":
@@ -1019,12 +1014,12 @@ def _render(rows, label_map, corpora, engines, meta=None):
             continue
         engine_leaks.sort(key=lambda x: x[1])
         winner = engine_leaks[0]
-        # gliner_row = the production engine (FP32); best_baseline = the
-        # best NON-anonde engine. The INT8 legacy column and the LARGE
-        # variant are tracked reference columns, not competing baselines,
-        # so `_is_rival` excludes them here exactly as in the scorecard
-        # verdict. (The card would otherwise quote one of them as "the
-        # best baseline", which is misleading.)
+        # gliner_row = the default NER image (the scorecard anchor);
+        # best_baseline = the best NON-anonde engine. `anonde-ner-stack`
+        # is a tracked premium-tier column, not a competing baseline,
+        # so `_is_rival` excludes it here exactly as in the scorecard
+        # verdict. (The card would otherwise quote it as "the best
+        # baseline", which is misleading.)
         gliner_row = next((x for x in engine_leaks
                            if x[0] == SCORECARD_ANCHOR), None)
         baseline_row = next((x for x in engine_leaks if _is_rival(x[0])), None)
@@ -1038,11 +1033,11 @@ def _render(rows, label_map, corpora, engines, meta=None):
         })
 
     scorable = [v for v in per_corpus_verdict if v["scorable"]]
-    # A "win" = the production engine (`anonde-gliner-fp32`, FP32 ONNX)
-    # leaks no more than every NON-anonde baseline on that corpus.
-    # Counted against rivals only — the INT8 legacy column and the LARGE
-    # variant are the same GLiNER PII family, so they never cost
-    # production a win (mirrors the scorecard verdict's `_is_rival` rule).
+    # A "win" = the default NER image (`anonde-ner`) leaks no more than
+    # every NON-anonde baseline on that corpus. Counted against rivals
+    # only — `anonde-ner-stack` is the same GLiNER PII family, so it
+    # never costs the default a win (mirrors the scorecard verdict's
+    # `_is_rival` rule).
     gliner_wins = 0
     for v in scorable:
         if v["gliner"] is None:
@@ -1064,16 +1059,16 @@ def _render(rows, label_map, corpora, engines, meta=None):
         ) if any(v["gliner"] and v["best_baseline"] for v in scorable) else 0.0
 
         tldr = (
-            f"> **TL;DR** — `anonde-gliner-fp32` (production, FP32 ONNX) is the "
-            f"lowest-leak engine on **{gliner_wins} of {n_scorable}** gold-annotated "
-            f"corpora. Biggest absolute improvement over the best baseline: "
-            f"**{biggest_pp * 100:+.1f}pp** in leak rate. The `anonde-gliner` column is "
-            f"the same model at INT8 (legacy / memory-constrained reference); "
-            f"`anonde-gliner-large` is the 3-4x-larger GLiNER PII variant at FP32 "
-            f"(scaling probe). Neither is counted as a competitor — both are anonde "
-            f"reference columns. Strict F1 trades exact-byte alignment for catching "
-            f"more PHI — the right trade-off for a redactor, not a benchmark gaming "
-            f"exercise.\n"
+            f"> **TL;DR** — `anonde-ner` (the default NER image, "
+            f"`ghcr.io/anonde-io/anonde-ner`) is the lowest-leak engine on "
+            f"**{gliner_wins} of {n_scorable}** gold-annotated corpora. Biggest absolute "
+            f"improvement over the best baseline: **{biggest_pp * 100:+.1f}pp** in leak "
+            f"rate. `anonde-ner-stack` is the premium variant — same model with the "
+            f"LARGE GLiNER PII flat-decoder stacked on top — shipped as a separate "
+            f"image (`ghcr.io/anonde-io/anonde-ner-stack`) for deployments that can "
+            f"spare the extra RAM. It is not counted as a competitor in the verdict. "
+            f"Strict F1 trades exact-byte alignment for catching more PHI — the right "
+            f"trade-off for a redactor, not a benchmark gaming exercise.\n"
         )
         out.append(tldr)
     else:
@@ -1084,51 +1079,46 @@ def _render(rows, label_map, corpora, engines, meta=None):
 
     # ---- Headline scorecard -----------------------------------------
     # The single scannable table: 13 rows (Σ ALL + per-domain Σ +
-    # per-language Σ), anonde-anchored on FP32 production. The per-cell
+    # per-language Σ), anonde-anchored on the default NER image. The per-cell
     # detail moves into the Detailed breakdown below.
     _scorecard(out, rows, groups, engines, _domain_name, _language_name)
 
     # ---- Engine profiles --------------------------------------------
-    # Anonde-patterns and anonde-gliner-fp32 are NOT two competing tools
-    # — they're two deployment profiles of the same toolkit. Patterns is
-    # the no-ML / no-CGO / 12 MB image baseline; gliner-fp32 is the
-    # +770 MB ML-backed production stack. Wrapped in a collapsed
-    # <details> block because the table is static between runs — a
-    # reader who wants the tier framing can expand it, the default view
-    # leads with the live numbers.
+    # The three anonde columns map 1:1 to the three shipping Docker
+    # images — `anonde`, `anonde-ner`, `anonde-ner-stack`. They are not
+    # three competing tools; they are three deployment tiers a self-
+    # hoster picks by image size + leak-rate budget. Wrapped in a
+    # collapsed <details> block because the table is static between
+    # runs — a reader who wants the tier framing can expand it, the
+    # default view leads with the live numbers.
     out.append("<details><summary>Engine profiles · what each column means</summary>\n")
     out.append("## Engine profiles\n")
-    out.append("Engines below are not all competitors. `anonde-patterns` and "
-               "`anonde-gliner-fp32` are two deployment tiers of the same anonde "
-               "binary; compare *across the row* for the trade-off, not against "
-               "each other for a winner.\n")
-    out.append("| Engine | Profile | Image | CGO | Cold start | Best fit |")
-    out.append("|---|---|---|---|---|---|")
-    out.append("| `anonde-patterns` | regex / no-ML baseline (anonde tier 1) | "
-               "~12 MB | not required | <1 s | structured slot-gen text (forms, "
-               "logs, finance/legal docs) — wins F1 on PHONE, EMAIL, DATE, "
-               "PROFESSION when the regex shape is tight |")
-    out.append("| `anonde-gliner-fp32` | GLiNER PII (FP32 ONNX, `model.onnx`) + "
-               "patterns (anonde tier 2, **production**) | ~770 MB | required | "
-               "5-30 s warmup | natural text + multilingual PHI; the lowest-leak "
-               "engine on most gold corpora. Ships the FP32 ONNX. |")
-    out.append("| `anonde-gliner` | same GLiNER PII model, INT8 ONNX "
-               "(`model_quint8.onnx`) — legacy / memory-constrained reference | "
-               "~530 MB | required | 5-30 s warmup | not a competitor: kept so "
-               "the INT8-vs-FP32 quantization regression stays tracked. INT8 "
-               "depresses GLiNER's sigmoid logits ~0.18, costing recall on "
-               "multilingual legal/clinical text — this column quantifies it. |")
-    out.append("| `anonde-gliner-large` | larger GLiNER PII variant "
-               "(`knowledgator/gliner-pii-large-v1.0`, FP32) — reference column, "
-               "not a separate tier | ~1.4 GB | required | 10-60 s warmup | not "
-               "a competitor: scaling probe (3-4x parameters vs the production "
-               "base) for the remaining Romance-language cells. |")
-    out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) | "
+    out.append("The three anonde columns map 1:1 to the three shipping Docker "
+               "images. They are not three competing tools; they are three "
+               "deployment tiers — pick the one that fits your hardware and "
+               "leak-rate budget. Compare *across the row* for the trade-off, "
+               "not against each other for a winner.\n")
+    out.append("| Engine | Image | CGO | Cold start | Best fit |")
+    out.append("|---|---|---|---|---|")
+    out.append("| `anonde-patterns` | `ghcr.io/anonde-io/anonde` (~12 MB) | "
+               "not required | <1 s | structured slot-gen text (forms, logs, "
+               "finance/legal docs) — wins F1 on PHONE, EMAIL, DATE, PROFESSION "
+               "when the regex shape is tight |")
+    out.append("| `anonde-ner` | `ghcr.io/anonde-io/anonde-ner` (~770 MB) | "
+               "required | 5-30 s warmup | **default NER tier**. GLiNER PII "
+               "(FP32 ONNX) + patterns. Natural text + multilingual PHI; the "
+               "lowest-leak engine on most gold corpora. |")
+    out.append("| `anonde-ner-stack` | `ghcr.io/anonde-io/anonde-ner-stack` "
+               "(~2.1 GB) | required | 10-60 s warmup | **premium NER tier**. "
+               "Default NER + the LARGE GLiNER PII flat-decoder stacked on "
+               "top. Best leak rate on the Romance-language cells where the "
+               "default still leaks; pick when you can spare the RAM. |")
+    out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) "
                "~1 GB | not required | 3-10 s | well-formed English "
                "(strong on EN newswire-shaped text where spaCy was trained) |")
-    out.append("| `gliner-py` | GLiNER via PyTorch + safetensors (FP32) | "
+    out.append("| `gliner-py` | GLiNER via PyTorch + safetensors (FP32) "
                "~3 GB | not required | 10-30 s | reference implementation; "
-               "parity check vs anonde-gliner-fp32's ONNX path |")
+               "parity check vs anonde-ner's in-process ONNX path |")
     out.append("")
     out.append("</details>\n")
 
@@ -1297,9 +1287,12 @@ def _render(rows, label_map, corpora, engines, meta=None):
     out.append("| `anonde-patterns` | self-host (small commodity VM) | "
                "~**$0.0005** | Patterns-only; runs on ~256 MB RAM. "
                "Amortised cost dominated by infra base. |")
-    out.append("| `anonde-gliner` | self-host (~2 GB RAM VM) | "
+    out.append("| `anonde-ner` | self-host (~2 GB RAM VM) | "
                "~**$0.001** | GLiNER PII baked into image. ~2 GB RAM is enough; "
                "CPU-only, runs on any commodity cloud VM. |")
+    out.append("| `anonde-ner-stack` | self-host (~4 GB RAM VM) | "
+               "~**$0.002** | Default NER + LARGE flat-decoder. Pick when "
+               "the extra ~3pp on Romance-language cells is worth ~2× RAM. |")
     out.append("| `presidio` | self-host (open-source) | **$0** marginal | "
                "Microsoft Presidio. spaCy backend, English-focused. |")
     out.append("| `gliner-py` | self-host (open-source) | **$0** marginal | "
@@ -1342,19 +1335,9 @@ matrix:
   reverse: spaCy's `de_core_news_lg` is trained partly on TIGER and
   GermEval data. A high Presidio score here similarly reflects
   training-data adjacency.
-- **`conll2003_en` / `wnut_17` × `anonde-gliner` (INT8 legacy)** — the
-  INT8-quantised ONNX (`model_quint8.onnx`, ~196 MB) consistently leaks
-  more PII than the FP32 export (`model.onnx`) loaded by production
-  `anonde-gliner-fp32` and the Python `gliner-py` reference. Quantization
-  bites on noisy English NER and on multilingual legal / clinical text;
-  the gap between the `anonde-gliner-fp32` and `anonde-gliner` columns
-  isolates the INT8-quantization cost from everything else. The
-  `anonde-gliner-large` column probes the orthogonal question: does
-  scaling to a 3-4x-larger GLiNER PII variant (still FP32) close the
-  remaining cells where production loses to a baseline.
 
-Held-out corpora with no known overlap for any of the four engines
-listed in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
+Held-out corpora with no known overlap for any of the engines listed
+in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
 `finance_de`, `legal_de`, `adversarial_de`, `ai4privacy_en`,
 `pharmaconer_es`. Numbers there transfer most cleanly.
 """)
@@ -1405,7 +1388,7 @@ def main() -> int:
     ap.add_argument("--corpus", action="append", required=True,
                     help="repeat: --corpus openmed (positional-like list)")
     ap.add_argument("--engine", action="append", required=True,
-                    help="repeat: --engine anonde-gliner ...")
+                    help="repeat: --engine anonde-ner ...")
     ap.add_argument("--label-map", required=True)
     # corpora.yaml supplies each corpus's (domain, language) so the report
     # can group by domain → language. Optional with a default: when the

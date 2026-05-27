@@ -147,7 +147,8 @@ Everything lives under `bench/`. The top-level entry is `bench/Makefile`:
   - `make -C bench help` lists every target.
   - `make -C bench matrix` runs **every engine × every corpus** and renders
     one combined `bench/REPORT_MATRIX.md`. Engines: anonde-patterns,
-    anonde-gliner (production), anonde-hugot, presidio, gliner-py.
+    anonde-ner (default NER image), anonde-ner-stack (premium image),
+    presidio, gliner-py, openai-pf.
     Corpora: openmed + ggponc_de + pmc_de + synth_clinical + wiki_de
     (German) and ai4privacy_en (English).
   - `make -C bench matrix-de` / `matrix-en` for language subsets.

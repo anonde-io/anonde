@@ -121,18 +121,20 @@ func main() {
 			Threshold:         *glinerThr,
 			SharedLibraryPath: *ortLibPath,
 		})
-		engineLabel = "anonde-gliner"
+		engineLabel = "anonde-ner"
 		if *modelName != "" {
-			engineLabel = "anonde-gliner[" + *modelName + "]"
+			engineLabel = "anonde-ner[" + *modelName + "]"
 		}
 	case "gliner-flat":
 		// Flat-decoder GLiNER (token-decoder variant — 4 ONNX inputs,
 		// BIO start/end/inside output). Same registry shape as `gliner`
 		// (all pattern recognizers + one NER recognizer), but the NER
-		// slot is GLiNERFlatRecognizer. Used by the bench's
-		// `anonde-gliner-large` column (knowledgator/gliner-pii-large-v1.0
-		// ships a flat decoder; the span-decoder recognizer used by
-		// `gliner` cannot load it).
+		// slot is GLiNERFlatRecognizer. Kept as an opt-in backend for
+		// ad-hoc runs against flat-decoder GLiNER variants
+		// (knowledgator/gliner-pii-large-v1.0 ships a flat decoder; the
+		// span-decoder recognizer used by `gliner` cannot load it). Not
+		// referenced by the in-matrix engines today — `anonde-ner-stack`
+		// uses backend=gliner with --flat-gliner-* flags instead.
 		engine = anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(recognizers.GLiNERConfig{
 			ModelsDir:         *modelsDir,
 			ModelName:         *modelName,

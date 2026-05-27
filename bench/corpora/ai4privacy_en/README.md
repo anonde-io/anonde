@@ -92,7 +92,7 @@ open bench/REPORT_MATRIX.md
 ```json
 {
   "id": "doc-42",
-  "engine": "anonde-gliner",
+  "engine": "anonde-ner",
   "findings": [
     {"start": 12, "end": 28, "type": "EMAIL_ADDRESS", "score": 1.0}
   ],

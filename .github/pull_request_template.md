@@ -35,7 +35,7 @@ Skip if not applicable (docs, refactor with no behavior change, etc.).
 Otherwise:
 
 - Corpora touched: e.g. `openmed`, `ai4privacy_en`, `wikiann_de`, …
-- Engines re-run: e.g. `anonde-gliner`, `anonde-patterns`.
+- Engines re-run: e.g. `anonde-ner`, `anonde-patterns`.
 - Result delta vs. `main`: leak rate, F1, latency — whichever the change
   is meant to move. Include before / after numbers from the matrix.
 - Command used: `make -C bench corpus-<name>` or similar.

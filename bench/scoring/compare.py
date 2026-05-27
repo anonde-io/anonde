@@ -275,7 +275,7 @@ def main() -> int:
             return 2
         name, path = spec.split("=", 1)
         # Pick the right label_map section by engine-name prefix. Engine
-        # names are conventional (e.g. "anonde-gliner", "presidio-default",
+        # names are conventional (e.g. "anonde-ner", "presidio-default",
         # "gliner-py", "openai-pf") — the prefix routes to the right map.
         if name.startswith("anonde"):
             pmap = label_map.get("anonde", {}) or {}

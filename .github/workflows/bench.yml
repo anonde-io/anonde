@@ -10,9 +10,9 @@ name: bench
 #     anonde-hugot (~30 min/corpus) and openai-pf (~80 s/doc) are
 #     deliberately excluded — they belong in a nightly or release bench,
 #     not on every PR.
-#   * Engines: anonde-patterns, anonde-gliner (production stack), and
+#   * Engines: anonde-patterns, anonde-ner (default NER image), and
 #     gliner-py (parity check: same model, Python sidecar). If
-#     anonde-gliner ever silently diverges from gliner-py, this is the
+#     anonde-ner ever silently diverges from gliner-py, this is the
 #     guard rail that catches it.
 #
 # openai-pf is deliberately NOT run here. It is a rendered matrix column
@@ -182,7 +182,7 @@ jobs:
           python bench/scoring/render_matrix.py \
             --corpora-root bench/corpora \
             --corpus openmed --corpus synth_clinical \
-            --engine anonde-patterns --engine anonde-gliner --engine gliner-py \
+            --engine anonde-patterns --engine anonde-ner --engine gliner-py \
             --label-map bench/scoring/label_map.yaml \
             --out bench/REPORT_MATRIX.md \
             --csv bench/results_matrix.csv
@@ -199,7 +199,7 @@ jobs:
           import json, sys
           failures = []
           for corpus in ("openmed", "synth_clinical"):
-              path = f"bench/corpora/{corpus}/data/anonde_anonde-gliner.jsonl"
+              path = f"bench/corpora/{corpus}/data/anonde_anonde-ner.jsonl"
               ner_like = 0
               with open(path) as fh:
                   for line in fh:
@@ -241,7 +241,7 @@ jobs:
           {
             echo "## anonde bench matrix"
             echo ""
-            echo "_Subset: openmed + synth_clinical × {anonde-patterns, anonde-gliner, gliner-py}._"
+            echo "_Subset: openmed + synth_clinical × {anonde-patterns, anonde-ner, gliner-py}._"
             echo ""
             if [ -f bench/REPORT_MATRIX.md ]; then
               cat bench/REPORT_MATRIX.md

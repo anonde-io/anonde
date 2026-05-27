@@ -21,7 +21,7 @@ CORPUS := $(DATA)/corpus.jsonl
 # How many sentences to sample. 300 keeps bench wall-clock low and
 # matches wikiann_de's sample size for cross-corpus comparability.
 N_SENTENCES ?= 300
-# Deterministic seed so anonde-gliner vs anonde-patterns score on the
+# Deterministic seed so anonde-ner vs anonde-patterns score on the
 # same 300 docs.
 SEED        ?= 20260515
 PYTHON      ?= python3

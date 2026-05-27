@@ -79,7 +79,7 @@ def main():
         # merging do to this snapshot" answer for each.
         for snap_path, label in (
             (PROBE / f"{name}_premerge.jsonl", "premerge_snapshot"),
-            (REPO / "bench" / "corpora" / name / "data" / "anonde_anonde-gliner.jsonl", "current_run"),
+            (REPO / "bench" / "corpora" / name / "data" / "anonde_anonde-ner.jsonl", "current_run"),
         ):
             data = load_jsonl(snap_path)
             tp_no = fp_no = fn_no = 0

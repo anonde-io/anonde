@@ -52,9 +52,9 @@ The matrix scores these cells:
 
 | Engine | What it is | German? | English? |
 |---|---|:---:|:---:|
-| `anonde-patterns` | patterns-only floor | ✓ | ✓ |
-| **`anonde-gliner`** | **production: patterns + GLiNER (`knowledgator/gliner-pii-base-v1.0`, threshold 0.40)** | ✓ | ✓ |
-| `anonde-hugot` | patterns + hugot XLM-R PII (the prior default; regression detector) | ✓ | ✓ |
+| `anonde-patterns` | patterns-only floor (maps to `ghcr.io/anonde-io/anonde`) | ✓ | ✓ |
+| **`anonde-ner`** | **default NER image: patterns + GLiNER (`knowledgator/gliner-pii-base-v1.0`, FP32, threshold 0.40). Maps to `ghcr.io/anonde-io/anonde-ner`.** | ✓ | ✓ |
+| `anonde-ner-stack` | premium NER image: default + the LARGE GLiNER PII flat-decoder stacked on top. Maps to `ghcr.io/anonde-io/anonde-ner-stack`. | ✓ | ✓ |
 | `presidio` | Microsoft Presidio (external baseline competitor) | – | ✓ |
 | `gliner-py` | Python sidecar GLiNER (parity check on the Go-native build) | ✓ | ✓ |
 
@@ -81,7 +81,7 @@ Every runner emits the same JSONL shape (codepoint offsets, Python
 convention) so all comparators just work:
 
 ```json
-{"id":"doc-42","engine":"anonde-gliner",
+{"id":"doc-42","engine":"anonde-ner",
  "findings":[{"start":12,"end":28,"type":"EMAIL_ADDRESS","score":1.0}],
  "duration_ms":8.4}
 ```

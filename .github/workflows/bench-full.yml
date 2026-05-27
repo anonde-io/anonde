@@ -19,22 +19,19 @@ name: bench-full
 # openai-pf is too slow for the per-push bench (bench.yml), which leaves
 # it excluded. See bench/Makefile's ENGINES block for the gating design.
 #
-# It also runs the anonde-gliner-fp32 engine — the same GLiNER PII model
-# as the production anonde-gliner but loaded from the FP32 ONNX instead
-# of INT8, a permanent matrix column tracking the quantization tradeoff.
-# Like openai-pf it is kept off the per-push corpus-X target (bench.yml
-# stays lean); the full matrix pulls it in via `make gliner-fp32-X`.
+# It also runs the anonde-ner-stack engine — the default BASE GLiNER
+# PII recognizer with the LARGE sibling
+# (knowledgator/gliner-pii-large-v1.0) stacked on top as a flat
+# decoder, matching the `ghcr.io/anonde-io/anonde-ner-stack` shipping
+# image. It is the premium NER tier: best leak rate on the
+# Romance-language cells where the default NER still leaks, at the
+# cost of ~2.1 GB image / ~4 GB resident. Like openai-pf it is kept
+# off the per-push corpus-X target (bench.yml stays lean); the full
+# matrix pulls it in via `make ner-stack-X`.
 #
-# A third anonde GLiNER column — anonde-gliner-large — runs the larger
-# sibling model (knowledgator/gliner-pii-large-v1.0, ~3-4x parameters)
-# at FP32, probing whether scale closes the remaining Romance-language
-# cells where production FP32 still loses to a baseline. Same gating
-# pattern as fp32 (full matrix only, via `make gliner-large-X`).
-#
-# The eight engines per corpus: anonde-patterns, anonde-gliner (INT8
-# legacy), anonde-gliner-fp32 (FP32, production), anonde-gliner-large
-# (FP32, larger model — flat decoder), anonde-gliner-stack (FP32 BASE +
-# LARGE flat in one engine), gliner-py, presidio, openai-pf.
+# The six engines per corpus: anonde-patterns, anonde-ner (default
+# NER image, BASE FP32), anonde-ner-stack (premium NER image, BASE +
+# LARGE flat stacked), gliner-py, presidio, openai-pf.
 #
 # Triggers:
 #   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
@@ -291,26 +288,25 @@ jobs:
               echo "no spaCy model mapping for corpus '${{ matrix.corpus }}'; skipping" ;;
           esac
 
-      # Cache the GLiNER PII model assets. Three artifacts the matrix
-      # uses share these dirs: model_quint8.onnx (INT8, anonde-gliner) +
-      # model.onnx (FP32, anonde-gliner-fp32) — both from
-      # knowledgator/gliner-pii-base-v1.0 — and the larger sibling
-      # knowledgator/gliner-pii-large-v1.0 (FP32, anonde-gliner-large).
-      # The cache PATH already covers all three; the `-int8-fp32-large`
-      # key suffix forces one cache refresh so a cache populated before
-      # the large column existed (base-only) does not make every cell
-      # re-download the large model.
+      # Cache the GLiNER PII model assets. Two artifacts the matrix
+      # uses share these dirs: `knowledgator/gliner-pii-base-v1.0`
+      # (FP32 `onnx/model.onnx`, used by both anonde-ner and the BASE
+      # slot of anonde-ner-stack) and `knowledgator/gliner-pii-large-v1.0`
+      # (FP32 `model.onnx`, the LARGE flat decoder added by
+      # anonde-ner-stack). The cache path covers both; the
+      # `-base-large` key suffix is an explicit "this cache has both
+      # variants" anchor.
       - name: Cache HuggingFace model cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-cache-gliner-pii-base-v1.0-int8-fp32-large
+          key: hf-cache-gliner-pii-base-large
 
       - name: Cache anonde model cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/anonde/models
-          key: anonde-models-gliner-pii-base-v1.0-int8-fp32-large
+          key: anonde-models-gliner-pii-base-large
 
       # Cache key includes the recognizer + bench-runner source as well
       # as the corpus loader, because the cached path contains BOTH the
@@ -344,27 +340,25 @@ jobs:
         run: |
           CGO_ENABLED=1 go build -tags hugot ./...
 
-      # Run the four always-on engines (corpus-X), then the
-      # anonde-gliner-fp32 cell, then the anonde-gliner-large cell, then
-      # the openai-pf cell. The FP32, LARGE, and openai-pf cells are all
-      # kept off the per-push `corpus-X` target so bench.yml stays lean;
-      # the full matrix pulls them in explicitly here (gliner-fp32-X /
-      # gliner-large-X / openai-pf-X). openai-pf is additionally gated
-      # behind RUN_OPENAI_PF=1 — set here (and only here / on the
-      # `matrix` target) so the slow ~80 s/doc model runs on the weekly
-      # full matrix but never on the per-push PR bench. The openai-pf
-      # cell is scored on a deterministic OPENAI_PF_SAMPLE-doc subsample;
-      # render_matrix.py scores it over only the docs it returned. The
-      # FP32 + LARGE cells are fast in-process Go runs (no gate needed).
+      # Run the always-on engines (corpus-X = patterns + anonde-ner +
+      # presidio + gliner-py), then the anonde-ner-stack cell, then the
+      # openai-pf cell. The stack + openai-pf cells are kept off the
+      # per-push `corpus-X` target so bench.yml stays lean; the full
+      # matrix pulls them in explicitly here (ner-stack-X / openai-pf-X).
+      # openai-pf is additionally gated behind RUN_OPENAI_PF=1 — set
+      # here (and only here / on the `matrix` target) so the slow
+      # ~80 s/doc model runs on the weekly full matrix but never on the
+      # per-push PR bench. The openai-pf cell is scored on a
+      # deterministic OPENAI_PF_SAMPLE-doc subsample; render_matrix.py
+      # scores it over only the docs it returned. The ner-stack cell is
+      # a fast in-process Go run (no gate needed).
       - name: Run cell — ${{ matrix.corpus }}
         env:
           ORT_LIB: ${{ env.ORT_LIB }}
         run: |
           set -euo pipefail
           make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
-          make -C bench gliner-fp32-${{ matrix.corpus }} PYTHON=python3
-          make -C bench gliner-large-${{ matrix.corpus }} PYTHON=python3
-          make -C bench gliner-stack-${{ matrix.corpus }} PYTHON=python3
+          make -C bench ner-stack-${{ matrix.corpus }} PYTHON=python3
           make -C bench openai-pf-${{ matrix.corpus }} PYTHON=python3 RUN_OPENAI_PF=1
 
       # Upload the cell's data dir as an artifact. The render job will
@@ -386,6 +380,12 @@ jobs:
     if: always()
     runs-on: ubicloud-standard-4
     timeout-minutes: 15
+    # Needed by the "Open PR with refreshed REPORT_MATRIX" step at the
+    # end of this job. Scoped to render only — bench-cell stays
+    # read-only.
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
@@ -438,12 +438,11 @@ jobs:
           make -C bench render PYTHON=python3
 
       # Same canary as the per-push bench, but walks every gold-bearing
-      # corpus and checks ALL THREE GLiNER cells — the INT8 legacy
-      # (anonde-gliner), the FP32 production (anonde-gliner-fp32), and
-      # the LARGE FP32 (anonde-gliner-large). A silent fallback to
-      # patterns is the highest-cost bug class, and the FP32 + LARGE
-      # cells are just as exposed to it (bad ORT_LIB / missing ONNX) as
-      # the legacy INT8 one.
+      # corpus and checks BOTH GLiNER-backed anonde cells — the default
+      # NER (`anonde-ner`, BASE FP32) and the premium stack
+      # (`anonde-ner-stack`, BASE FP32 + LARGE flat). A silent fallback
+      # to patterns is the highest-cost bug class, and both cells are
+      # equally exposed to it (bad ORT_LIB / missing ONNX).
       - name: Guard rail — GLiNER actually fired
         run: |
           python3 - <<'PYEOF'
@@ -453,13 +452,10 @@ jobs:
           failures = []
           checked = 0
           root = Path("bench/corpora")
-          # The four GLiNER cells the matrix runs: INT8 legacy + FP32 +
-          # the LARGE FP32 variant + the BASE+LARGE stack.
+          # The two GLiNER-backed anonde cells the matrix runs.
           gliner_engines = (
-              "anonde-gliner",
-              "anonde-gliner-fp32",
-              "anonde-gliner-large",
-              "anonde-gliner-stack",
+              "anonde-ner",
+              "anonde-ner-stack",
           )
           for corpus_dir in sorted(root.iterdir()):
               gold = corpus_dir / "data" / "corpus.jsonl"
@@ -543,7 +539,7 @@ jobs:
             echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines (8): anonde-patterns, anonde-gliner-fp32 (FP32 ONNX, production), anonde-gliner (INT8 — legacy / memory-constrained reference), anonde-gliner-large (FP32, larger model — flat decoder), anonde-gliner-stack (FP32 BASE + LARGE flat stacked), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
+            echo "_Engines (6): anonde-patterns, anonde-ner (default NER image), anonde-ner-stack (premium NER image — BASE + LARGE flat stacked), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
             echo "_Corpora in matrix: 30, across 6 domains × 5 languages._"
             echo "_New since Phase 0: ai4privacy de/fr/it/es (Phase 1) · MAPA en/de/es/fr/it legal (Phase 2) · synth_finance en/de/es/fr/it + synth_logs (Phase 3) · synth_clinical en/fr/it + meddocan_es (Phase 4)._"
             echo "_Excluded from the matrix: pmc_de / wiki_de (precision-probe, no gold), conll2003_de (loader-gated), ggponc_de (DUA registration)._"
@@ -554,3 +550,39 @@ jobs:
               echo "_(REPORT_MATRIX.md not produced — see logs above)_"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Auto-PR the refreshed REPORT_MATRIX. The file is committed at
+      # the repo root because README's hero link points at it on
+      # github.com — without this step it would silently drift between
+      # releases. Uses a stable branch name so subsequent weekly runs
+      # update the same PR rather than stacking new ones; the action
+      # is a no-op when the rendered file is byte-identical to main.
+      # `[skip ci]` keeps the on-PR bench.yml from overwriting the
+      # full matrix with its 2-corpus subset once this PR is opened.
+      # No `if: always()`: if the guard rail or render failed we do
+      # NOT want to ship that REPORT_MATRIX.
+      - name: Open PR with refreshed REPORT_MATRIX
+        if: success()
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: bench/REPORT_MATRIX.md
+          branch: bench/auto-update-matrix
+          delete-branch: true
+          commit-message: |
+            bench: refresh REPORT_MATRIX (${{ steps.label.outputs.label }})
+
+            [skip ci]
+          title: "bench: refresh REPORT_MATRIX (${{ steps.label.outputs.label }})"
+          body: |
+            Weekly auto-refresh of `bench/REPORT_MATRIX.md` from the full
+            30-corpus × 8-engine matrix.
+
+            - Trigger: `${{ github.event_name }}`
+            - Label: `${{ steps.label.outputs.label }}`
+            - Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            The on-PR `bench.yml` only covers a 2-corpus subset; this
+            file is refreshed exclusively by the weekly `bench-full.yml`.
+          labels: |
+            bench
+            automation

@@ -64,7 +64,7 @@ Anonde-gliner leak rate vs best baseline, per corpus:
 | legal_de | DE legal (slot-gen) | 9.4% | **6.9%** | ↓2.5pp |
 | wikiann_de | DE Wikipedia (real) | P=0.94 R=0.62 | **P=0.86 R=0.87 F1=0.86** | — |
 
-wikiann_de is the precision-probe-on-real-text result; the other 5 are leak rate on synthetic / annotated gold. **anonde-gliner wins leak rate on every gold corpus.** Use these as anchors when validating a future change — a 5pp regression on openmed leak is a meaningful red flag.
+wikiann_de is the precision-probe-on-real-text result; the other 5 are leak rate on synthetic / annotated gold. **anonde-ner wins leak rate on every gold corpus.** Use these as anchors when validating a future change — a 5pp regression on openmed leak is a meaningful red flag.
 
 ## Corpora — quick reference
 
@@ -92,7 +92,7 @@ make -C bench matrix-en              # English (ai4privacy_en) only
 make -C bench corpus-openmed         # one corpus, all engines (cached cells skipped)
 
 # Specific cell (cheapest)
-make -C bench bench/corpora/openmed/data/anonde_anonde-gliner.jsonl
+make -C bench bench/corpora/openmed/data/anonde_anonde-ner.jsonl
 
 # Override the GLiNER model / threshold / ONNX file
 make -C bench corpus-openmed \
@@ -107,7 +107,7 @@ python3 bench/scoring/render_matrix.py \
   --corpus openmed --corpus synth_clinical --corpus ai4privacy_en \
   --corpus finance_de --corpus legal_de --corpus wikiann_de \
   --corpus pmc_de --corpus wiki_de \
-  --engine anonde-patterns --engine anonde-gliner --engine gliner-py \
+  --engine anonde-patterns --engine anonde-ner --engine gliner-py \
   --engine openai-pf --engine presidio \
   --label-map bench/scoring/label_map.yaml \
   --out bench/REPORT_MATRIX.md --csv bench/results_matrix.csv

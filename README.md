@@ -49,7 +49,7 @@ was charged twice on <DATE_TIME_1> for $89.99, please refund.
 ## Why anonde
 
 - **Drop-in for any LLM workflow.** Same shape in, same shape out. Plug it between your app and OpenAI, Anthropic, Bedrock, Ollama, or your own model. They see only tokens.
-- **Wins on leak rate.** anonde-gliner has the lowest leak rate on 25 of 29 gold-annotated corpora the bench tracks across English, German, Spanish, French and Italian — covering clinical, legal, finance, structured PII, and adversarial / out-of-distribution text. ([numbers](#benchmarks))
+- **Wins on leak rate.** anonde-ner has the lowest leak rate on 25 of 29 gold-annotated corpora the bench tracks across English, German, Spanish, French and Italian — covering clinical, legal, finance, structured PII, and adversarial / out-of-distribution text. ([numbers](#benchmarks))
 - **Local-first.** Ships as a Go library or a Docker image you run yourself. No cloud calls. NER models are baked into the image, so there is no outbound HuggingFace traffic at request time.
 - **Multilingual.** Open-set NER (GLiNER) plus 52 region-aware pattern recognizers covering 12+ jurisdictions: international IDs, US, UK, Germany, Italy, Spain, Australia, India, Poland, Singapore, Finland, Korea.
 - **Reversible, audited.** Tokens map back to cleartext only where you allow it. The reveal call requires `actor` + `purpose` and is the only place plaintext comes back.
@@ -428,14 +428,14 @@ Want to see the full flow in the browser? [anonde.io](https://anonde.io).
 
 ## Benchmarks
 
-Public bench matrix, re-run on every PR. The production anonde build
-loads the **FP32 ONNX** GLiNER model by default; the columns below are
-that engine (`anonde-gliner`, FP32). One row per language on the
-clinical de-identification axis (the cleanest apples-to-apples slice
-across all five), plus a structured-PII row and an adversarial / OOD
-row. **Lower leak rate is better.**
+Public bench matrix, re-run on every PR. The default NER image
+(`ghcr.io/anonde-io/anonde-ner`) loads the **FP32 ONNX** GLiNER model;
+the columns below are that engine (`anonde-ner`). One row per language
+on the clinical de-identification axis (the cleanest apples-to-apples
+slice across all five), plus a structured-PII row and an adversarial /
+OOD row. **Lower leak rate is better.**
 
-| Corpus | Slice | Best non-anonde baseline | anonde-gliner | Δ |
+| Corpus | Slice | Best non-anonde baseline | anonde-ner | Δ |
 |---|---|---|---:|---:|
 | `synth_clinical_en` | English · clinical | presidio 20.3% | **3.3%** | ↓ 17.0 pp |
 | `synth_clinical` | German · clinical | openai-pf 23.5% | **0.6%** | ↓ 22.9 pp |
@@ -445,12 +445,12 @@ row. **Lower leak rate is better.**
 | `ai4privacy_en` | English · structured PII | openai-pf 15.5% | **15.1%** | ↓ 0.4 pp |
 | `adversarial_de` | German · adversarial / OOD | openai-pf 32.1% | **8.2%** | ↓ 23.9 pp |
 
-anonde-gliner has the lowest leak rate on every row above. Across the **full matrix (29 corpora, 5 languages)** it's the lowest-leak engine on **25 of 29** corpora; the per-cell roll-up wins 19, ties 1, loses 4 across the 24 populated `(domain × language)` cells.
+anonde-ner has the lowest leak rate on every row above. Across the **full matrix (29 corpora, 5 languages)** it's the lowest-leak engine on **25 of 29** corpora; the per-cell roll-up wins 19, ties 1, loses 4 across the 24 populated `(domain × language)` cells.
 
 **Vs external baselines** on the corpora where they were benched:
 
-- **Microsoft Presidio** on `ai4privacy_en` (English PII): anonde-gliner **15.1%** vs Presidio 56.0%.
-- **OpenAI Privacy Filter** on `openmed` (German clinical): anonde-gliner **13.3%** vs OpenAI PF 35.6%.
+- **Microsoft Presidio** on `ai4privacy_en` (English PII): anonde-ner **15.1%** vs Presidio 56.0%.
+- **OpenAI Privacy Filter** on `openmed` (German clinical): anonde-ner **13.3%** vs OpenAI PF 35.6%.
 
 Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench harness uses its English pipeline only, and OpenAI Privacy Filter is ~80 s/doc on CPU, which makes it impractical on the larger corpora. Both engines can technically run on more languages; the bench numbers reflect what's been measured, not capability ceilings. Full grid (strict / partial / type-agnostic F1, all corpora, all engines) lives in [bench/REPORT_MATRIX.md](bench/REPORT_MATRIX.md).
 

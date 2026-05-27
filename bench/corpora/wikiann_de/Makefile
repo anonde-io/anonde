@@ -25,7 +25,7 @@ CORPUS := $(DATA)/corpus.jsonl
 # patterns + gliner + gliner-py and big enough that the precision
 # number is stable (we verified by halving and quartering it locally).
 N_SENTENCES ?= 300
-# Deterministic seed so anonde-gliner vs anonde-patterns score on the
+# Deterministic seed so anonde-ner vs anonde-patterns score on the
 # same 300 docs.
 SEED        ?= 20260513
 PYTHON      ?= python3
