@@ -195,6 +195,11 @@ jobs:
       # weights + threshold), so the only metric that shifts is latency.
       # Future per-engine latency comparisons should baseline from here.
       ANONDE_ORT_INTRA_OP_THREADS: "4"
+      # Defense-in-depth: bench runners use anonde as a library and
+      # never start the telemetry sender, but any future bench cell
+      # that shells out to cmd/anonde must not pollute the production
+      # heartbeat counts with CI runs.
+      ANONDE_TELEMETRY: "off"
 
     steps:
       - uses: actions/checkout@v4

@@ -130,6 +130,9 @@ func bootServer(t *testing.T) *server {
 		// Disable warmup — speeds the boot, the analyzer still
 		// init-lazies on the first request.
 		"WARMUP_ON_START=",
+		// Tests must never fire heartbeats at the production
+		// telemetry endpoint, locally or in CI.
+		"ANONDE_TELEMETRY=off",
 	)
 	cmd.Stderr = stderr
 	cmd.Stdout = io.Discard

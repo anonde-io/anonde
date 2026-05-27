@@ -160,7 +160,12 @@ func Start(ctx context.Context, t *testing.T, v Variant) *Container {
 			},
 		},
 		ExposedPorts: []string{"8080/tcp", "9090/tcp"},
-		Env:          mergeEnv(map[string]string{"METRICS_BIND": "0.0.0.0:9090"}, v.Env),
+		Env: mergeEnv(map[string]string{
+			"METRICS_BIND": "0.0.0.0:9090",
+			// Stress containers must never fire heartbeats at the
+			// production telemetry endpoint, locally or in CI.
+			"ANONDE_TELEMETRY": "off",
+		}, v.Env),
 		// /v1/health is the proto-defined liveness check; HTTP 200
 		// means routes are wired + analyzer engine constructed.
 		// Long startup window covers cold NER model load on the

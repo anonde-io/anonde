@@ -73,6 +73,11 @@ jobs:
       # dlopen it. Mirrors the local-dev `.tokenlib/` convention.
       ORT_LIB_DIR: ${{ github.workspace }}/.tokenlib
       ORT_LIB: ${{ github.workspace }}/.tokenlib/libonnxruntime.so
+      # Defense-in-depth: today the bench runners use anonde as a
+      # library and never start the telemetry sender, but any future
+      # bench cell that shells out to cmd/anonde must not pollute the
+      # production heartbeat counts with CI runs.
+      ANONDE_TELEMETRY: "off"
 
     steps:
       - uses: actions/checkout@v4
