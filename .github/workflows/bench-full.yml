@@ -504,6 +504,77 @@ jobs:
               sys.exit(1)
           PYEOF
 
+      # Companion canary to the one above: catches the case where the
+      # gliner-flat (LARGE) recognizer registers but contributes zero
+      # findings on every doc — the silent-fallback mode that, in 2026
+      # week 22, made anonde-ner-stack byte-equivalent to anonde-ner
+      # because GLINER_LARGE_ONNX_FILE pointed at a non-existent path
+      # (the analyzer's "recognizer error (swallowed)" log line was
+      # the only signal, and the matrix happily rendered identical
+      # numbers in both columns). A healthy stack must diverge from
+      # the default NER on at least some docs somewhere in the matrix.
+      - name: Guard rail — anonde-ner-stack diverges from anonde-ner
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          from pathlib import Path
+
+          root = Path("bench/corpora")
+          pairs = 0
+          differing_docs = 0
+          per_corpus = []
+          for corpus_dir in sorted(root.iterdir()):
+              ner = corpus_dir / "data" / "anonde_anonde-ner.jsonl"
+              stack = corpus_dir / "data" / "anonde_anonde-ner-stack.jsonl"
+              if not ner.exists() or not stack.exists():
+                  continue
+              pairs += 1
+              ner_docs = {}
+              with ner.open() as fh:
+                  for line in fh:
+                      d = json.loads(line)
+                      ner_docs[d["id"]] = d.get("findings", [])
+              stack_docs = {}
+              with stack.open() as fh:
+                  for line in fh:
+                      d = json.loads(line)
+                      stack_docs[d["id"]] = d.get("findings", [])
+              diff_here = 0
+              for doc_id, ner_findings in ner_docs.items():
+                  s_findings = stack_docs.get(doc_id, [])
+                  # Compare (start, end, type) tuples — scores can wobble
+                  # by sub-epsilon on otherwise-identical spans, but a
+                  # firing flat recognizer should add NEW spans (or merge
+                  # to different end positions) somewhere.
+                  n_tup = sorted((f["start"], f["end"], f["type"]) for f in ner_findings)
+                  s_tup = sorted((f["start"], f["end"], f["type"]) for f in s_findings)
+                  if n_tup != s_tup:
+                      diff_here += 1
+                      differing_docs += 1
+              per_corpus.append((corpus_dir.name, diff_here, len(ner_docs)))
+              print(f"  {corpus_dir.name}: {diff_here}/{len(ner_docs)} docs where stack diverges from ner")
+          if pairs == 0:
+              print("\nGuard rail FAILED: no anonde-ner / anonde-ner-stack cell pairs found")
+              sys.exit(1)
+          if differing_docs == 0:
+              print("")
+              print(f"Guard rail FAILED: anonde-ner-stack findings are byte-equivalent")
+              print(f"to anonde-ner on EVERY doc across {pairs} populated corpus pairs.")
+              print("")
+              print("This is the silent-fallback failure mode: the gliner-flat (LARGE)")
+              print("recognizer registered but contributed zero findings — usually")
+              print("because its model download failed and the analyzer swallowed the")
+              print("per-doc error. Scan the bench-cell logs for:")
+              print("  'gliner-flat: INIT FAILED:'")
+              print("  'analyzer: recognizer error (swallowed)'")
+              print("Common cause: GLINER_LARGE_ONNX_FILE points at a path that")
+              print("doesn't exist in the HF repo tree.")
+              sys.exit(1)
+          print("")
+          print(f"Guard rail OK: stack diverges from ner on {differing_docs} docs")
+          print(f"across {pairs} corpus pairs — flat recognizer is firing.")
+          PYEOF
+
       - name: Compute snapshot label
         id: label
         run: |
