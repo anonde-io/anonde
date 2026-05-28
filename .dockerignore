@@ -7,8 +7,11 @@
 # The build needs: go.mod, go.sum, and every .go source file imported
 # (transitively) from ./cmd/anonde. Everything else is excluded.
 
-# Git history + metadata
-.git
+# Git metadata
+# NOTE: `.git` is intentionally NOT excluded — the Go toolchain reads
+# `vcs.revision` from it during `go build`, which becomes the
+# `version` field in the telemetry heartbeat payload. Excluding `.git`
+# yields an empty version, which the telemetry Worker rejects (400).
 .gitignore
 .gitattributes
 
