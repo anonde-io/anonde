@@ -11,7 +11,7 @@ each such change is called out under a **Changed** or **Removed** heading.
 
 Nothing yet. Post-`v0.1.0` work-in-progress lands here.
 
-## [0.1.0] - 2026-05-27
+## [0.1.0] - 2026-05-28
 
 First tagged release. Three image variants published to ghcr.io:
 `ghcr.io/anonde-io/anonde:0.1.0` (patterns-only, ~12 MB),
@@ -47,8 +47,10 @@ Multi-arch (`linux/amd64` + `linux/arm64`).
   `pdftoppm` + `tesseract` when both are on `PATH`; bundled in the
   NER image variants, no-op fallback in the patterns-only image.
   Tunable via `ANONDE_OCR_*` env vars.
-- **Docker images** — patterns-only (~12 MB, pure Go) and NER
-  (~470 MB, GLiNER + libonnxruntime baked in) variants.
+- **Docker images** — three multi-arch (`linux/amd64` + `linux/arm64`)
+  variants: `anonde` (patterns-only, ~12 MB, pure Go),
+  `anonde-ner` (BASE GLiNER, ~770 MB, CGO + bundled libonnxruntime),
+  and `anonde-ner-stack` (BASE + LARGE GLiNER, ~2.1 GB).
 - **Public benchmark matrix** — leak-rate and F1 scoring across
   gold-annotated clinical, finance, legal, and general-PII corpora,
   re-run on every relevant PR with a guard rail against silent NER
