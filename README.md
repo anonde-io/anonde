@@ -158,6 +158,24 @@ curl -sS -X POST http://localhost:8081/v1/anonymizations \
 # → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
 ```
 
+### Port and listen address
+
+The server binds to `:8080` by default. Override via either env var
+(both are checked, in this precedence order):
+
+| Env var        | Form              | Example                       |
+|----------------|-------------------|-------------------------------|
+| `ANONDE_ADDR`  | full address      | `ANONDE_ADDR=0.0.0.0:9000`    |
+| `PORT`         | port only         | `PORT=9000` (Heroku/Cloud Run) |
+
+```bash
+# Local Go
+ANONDE_ADDR=:9000 go run ./cmd/anonde
+
+# Docker — set inside the container AND match the host port mapping
+docker run --rm -e ANONDE_ADDR=:9000 -p 9000:9000 ghcr.io/anonde-io/anonde:latest
+```
+
 ### Persistence
 
 All three images set `ANONDE_DATA_DIR=/var/lib/anonde` and declare it

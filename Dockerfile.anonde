@@ -6,7 +6,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/anonde ./cmd/anonde
+RUN CGO_ENABLED=0 go build -o /out/anonde ./cmd/anonde
+
+RUN go version -m /out/anonde | grep -qE '^\s+build\s+vcs\.revision=[0-9a-f]' || \
+    (echo 'ERROR: vcs.revision missing — git in builder + .git in build context?' && exit 1)
 
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/anonde /anonde

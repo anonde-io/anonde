@@ -49,7 +49,7 @@ ARG ONNXRUNTIME_VERSION=1.26.0
 # both land natively for the target arch. This is what lets the
 # DOWNLOAD_MODELS_ONLY=1 RUN below execute the built binary on every
 # target arch.
-FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS build
+FROM golang:1.26-bookworm AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -94,6 +94,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 \
     go build -tags hugot -o /out/anonde ./cmd/anonde
+
+# Regression gate: vcs.revision must be baked into the binary. Empty
+# version → the telemetry Worker rejects heartbeats with HTTP 400.
+RUN go version -m /out/anonde | grep -qE '^\s+build\s+vcs\.revision=[0-9a-f]' || \
+    (echo 'ERROR: vcs.revision missing — git in builder + .git in build context?' && exit 1)
 
 # --- bake the GLiNER model into the image ---------------------------------
 # Run the binary in DOWNLOAD_MODELS_ONLY=1 mode: it constructs the
@@ -149,7 +154,7 @@ RUN mkdir -p /models/signature && \
 #   SIGNATURE_QUANT=fp32 (default) → ~1.13 GB
 #   SIGNATURE_QUANT=fp16           → ~960 MB
 #   SIGNATURE_QUANT=int8           → ~870 MB
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim
+FROM debian:bookworm-slim
 ARG TARGETARCH
 
 # poppler-utils → pdftoppm for PDF page rasterisation.

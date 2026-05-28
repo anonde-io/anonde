@@ -47,7 +47,7 @@ ARG ONNXRUNTIME_VERSION=1.26.0
 # building), so the produced binary AND the DOWNLOAD_MODELS_ONLY=1 bake
 # step run natively for each target arch. See Dockerfile.anonde-ner for
 # the same pattern + rationale.
-FROM --platform=$TARGETPLATFORM golang:1.26-bookworm AS build
+FROM golang:1.26-bookworm AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -84,6 +84,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 \
     go build -tags hugot -o /out/anonde ./cmd/anonde
+
+# Regression gate: vcs.revision must be baked into the binary. Empty
+# version → the telemetry Worker rejects heartbeats with HTTP 400.
+RUN go version -m /out/anonde | grep -qE '^\s+build\s+vcs\.revision=[0-9a-f]' || \
+    (echo 'ERROR: vcs.revision missing — git in builder + .git in build context?' && exit 1)
 
 # --- bake BOTH GLiNER models into the image -------------------------------
 # DOWNLOAD_MODELS_ONLY=1 makes the binary construct the analyzer engine,
@@ -141,7 +146,7 @@ RUN mkdir -p /models/signature && \
 #   ~2.65 GB total (was ~2.1 GB on distroless without the PDF stack).
 # Override with --build-arg SIGNATURE_QUANT=int8 (~2.4 GB) for smaller
 # at the cost of signature recall.
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim
+FROM debian:bookworm-slim
 ARG TARGETARCH
 
 # poppler-utils → pdftoppm for PDF page rasterisation.
