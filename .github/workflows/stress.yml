@@ -44,7 +44,7 @@ jobs:
     # variant (~2.8 GB runtime + Docker overhead) and starved load
     # generation of CPU under sustained PII-dense traffic. Bump to
     # standard-4 so the ner-stack matrix row has actual headroom.
-    runs-on: ubicloud-standard-4
+    runs-on: ubuntu-latest-4-cores
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

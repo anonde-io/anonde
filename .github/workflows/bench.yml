@@ -65,7 +65,7 @@ concurrency:
 
 jobs:
   bench:
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       ORT_VERSION: "1.26.0"

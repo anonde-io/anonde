@@ -89,7 +89,7 @@ jobs:
   # ---- Per-cell bench. One runner per corpus, in parallel. ----------
   bench-cell:
     name: cell · ${{ matrix.corpus }}
-    runs-on: ubicloud-standard-4
+    runs-on: ubuntu-latest-4-cores
     # 75 min (was 45): the openai-pf cell is now part of the full matrix
     # and runs ~80 s/doc on CPU. We score it on a deterministic
     # OPENAI_PF_SAMPLE-doc subsample (40 → ~53 min) rather than the whole
@@ -327,8 +327,8 @@ jobs:
       # portion of the key can't detect — runner-shape changes (vCPU
       # count, ORT thread tuning), workflow-only edits, or just "force
       # everyone to recompute latency from scratch." Without the manual
-      # bump, a `runs-on: ubicloud-standard-4` upgrade restores cached
-      # predictions from the prior `standard-2` run and the latency
+      # bump, a runner-shape change restores cached
+      # predictions from the prior run and the latency
       # table in REPORT_MATRIX.md silently keeps reporting old numbers.
       - name: Cache corpus data
         uses: actions/cache@v5
@@ -386,7 +386,7 @@ jobs:
     # Render even if some cells failed — render_matrix is tolerant of
     # missing per-cell JSONLs (they show as "–" in the matrix UI).
     if: always()
-    runs-on: ubicloud-standard-4
+    runs-on: ubuntu-latest-4-cores
     timeout-minutes: 15
     # Needed by the "Open PR with refreshed REPORT_MATRIX" step at the
     # end of this job. Scoped to render only — bench-cell stays
