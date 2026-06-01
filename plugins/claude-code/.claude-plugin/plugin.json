@@ -1,0 +1,15 @@
+{
+  "name": "anonde",
+  "displayName": "anonde — local PII guard",
+  "version": "0.1.0",
+  "description": "Detects PII in your prompts and in the actions the agent is about to take (Bash, Write, Edit), and warns or blocks before sensitive data reaches the model or leaves your machine. Detection runs locally — patterns in-process by default, or full GLiNER NER against a local anonde server.",
+  "author": {
+    "name": "anonde authors",
+    "url": "https://github.com/anonde-io/anonde"
+  },
+  "homepage": "https://anonde.io",
+  "repository": "https://github.com/anonde-io/anonde",
+  "license": "Apache-2.0",
+  "keywords": ["pii", "privacy", "anonymization", "security", "redaction"],
+  "hooks": "./hooks/hooks.json"
+}

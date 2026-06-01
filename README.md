@@ -124,6 +124,97 @@ func main() {
 
 Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER (GLiNER, hugot); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+## Claude Code hook
+
+A local PII guard for [Claude Code](https://code.claude.com): it scans your
+prompts and the actions the agent is about to take (`Bash`, `Write`, `Edit`)
+and **warns** or **blocks** before PII reaches the model or leaves your machine.
+Detection runs locally — patterns in-process by default, or full NER against a
+running anonde server. Install one way:
+
+```text
+# Plugin (auto-registers the hooks; lowest friction)
+/plugin marketplace add anonde-io/anonde
+/plugin install anonde@anonde
+```
+
+```bash
+# Or grab the binary directly
+curl -fsSL https://raw.githubusercontent.com/anonde-io/anonde/main/install.sh | sh
+go install github.com/anonde-io/anonde/cmd/anonde-hook@latest   # (needs a Go toolchain)
+```
+
+Setup, modes (`warn`/`block`), and the contract's limits are in
+[examples/claude-code-hook/](examples/claude-code-hook/) and the
+[plugin README](plugins/claude-code/).
+
+## Run the HTTP server
+
+With Go:
+
+```bash
+ANALYZER_BACKEND=patterns ANONDE_ADDR=:8081 go run ./cmd/anonde/
+```
+
+With Docker (patterns-only image, ~12 MB):
+
+```bash
+docker build -f Dockerfile.anonde -t anonde:patterns .
+docker run --rm -p 8081:8080 anonde:patterns
+```
+
+The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default; the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars and image internals.
+
+Or with Docker Compose (mutually exclusive profiles, one runs at a time):
+
+```bash
+docker compose --profile patterns  up   # ~12 MB,    text/JSON only
+docker compose --profile ner       up   # ~1.13 GB,  GLiNER + PDF + metrics on :9090
+docker compose --profile ner-stack up   # ~2.65 GB,  lowest-leak GLiNER stack
+```
+
+Hit the running server:
+
+```bash
+curl -sS -X POST http://localhost:8081/v1/anonymizations \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"demo","content":"Hi, this is Sarah Chen (sarah.chen@acme.example)."}'
+# → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
+```
+
+### Port and listen address
+
+The server binds to `:8080` by default. Override via either env var
+(both are checked, in this precedence order):
+
+| Env var        | Form              | Example                       |
+|----------------|-------------------|-------------------------------|
+| `ANONDE_ADDR`  | full address      | `ANONDE_ADDR=0.0.0.0:9000`    |
+| `PORT`         | port only         | `PORT=9000` (Heroku/Cloud Run) |
+
+```bash
+# Local Go
+ANONDE_ADDR=:9000 go run ./cmd/anonde
+
+# Docker — set inside the container AND match the host port mapping
+docker run --rm -e ANONDE_ADDR=:9000 -p 9000:9000 ghcr.io/anonde-io/anonde:latest
+```
+
+### Persistence
+
+All three images set `ANONDE_DATA_DIR=/var/lib/anonde` and declare it
+as a Docker `VOLUME`. Two files live there: the telemetry install ID,
+and the bbolt vault DB when you opt into `STORE_BACKEND=bbolt`. Mount
+a named volume for durability across `docker rm`:
+
+```bash
+docker run -v anonde-data:/var/lib/anonde -p 8081:8080 anonde:patterns
+```
+
+`docker-compose.yml` already wires a per-profile named volume. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#persistent-data-directory)
+for the full env-var precedence and library-mode behavior.
+
 ## HTTP API
 
 The same server speaks three transports on one port:

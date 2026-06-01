@@ -1,0 +1,17 @@
+{
+  "name": "anonde",
+  "description": "anonde plugins for Claude Code — local-first PII protection.",
+  "owner": {
+    "name": "anonde authors",
+    "url": "https://github.com/anonde-io/anonde"
+  },
+  "plugins": [
+    {
+      "name": "anonde",
+      "source": "./plugins/claude-code",
+      "description": "Local PII guard: detect and block PII in prompts and tool calls before they reach the model.",
+      "category": "security",
+      "keywords": ["pii", "privacy", "anonymization", "security", "redaction"]
+    }
+  ]
+}

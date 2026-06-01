@@ -68,6 +68,10 @@ build: ## go build ./...
 build-ner: ## Build with -tags hugot (GLiNER + libonnxruntime required)
 	go build -tags hugot ./...
 
+.PHONY: build-hook
+build-hook: ## Build the Claude Code PII-guard hook into ./bin/anonde-hook
+	go build -o bin/anonde-hook ./cmd/anonde-hook
+
 .PHONY: test
 test: ## Run the whole test suite
 	go test ./...
