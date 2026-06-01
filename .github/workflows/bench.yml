@@ -102,7 +102,7 @@ jobs:
       # cache also doubles as a "we've validated this version" anchor.
       - name: Cache libonnxruntime
         id: ort-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.ORT_LIB_DIR }}
           key: libonnxruntime-${{ env.ORT_VERSION }}-linux-x64
@@ -132,7 +132,7 @@ jobs:
       # HF hub dir keyed on the model id so repeat runs skip the
       # ~200 MB download.
       - name: Cache HuggingFace model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
           key: hf-cache-gliner-pii-base-v1.0
@@ -141,7 +141,7 @@ jobs:
       # writes to ~/.cache/anonde/models/. Same model, different on-disk
       # layout — cache both.
       - name: Cache anonde model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/anonde/models
           key: anonde-models-gliner-pii-base-v1.0
