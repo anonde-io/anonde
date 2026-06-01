@@ -124,6 +124,30 @@ func main() {
 
 Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER (GLiNER, hugot); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+## Claude Code hook
+
+A local PII guard for [Claude Code](https://code.claude.com): it scans your
+prompts and the actions the agent is about to take (`Bash`, `Write`, `Edit`)
+and **warns** or **blocks** before PII reaches the model or leaves your machine.
+Detection runs locally — patterns in-process by default, or full NER against a
+running anonde server. Install one way:
+
+```text
+# Plugin (auto-registers the hooks; lowest friction)
+/plugin marketplace add anonde-io/anonde
+/plugin install anonde@anonde
+```
+
+```bash
+# Or grab the binary directly
+curl -fsSL https://raw.githubusercontent.com/anonde-io/anonde/main/install.sh | sh
+go install github.com/anonde-io/anonde/cmd/anonde-hook@latest   # (needs a Go toolchain)
+```
+
+Setup, modes (`warn`/`block`), and the contract's limits are in
+[examples/claude-code-hook/](examples/claude-code-hook/) and the
+[plugin README](plugins/claude-code/).
+
 ## Run the HTTP server
 
 With Go:

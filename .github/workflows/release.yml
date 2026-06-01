@@ -33,10 +33,13 @@ name: release
 #
 # First-push gotcha: ghcr.io creates packages as PRIVATE by default. The
 # first time this workflow publishes a new image name, the package shows
-# up at https://github.com/orgs/anonde-io/packages and must be flipped
-# to public manually (or via `gh api -X PATCH /orgs/anonde-io/packages/
-# container/<name>/visibility -f visibility=public`). Subsequent pushes
-# inherit the existing visibility.
+# up at https://github.com/orgs/anonde-io/packages and must be flipped to
+# public manually via the web UI:
+#
+# The REST API does NOT expose a visibility-change endpoint — older docs
+# and tooling suggest `gh api -X PATCH .../visibility -f visibility=public`
+# but that returns 404 (the endpoint doesn't exist in the public API).
+# Subsequent pushes inherit the existing visibility.
 
 on:
   push:
@@ -217,21 +220,72 @@ jobs:
           cache-from: type=gha,scope=anonde-ner-stack
           cache-to: type=gha,scope=anonde-ner-stack,mode=max
 
+  # ---- anonde-hook binaries: pure-Go, cross-compiled ----------------
+  # The Claude Code PII-guard hook (cmd/anonde-hook). Pure Go, CGO off,
+  # so every target cross-compiles from one amd64 runner — no QEMU. Asset
+  # names are anonde-hook_<os>_<arch>; install.sh and the plugin's
+  # SessionStart bootstrap depend on exactly this naming.
+  hook-binaries:
+    name: build anonde-hook (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build anonde-hook
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          out="dist/anonde-hook_${GOOS}_${GOARCH}"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o "$out" ./cmd/anonde-hook
+          ls -lh "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anonde-hook_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/anonde-hook_${{ matrix.goos }}_${{ matrix.goarch }}
+          if-no-files-found: error
+
   # ---- GitHub Release draft ----------------------------------------
   # Drafts a Release from the tag so the maintainer reviews + publishes.
   # Auto-generated notes (commit log since the previous tag) seed it;
   # paste the matching CHANGELOG entry over the top before publishing.
-  # Only runs on a real tag push — not on workflow_dispatch.
+  # Attaches the anonde-hook binaries so install.sh can fetch them from
+  # the release. Only runs on a real tag push — not on workflow_dispatch.
   github-release:
     name: draft GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [anonde, anonde-ner, anonde-ner-stack]
+    needs: [anonde, anonde-ner, anonde-ner-stack, hook-binaries]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Download anonde-hook binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: anonde-hook_*
+          merge-multiple: true
 
       - name: Draft release
         uses: softprops/action-gh-release@v2
@@ -240,3 +294,4 @@ jobs:
           generate_release_notes: true
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
+          files: dist/anonde-hook_*

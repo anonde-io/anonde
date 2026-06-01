@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# Local build output (e.g. `make build-hook` → bin/anonde-hook)
+/bin/
+
 # Test binary, built with `go test -c`
 *.test
 
