@@ -145,7 +145,7 @@ func main() {
 		case "--help", "-h", "help":
 			fmt.Fprintln(os.Stdout, "anonde-hook — Claude Code PII-guard hook. Reads a hook-event JSON\n"+
 				"payload on stdin and emits a decision. Configure via ANONDE_HOOK_* env\n"+
-				"vars; see https://github.com/anonde-io/anonde/tree/main/examples/claude-code-hook")
+				"vars; see https://github.com/anonde-io/anonde/tree/main/plugins/claude-code")
 			return
 		}
 	}
