@@ -5,7 +5,7 @@
 #
 # Downloads the prebuilt `anonde-hook` binary for your OS/arch from the
 # GitHub Releases of anonde-io/anonde and installs it. The hook is a Claude
-# Code PII guard — see examples/claude-code-hook/README.md.
+# Code PII guard — see plugins/claude-code/README.md.
 #
 # Environment overrides:
 #   ANONDE_INSTALL_DIR  where to install   (default: $HOME/.local/bin)
@@ -68,6 +68,6 @@ if [ "$QUIET" != "1" ]; then
   say "Next: register the hook in Claude Code. Either install the plugin"
   say "  /plugin marketplace add ${REPO}"
   say "  /plugin install anonde@anonde"
-  say "or add the snippet from examples/claude-code-hook/settings.json to your"
-  say "~/.claude/settings.json. Verify with: anonde-hook --version"
+  say "or add the settings.json snippet from plugins/claude-code/README.md to"
+  say "your ~/.claude/settings.json. Verify with: anonde-hook --version"
 fi

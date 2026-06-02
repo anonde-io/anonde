@@ -144,9 +144,8 @@ curl -fsSL https://raw.githubusercontent.com/anonde-io/anonde/main/install.sh | 
 go install github.com/anonde-io/anonde/cmd/anonde-hook@latest   # (needs a Go toolchain)
 ```
 
-Setup, modes (`warn`/`block`), and the contract's limits are in
-[examples/claude-code-hook/](examples/claude-code-hook/) and the
-[plugin README](plugins/claude-code/).
+Setup, modes (`warn`/`block`), config, and the contract's limits are in the
+[Claude Code hook README](plugins/claude-code/).
 
 ## Run the HTTP server
 
