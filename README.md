@@ -82,8 +82,8 @@ curl -sS -X POST http://localhost:8081/v1/anonymizations \
 # → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
 ```
 
-Image variants, volumes, and docker compose profiles live in
-[Run the HTTP server](#run-the-http-server) below.
+Image variants, port/listen-address overrides, persistent volumes, and
+docker compose profiles are all in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Go library
 
@@ -124,73 +124,6 @@ func main() {
 
 Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER (GLiNER, hugot); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## Run the HTTP server
-
-With Go:
-
-```bash
-ANALYZER_BACKEND=patterns ANONDE_ADDR=:8081 go run ./cmd/anonde/
-```
-
-With Docker (patterns-only image, ~12 MB):
-
-```bash
-docker build -f Dockerfile.anonde -t anonde:patterns .
-docker run --rm -p 8081:8080 anonde:patterns
-```
-
-The NER variant (GLiNER + libonnxruntime baked in, ~770 MB) builds the same way from `Dockerfile.anonde-ner`. It ships the FP32 ONNX (`onnx/model.onnx`) by default; the matrix proved INT8 leaks ~6pp more PII overall. Memory-constrained deployments can opt back into INT8 with `GLINER_QUANT=int8` (saves ~240 MB image size at the cost of recall on multilingual legal / clinical text). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for env vars and image internals.
-
-Or with Docker Compose (mutually exclusive profiles, one runs at a time):
-
-```bash
-docker compose --profile patterns  up   # ~12 MB,    text/JSON only
-docker compose --profile ner       up   # ~1.13 GB,  GLiNER + PDF + metrics on :9090
-docker compose --profile ner-stack up   # ~2.65 GB,  lowest-leak GLiNER stack
-```
-
-Hit the running server:
-
-```bash
-curl -sS -X POST http://localhost:8081/v1/anonymizations \
-  -H "Content-Type: application/json" \
-  -d '{"tenant_id":"demo","content":"Hi, this is Sarah Chen (sarah.chen@acme.example)."}'
-# → { "id": "anon_8f3c…", "anonymized_content": "...", "tokens": [...] }
-```
-
-### Port and listen address
-
-The server binds to `:8080` by default. Override via either env var
-(both are checked, in this precedence order):
-
-| Env var        | Form              | Example                       |
-|----------------|-------------------|-------------------------------|
-| `ANONDE_ADDR`  | full address      | `ANONDE_ADDR=0.0.0.0:9000`    |
-| `PORT`         | port only         | `PORT=9000` (Heroku/Cloud Run) |
-
-```bash
-# Local Go
-ANONDE_ADDR=:9000 go run ./cmd/anonde
-
-# Docker — set inside the container AND match the host port mapping
-docker run --rm -e ANONDE_ADDR=:9000 -p 9000:9000 ghcr.io/anonde-io/anonde:latest
-```
-
-### Persistence
-
-All three images set `ANONDE_DATA_DIR=/var/lib/anonde` and declare it
-as a Docker `VOLUME`. Two files live there: the telemetry install ID,
-and the bbolt vault DB when you opt into `STORE_BACKEND=bbolt`. Mount
-a named volume for durability across `docker rm`:
-
-```bash
-docker run -v anonde-data:/var/lib/anonde -p 8081:8080 anonde:patterns
-```
-
-`docker-compose.yml` already wires a per-profile named volume. See
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#persistent-data-directory)
-for the full env-var precedence and library-mode behavior.
-
 ## HTTP API
 
 The same server speaks three transports on one port:
@@ -199,241 +132,73 @@ The same server speaks three transports on one port:
 - **Connect** (Connect/JSON, Connect/Protobuf, gRPC-Web): `POST /anonde.v1.Service/<Method>`.
 - **Native gRPC** over HTTP/2 cleartext: same `/anonde.v1.Service/<Method>` path.
 
-Plus two optional surfaces:
-
-- **PDF redaction (raw bytes in, raw bytes out):** `POST /v1/anonymizations/pdf` accepts a raw `application/pdf` body and returns a redacted PDF; `GET /v1/anonymizations/{id}/reveal-pdf` returns the original. Tenant via the `X-Anonde-Tenant` header or `?tenantId=` query. Opt-in via `ANONDE_PDF_ENABLED=1`. Defined in the proto (`AnonymizePDF` / `RevealPDF` RPCs); also callable over gRPC / Connect, with `pdf_content` and `redacted_pdf` as base64-encoded `bytes` fields. See [PDFs, including scans (OCR fallback)](#pdfs-including-scans-ocr-fallback) below.
-- **OpenAI-compatible proxy** at `POST /v1/chat/completions`. See [Use anonde as an OpenAI proxy](#use-anonde-as-an-openai-proxy) below.
+Two optional surfaces ride alongside: **PDF redaction** (`POST /v1/anonymizations/pdf`, see [PDFs & scans](#pdfs--scans)) and an **OpenAI-compatible proxy** (`POST /v1/chat/completions`, see [OpenAI proxy](#use-anonde-as-an-openai-proxy)).
 
 Source of truth: [`proto/anonde/v1/anonde.proto`](proto/anonde/v1/anonde.proto). Regenerate handlers with `buf generate`. Full round-trip examples (text, JSON, PDF) live in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-## PDFs, including scans (OCR fallback)
+## PDFs & scans
 
-anonde has two PDF surfaces; pick by use case:
+PDFs are a first-class HTTP endpoint, not a separate binary. Two surfaces:
 
-1. **Text PDFs through the normal anonymize endpoint.** Send a
-   base64-encoded PDF with `content_format: "pdf"` to
-   `POST /v1/anonymizations`. The text layer is extracted via
-   `ledongthuc/pdf`, fed into the same analyzer pipeline as text input,
-   and you get the standard tokenised text + vault back. Reversible
-   via `/v1/anonymizations/{id}/reveal`.
-2. **Raw PDF in, redacted PDF out via `POST /v1/anonymizations/pdf`.**
-   Send the raw PDF body. The server returns a redacted PDF with
-   black boxes drawn over each PII span on the original page rasters.
-   Reversible via `GET /v1/anonymizations/{id}/reveal-pdf`, which
-   returns the original PDF bytes. Opt-in: start the server with
-   `ANONDE_PDF_ENABLED=1` (requires the `anonde-ner` image or a local
-   `-tags hugot` build with `pdftoppm` + `tesseract` on `PATH`).
+1. **Text PDFs through the normal endpoint** — send a base64 PDF with
+   `content_format: "pdf"` to `POST /v1/anonymizations`; the text layer is
+   extracted and run through the same analyzer pipeline as text input.
+2. **Raw PDF in, redacted PDF out** via `POST /v1/anonymizations/pdf` —
+   returns a PDF with black boxes over each PII span; reversible via
+   `GET /v1/anonymizations/{id}/reveal-pdf`. Opt-in with `ANONDE_PDF_ENABLED=1`.
 
-When the PDF text layer is empty or shorter than
-`ANONDE_OCR_TEXT_FLOOR` bytes (default 64), i.e. an image-only scan
-or a photo-to-PDF, both surfaces transparently
-rasterise each page with `pdftoppm` and OCR it with `tesseract`
-before running the analyzer. No code change on the caller side.
+When the text layer is empty or too short (an image-only scan or
+photo-to-PDF), both surfaces transparently rasterise each page and OCR it
+before running the analyzer — no caller change. The `anonde-ner` /
+`anonde-ner-stack` images bundle `poppler-utils` + `tesseract-ocr`
+(`eng+deu+fra+spa+ita+ron`), so OCR and the YOLOS signature redactor are on
+by default there; the patterns-only image stays ~12 MB and skips them.
 
-```bash
-# 1) Text PDF via the normal endpoint
-B64=$(base64 -i invoice.pdf)
-curl -sS -X POST http://localhost:8081/v1/anonymizations \
-  -H "Content-Type: application/json" \
-  -d "{\"tenant_id\":\"demo\",\"content_format\":\"pdf\",\"content\":\"$B64\"}"
-
-# 2) Raw PDF body → redacted PDF body
-curl -sS -X POST http://localhost:8081/v1/anonymizations/pdf \
-  -H "Content-Type: application/pdf" \
-  -H "X-Anonde-Tenant: demo" \
-  --data-binary @scan.pdf \
-  -D /tmp/headers.txt -o redacted.pdf
-# /tmp/headers.txt carries X-Anonde-Id, X-Anonde-Entities,
-# X-Anonde-Entity-Types, X-Anonde-Entity-Count (per-type) so you
-# can log counts without a second request.
-
-# Reveal the original bytes for that anonymization id
-curl -sS -H "X-Anonde-Tenant: demo" \
-  "http://localhost:8081/v1/anonymizations/$ANON_ID/reveal-pdf" \
-  -o original.pdf
-```
-
-The `anonde-ner` and `anonde-ner-stack` images bundle `poppler-utils`
-+ `tesseract-ocr` with `eng+deu+fra+spa+ita+ron` language packs, so
-OCR is on by default there. The patterns-only image (`anonde`) does
-not bundle them; `ExtractAnalyzable` silently skips the OCR fallback
-when the binaries aren't on `PATH`, so the patterns-only image stays
-~12 MB.
-
-Whenever `ANONDE_PDF_ENABLED=1` the server eagerly loads a YOLOS
-signature detector so the visual redactor covers signatures, stamps,
-and logos that no OCR will see. The model is baked into `anonde-ner`
-(FP32 by default; flip with the `SIGNATURE_QUANT={fp16,int8}` build
-arg). Memory cost is ~500 MB resident; operators who can't afford it
-should leave `ANONDE_PDF_ENABLED` unset and route PDFs to a separate
-node.
-
-Tune via env: `ANONDE_OCR_ENABLED`, `ANONDE_OCR_LANGS`,
-`ANONDE_OCR_DPI`, `ANONDE_OCR_TEXT_FLOOR`, `ANONDE_PDF_ENABLED`,
-`ANONDE_SIGNATURE_MODEL_PATH`. See
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#pdf--ocr) for the full table.
-
-## Anonymize PDFs
-
-PDFs are a first-class HTTP endpoint, not a separate binary: every knob
-the old `anonymize-pdf` CLI exposed (mode, dpi, box-padding, entities,
-score-threshold, ocr-langs, …) binds from URL query parameters on
-`POST /v1/anonymizations/pdf`. The redactor uses the same
-`internal/content` primitives as the rest of the server, so output is
-byte-identical regardless of transport.
-
-```bash
-# Run an NER server with PDF enabled (one liner)
-docker run --rm -p 8081:8080 ghcr.io/anonde-io/anonde-ner:latest
-
-# Visual redaction (default; black boxes on page rasters)
-curl -X POST 'http://localhost:8081/v1/anonymizations/pdf' \
-  -H 'Content-Type: application/pdf' -H 'X-Anonde-Tenant: demo' \
-  --data-binary @in.pdf -o out.pdf
-
-# Text-mode + mask operator (rerendered text PDF with '#' substitutions)
-curl -X POST 'http://localhost:8081/v1/anonymizations/pdf?mode=text&operator=mask' \
-  -H 'Content-Type: application/pdf' -H 'X-Anonde-Tenant: demo' \
-  --data-binary @in.pdf -o out.pdf
-
-# Restrict OCR languages + entity allow-list per request
-curl -X POST 'http://localhost:8081/v1/anonymizations/pdf?ocr_langs=eng%2Bdeu&entities=PERSON&entities=LOCATION' \
-  -H 'Content-Type: application/pdf' -H 'X-Anonde-Tenant: demo' \
-  --data-binary @in.pdf -o out.pdf
-```
-
-See [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) for the full
-field table.
+Per-request knobs (mode, operator, entities, score-threshold, ocr-langs, …)
+bind from URL query params. Full flows, the field table, and OCR env vars are
+in [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) and
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#pdf--ocr).
 
 ## Use anonde as an OpenAI proxy
 
-The lowest-friction integration: point your existing OpenAI SDK at
-anonde instead of `api.openai.com`. anonde anonymizes the prompt,
-forwards it to the real provider, de-anonymizes the response, and hands
-it back in OpenAI shape. No plugin, no code change beyond the base URL.
-Works with the raw OpenAI SDK, LangChain, or anything that speaks the
-OpenAI API.
-
-Start the server with the upstream configured:
-
-```bash
-ANONDE_OPENAI_BASE_URL=https://api.openai.com/v1 \
-ANONDE_OPENAI_API_KEY=sk-...your-real-key... \
-ANONDE_ADDR=:8081 go run ./cmd/anonde/
-```
-
-Then swap the base URL in your client:
+The lowest-friction integration: point your existing OpenAI SDK at anonde
+instead of `api.openai.com`. anonde anonymizes the prompt, forwards it to the
+real provider, de-anonymizes the response, and hands it back in OpenAI shape.
 
 ```python
 from openai import OpenAI
 
+# Server started with ANONDE_OPENAI_BASE_URL + ANONDE_OPENAI_API_KEY set.
 client = OpenAI(base_url="http://localhost:8081/v1", api_key="unused")
-
 resp = client.chat.completions.create(
-    model="openai/gpt-4o",   # provider/model; "openai/" is optional
-    messages=[{"role": "user",
-               "content": "Email a summary to sarah.chen@acme.example"}],
+    model="openai/gpt-4o",
+    messages=[{"role": "user", "content": "Email a summary to sarah.chen@acme.example"}],
 )
-# The provider only ever saw <EMAIL_ADDRESS_…>; the reply you get back
-# has the real address restored.
+# The provider only ever saw <EMAIL_ADDRESS_…>; the reply has the real address restored.
 ```
 
-The endpoint is a single OpenAI-shaped `POST /v1/chat/completions`, so
-the client base URL is byte-identical to a real OpenAI swap. The
-upstream provider is selected in-band (the OpenRouter convention) by a
-`provider/model` prefix on the `model` field: `openai/gpt-4o` routes to
-OpenAI and forwards the bare `gpt-4o` upstream. A model with no prefix
-defaults to OpenAI. v0.1 proxies OpenAI only; an `anthropic/…` model is
-rejected with a clear error until Anthropic routing lands in v0.2.
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `ANONDE_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint, incl. a local Ollama (`http://localhost:11434/v1`). |
-| `ANONDE_OPENAI_API_KEY` | _(empty)_ | Forwarded as `Authorization: Bearer`. Leave empty for keyless upstreams like Ollama. |
-| `ANONDE_PROXY_TENANT` | `openai-proxy` | Vault tenant when a request carries no `X-Anonde-Tenant` header. |
-| `ANONDE_PROXY_TIMEOUT` | `120s` | Upstream request timeout (shared across all proxied providers). |
-
-**Known limitation (v0.1):** non-streaming only. A `stream: true` request
-is rejected with a clear error rather than silently downgraded.
-Streaming SSE de-anonymization lands in v0.1.1. Anthropic and Gemini
-upstreams (selected by the `anthropic/` / `gemini/` model prefix) are on
-the roadmap.
+Works with the raw OpenAI SDK, LangChain, or anything that speaks the OpenAI
+API. Provider is selected in-band by a `provider/model` prefix. Env vars,
+multi-provider routing, and the v0.1 streaming limitation are in
+[docs/OPENAI_PROXY.md](docs/OPENAI_PROXY.md).
 
 ## Write your own recognizer
 
 Extensibility is the part Presidio gets right and we copied. A pattern
-recognizer is a regex, a label, a language list, and an optional set of
-context words that boost the score when they appear nearby.
+recognizer is a regex, a label, a language list, and optional context words
+that boost the score when they appear nearby. Add one two ways:
 
-**In-repo (joins every engine by default).** Drop the file into
-`analyzer/recognizers/` and add one line to `anonde.go`:
+- **In-repo** — drop a file into `analyzer/recognizers/` and register it in
+  `anonde.go`; it joins every engine by default.
+- **As a library consumer (no fork)** — implement
+  [`analyzer.EntityRecognizer`](analyzer/recognizer.go) and
+  `engine.Registry.Add(...)` at startup.
 
-```go
-// analyzer/recognizers/my_id.go
-package recognizers
-
-import "regexp"
-
-var myIDRE = regexp.MustCompile(`\bMID-\d{6,10}\b`)
-
-// NewMyIDRecognizer detects MY_ID entities.
-func NewMyIDRecognizer() *PatternRecognizer {
-	return NewPatternRecognizerWithContext(
-		"MyIDRecognizer",
-		[]string{"MY_ID"},
-		[]string{"*"},                                // languages; "*" runs on all
-		[]namedPattern{{re: myIDRE, score: 1.0}},
-		[]string{"member id", "membership", "mid"},   // context boosts
-	)
-}
-```
-
-```go
-// anonde.go — register inside patternRecognizers()
-func patternRecognizers() []analyzer.EntityRecognizer {
-	return []analyzer.EntityRecognizer{
-		// Generic / international
-		recognizers.NewEmailRecognizer(),
-		recognizers.NewPhoneRecognizer(),
-		// …
-		recognizers.NewMyIDRecognizer(),   // ← add your recognizer here
-	}
-}
-```
-
-**As a library consumer (no fork).** Implement
-[`analyzer.EntityRecognizer`](analyzer/recognizer.go) in your own
-package and attach it to the engine's registry at startup — useful when
-you `go get` anonde and don't want to maintain a fork:
-
-```go
-type MyIDRecognizer struct{ re *regexp.Regexp }
-
-func (r *MyIDRecognizer) Name() string                 { return "MyIDRecognizer" }
-func (r *MyIDRecognizer) SupportedEntities() []string  { return []string{"MY_ID"} }
-func (r *MyIDRecognizer) SupportedLanguages() []string { return []string{"*"} }
-
-func (r *MyIDRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
-	var out []analyzer.RecognizerResult
-	for _, m := range r.re.FindAllStringIndex(text, -1) {
-		out = append(out, analyzer.RecognizerResult{
-			Start: m[0], End: m[1], Score: 1.0,
-			EntityType: "MY_ID", RecognizerName: "MyIDRecognizer",
-		})
-	}
-	return out, nil
-}
-
-engine := anonde.DefaultAnalyzerEngine()
-engine.Registry.Add(&MyIDRecognizer{re: regexp.MustCompile(`\bMID-\d{6,10}\b`)})
-```
-
-Either path joins the parallel-dispatch pipeline and the conflict
-resolver handles overlap with existing recognizers automatically; NER
-preferences (PERSON / ORG / LOC / AGE / PROFESSION / NRP) and the full
-pipeline rules live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-The full 52-recognizer catalogue + how to add a model-backed (NER)
-recognizer is in [docs/RECOGNIZERS.md](docs/RECOGNIZERS.md).
+Either path joins the parallel-dispatch pipeline and the conflict resolver
+handles overlap automatically. Worked examples (context boosts, both paths),
+the 52-recognizer catalogue, and how to add a model-backed NER recognizer are
+in [docs/RECOGNIZERS.md](docs/RECOGNIZERS.md). NER preferences and the full
+pipeline rules are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Built for
 
@@ -483,43 +248,19 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
 - [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
 - [Operators](docs/OPERATORS.md): Replace, Redact, Mask, Hash, Encrypt, Synthesize
-- [Deployment](docs/DEPLOYMENT.md): Docker, env vars, CI
+- [OpenAI proxy](docs/OPENAI_PROXY.md): point an OpenAI SDK at anonde
+- [Deployment](docs/DEPLOYMENT.md): Docker, env vars, ports, persistence, PDF/OCR, CI
+- [Telemetry](docs/TELEMETRY.md): what the anonymous heartbeat sends, and how to disable it
 - [Benchmark matrix](bench/REPORT_MATRIX.md): full results
 
 ## Telemetry
 
-anonde sends an anonymous heartbeat once every 24 hours so we can see
-which deployment shapes (patterns vs NER, OS / arch, backend mix) and
-which entity types are in active use, and prioritise the roadmap
-against real signal rather than guesswork.
-
-Disable with `ANONDE_TELEMETRY=off` or `ANONDE_OFFLINE=1`.
-
-A random install ID is persisted at `$XDG_DATA_HOME/anonde/install_id`
-(fallback `~/.anonde/install_id`) and reused across restarts.
-
-Fields sent:
-
-| Field | Example |
-|---|---|
-| `install_id` | `8a17c…b3` |
-| `version` | `f684298` |
-| `build_tag` | `default` or `hugot` |
-| `os` / `arch` | `linux` / `amd64` |
-| `backend` | `patterns`, `gliner`, … |
-| `uptime_seconds` | `86400` |
-| `request_count` | `1245` |
-| `error_count` | `3` |
-| `entity_counts` | `{"PERSON": 412, "EMAIL_ADDRESS": 89}` |
-| `p95_latency_ms` | `42.1` |
-
-No input text, output text, token values, vault contents, IP
-addresses, hostnames, tenant IDs, document IDs, actors, or purposes
-are sent. The wire payload is defined in
-[`internal/telemetry/payload.go`](internal/telemetry/payload.go) and
-enforced by a unit test.
-
-Override the endpoint with `ANONDE_TELEMETRY_URL`.
+anonde sends an anonymous heartbeat once every 24 hours (deployment shape,
+backend mix, entity-type counts) so we can prioritise the roadmap against
+real signal. **No input/output text, token values, vault contents, IPs,
+hostnames, tenant/doc IDs, actors, or purposes are ever sent.** Disable with
+`ANONDE_TELEMETRY=off` or `ANONDE_OFFLINE=1`. The full field list and the wire
+payload are in [docs/TELEMETRY.md](docs/TELEMETRY.md).
 
 ## Contributing & community
 
