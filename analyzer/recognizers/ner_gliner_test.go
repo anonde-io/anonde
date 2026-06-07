@@ -38,9 +38,10 @@ func TestGLiNERRecognizer_Metadata(t *testing.T) {
 	for _, e := range got {
 		gotSet[e] = true
 	}
-	// These come from DefaultLabelToEntity; if the map shrinks we
-	// want the test to fail explicitly.
-	for _, want := range []string{"PERSON", "LOCATION", "STREET_ADDRESS", "PHONE_NUMBER", "DATE_TIME"} {
+	// These come from DefaultLabelToEntity (= chat); if the map shrinks we
+	// want the test to fail explicitly. DATE_TIME is clinical-only now, so
+	// it's not asserted here (the chat default drops it).
+	for _, want := range []string{"PERSON", "LOCATION", "STREET_ADDRESS", "PHONE_NUMBER", "EMAIL_ADDRESS"} {
 		if !gotSet[want] {
 			t.Errorf("SupportedEntities missing %q (got %v)", want, got)
 		}

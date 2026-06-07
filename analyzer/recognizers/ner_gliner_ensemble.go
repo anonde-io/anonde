@@ -117,10 +117,10 @@ type EnsembleGLiNERRecognizer struct {
 // supplied threshold + ortLib + the FP32 ONNX path
 // (`onnx/model.onnx`); see defaultEnsembleOnnxFile for the rationale.
 // Labels / LabelToEntity / MaxWidth / MaxTokens / chunking / MaxChunks
-// fall through to GLiNERRecognizer defaults (DefaultPIILabels +
-// DefaultLabelToEntity), so all members share the same label space and
-// canonical mapping; necessary for the OR-merge to compare like with
-// like.
+// fall through to GLiNERRecognizer defaults (the chat-PII set via
+// defaultGLiNERLabels / defaultGLiNERLabelToEntity), so all members share
+// the same label space and canonical mapping; necessary for the OR-merge
+// to compare like with like.
 //
 // threshold == 0 selects the per-member default (defaultGLiNERThreshold,
 // 0.40). Override per deployment via the same GLINER_THRESHOLD env
@@ -214,8 +214,8 @@ func (e *EnsembleGLiNERRecognizer) Name() string {
 
 // SupportedEntities returns the deduplicated set of canonical entity
 // types the ensemble can emit. Because every member is constructed with
-// empty Labels / LabelToEntity (i.e. defaults), all members share
-// DefaultLabelToEntity; so the union is identical to member[0]'s
+// empty Labels / LabelToEntity (i.e. defaults), all members share the
+// chat-PII default map; so the union is identical to member[0]'s
 // SupportedEntities(). We forward to member[0] for clarity (no need to
 // recompute a union of identical sets). If a future EnsembleMemberConfig
 // API exposes per-member label overrides, this needs to become a real

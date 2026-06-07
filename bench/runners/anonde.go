@@ -88,11 +88,19 @@ func main() {
 		flatGLiNERModel = flag.String("flat-gliner-model", "", "additional flat-decoder GLiNER model id (e.g. knowledgator/gliner-pii-large-v1.0); registered alongside the base")
 		flatGLiNEROnnx  = flag.String("flat-gliner-onnx", "", "ONNX file path inside the flat-GLiNER repo (e.g. model.onnx)")
 		flatGLiNERThr   = flag.Float64("flat-gliner-threshold", 0, "flat-GLiNER threshold (0 = recognizer default)")
+
+		// labelSet picks the GLiNER label set for every NER config this run:
+		// chat|clinical|finance|legal. Default is chat; each per-corpus
+		// Makefile pins its own domain (LABEL_SET ?= ...) so measurement is
+		// domain-appropriate. Flag wins over $GLINER_LABEL_SET; see resolveLabelSet.
+		labelSet = flag.String("label-set", "", "GLiNER label set: chat|clinical|finance|legal (empty = $GLINER_LABEL_SET, then chat)")
 	)
 	flag.Parse()
 	if *inPath == "" || *outPath == "" {
 		log.Fatal("--in and --out required")
 	}
+
+	nerLabels, nerLabelToEntity := resolveLabelSet(*labelSet)
 
 	var (
 		engine      *analyzer.AnalyzerEngine
@@ -120,6 +128,9 @@ func main() {
 			AutoDownload:      *autoDL,
 			Threshold:         *glinerThr,
 			SharedLibraryPath: *ortLibPath,
+			// Resolved label set (default chat; per-corpus Makefile pins its domain).
+			Labels:        nerLabels,
+			LabelToEntity: nerLabelToEntity,
 		})
 		engineLabel = "anonde-ner"
 		if *modelName != "" {
@@ -142,6 +153,9 @@ func main() {
 			AutoDownload:      *autoDL,
 			Threshold:         *glinerThr,
 			SharedLibraryPath: *ortLibPath,
+			// Resolved label set (default chat; per-corpus Makefile pins its domain).
+			Labels:        nerLabels,
+			LabelToEntity: nerLabelToEntity,
 		})
 		engineLabel = "anonde-gliner-flat"
 		if *modelName != "" {
@@ -183,6 +197,10 @@ func main() {
 			AutoDownload:      *autoDL,
 			Threshold:         *flatGLiNERThr,
 			SharedLibraryPath: *ortLibPath,
+			// Same resolved set as the base slot, so the ner-stack flat slot
+			// matches the base + the sidecar.
+			Labels:        nerLabels,
+			LabelToEntity: nerLabelToEntity,
 		})
 		engine.Registry.Add(flatRec)
 		engineLabel += "+flat[" + *flatGLiNERModel + "]"
@@ -255,6 +273,42 @@ func main() {
 		log.Fatalf("scan: %v", err)
 	}
 	log.Printf("processed %d docs (engine=%s, language=%s)", docs, engineLabel, *language)
+}
+
+// resolveLabelSet picks the GLiNER label list + its label→entity map for every
+// NER config this run. Order: --label-set flag, then $GLINER_LABEL_SET, then
+// the global DEFAULT "chat". Each per-corpus Makefile self-declares its domain
+// (LABEL_SET ?= clinical|finance|legal|chat), so measurement is
+// domain-appropriate; only a corpus that declares nothing falls through to
+// chat. An unrecognised value falls back to chat too. Mirrors
+// cmd/anonde/main.go's glinerLabelSetFromEnv.
+//
+//   chat, default → DefaultPIILabels  / DefaultLabelToEntity (= chat, global default)
+//   clinical      → ClinicalPIILabels / ClinicalLabelToEntity
+//   finance       → FinancePIILabels  / FinancePIILabelToEntity
+//   legal         → LegalPIILabels    / LegalPIILabelToEntity
+func resolveLabelSet(flagVal string) ([]string, map[string]string) {
+	set := strings.ToLower(strings.TrimSpace(flagVal))
+	if set == "" {
+		set = strings.ToLower(strings.TrimSpace(os.Getenv("GLINER_LABEL_SET")))
+	}
+	switch set {
+	case "", "chat", "default":
+		log.Printf("gliner label set: chat (DefaultPIILabels; global default)")
+		return recognizers.DefaultPIILabels, recognizers.DefaultLabelToEntity
+	case "clinical":
+		log.Printf("gliner label set: clinical (ClinicalPIILabels; AGE/PROFESSION/DATE + clinical/German-insurance)")
+		return recognizers.ClinicalPIILabels, recognizers.ClinicalLabelToEntity
+	case "finance":
+		log.Printf("gliner label set: finance (FinancePIILabels; bank/routing/IBAN/SWIFT, card+CVV, tax IDs, account/transaction IDs)")
+		return recognizers.FinancePIILabels, recognizers.FinancePIILabelToEntity
+	case "legal":
+		log.Printf("gliner label set: legal (LegalPIILabels; identity+geography, DATE/DOB kept, case/docket/matter/contract/bar IDs, court, parties)")
+		return recognizers.LegalPIILabels, recognizers.LegalPIILabelToEntity
+	default:
+		log.Printf("label set %q not recognised (valid: chat, clinical, finance, legal); defaulting to chat", set)
+		return recognizers.DefaultPIILabels, recognizers.DefaultLabelToEntity
+	}
 }
 
 // foldForParity normalises anonde's address-bucket entity types to LOCATION

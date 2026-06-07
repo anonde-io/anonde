@@ -34,6 +34,9 @@
 #   ANONDE_MODEL         override default model id for the active backend
 #   ANONDE_ONNX_FILE     override default ONNX file inside the HF repo
 #   NER_SCORE_FLOOR      drop NER predictions below this score
+#   LABEL_SET            GLiNER label set: chat|clinical|finance|legal.
+#                        Default: per-corpus (each corpus runs its own domain);
+#                        setting it forces that label set across every cell.
 #   GLINER_MODEL         model id for the GLiNER cells (default: PII base)
 #   GLINER_THRESHOLD     GLiNER threshold (default: 0.40)
 #   HUGOT_MODEL          model id for the hugot cells (default: multilang PII)
@@ -77,6 +80,15 @@ HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
 NER_SCORE_FLOOR  ?= 0
+
+# GLiNER label set the NER cells run: chat|clinical|finance|legal. Threaded
+# to the runner's --label-set flag, but per-corpus via LABEL_SET_FOR (below)
+# so each corpus is measured under its OWN domain, not a blanket default.
+# This global is only the FALLBACK for corpora LABEL_SET_FOR doesn't classify,
+# and the chat default matches the library + per-corpus Makefile defaults.
+# Setting LABEL_SET=<x> on the command line forces every cell to <x> (an
+# explicit override beats the per-corpus mapping).
+LABEL_SET        ?= chat
 
 # Per-language corpus partitions. ggponc_de is OMITTED from the matrix
 # because its corpus requires manual registration + extraction (see
@@ -133,6 +145,39 @@ ES_CORPORA := pharmaconer_es ai4privacy_es mapa_es synth_finance_es \
 FR_CORPORA := ai4privacy_fr mapa_fr synth_finance_fr synth_clinical_fr
 IT_CORPORA := ai4privacy_it mapa_it synth_finance_it synth_clinical_it
 ALL_CORPORA := $(DE_CORPORA) $(EN_CORPORA) $(ES_CORPORA) $(FR_CORPORA) $(IT_CORPORA)
+
+# ---- PER-CORPUS LABEL-SET CLASSIFICATION ---------------------------------------
+# Each corpus is measured under its OWN domain (clinical/finance/legal/chat) so
+# the score is meaningful — a finance corpus scored with clinical labels is not.
+# These partitions mirror the LABEL_SET ?= <domain> default in each corpus's own
+# Makefile; keep them in sync when adding a corpus.
+CLINICAL_CORPORA := openmed pmc_de ggponc_de synth_clinical synth_clinical_en \
+                    synth_clinical_fr synth_clinical_it meddocan_es pharmaconer_es
+FINANCE_CORPORA  := finance_de synth_finance_de synth_finance_en \
+                    synth_finance_es synth_finance_fr synth_finance_it
+LEGAL_CORPORA    := mapa_de mapa_en mapa_es mapa_fr mapa_it legal_de
+# Everything else (ai4privacy_*, wiki_de, synth_logs, the NER-only corpora)
+# falls through to the chat global default.
+
+# LABEL_SET_FOR($1=corpus) → the label set that corpus's cell runs under.
+# If LABEL_SET was set explicitly (command line / environment), that wins for
+# every cell — an operator forcing one label set across the matrix. Otherwise
+# classify per corpus, falling back to $(LABEL_SET) (= chat).
+ifneq ($(filter command line environment,$(origin LABEL_SET)),)
+LABEL_SET_FOR = $(LABEL_SET)
+else
+LABEL_SET_FOR = $(if $(filter $(1),$(CLINICAL_CORPORA)),clinical,\
+                $(if $(filter $(1),$(FINANCE_CORPORA)),finance,\
+                $(if $(filter $(1),$(LEGAL_CORPORA)),legal,$(LABEL_SET))))
+endif
+
+# To add a dedicated finance/legal corpus: create bench/corpora/<NAME>/ (loader +
+# gold; see _scaffold_finance_legal/README.md), add it to the right *_CORPORA
+# partition above AND the matching *_CORPORA classification list here, and set
+# LABEL_SET ?= <domain> in its own Makefile. Gold must map through label_map.yaml
+# to the canonical types FinancePIILabelToEntity / LegalPIILabelToEntity emit.
+# Ad-hoc probe: make -C bench/corpora/<NAME> all ANONDE_BACKEND=gliner LABEL_SET=finance
+# --------------------------------------------------------------------------------
 
 # The engines the matrix scores. Each row's name is what compare.py
 # routes through the label_map (so prefixes matter — see compare.py).
@@ -217,6 +262,10 @@ help:
 	@echo ""
 	@echo "openai-pf is gated: pass RUN_OPENAI_PF=1 to run its cells"
 	@echo "  (~80 s/doc; subsample size OPENAI_PF_SAMPLE=$(OPENAI_PF_SAMPLE) docs)"
+	@echo ""
+	@echo "GLiNER label set: per-corpus (clinical/finance/legal/chat); LABEL_SET=$(LABEL_SET) is the fallback/override"
+	@echo "  finance/legal are wired end-to-end but need a real gold corpus"
+	@echo "  (see the FINANCE/LEGAL SCAFFOLD block in bench/Makefile)"
 	@echo ""
 	@echo "Per-corpus targets also reachable directly:"
 	@echo "  make -C bench/corpora/<NAME> all ANONDE_BACKEND=<mode>"
@@ -338,6 +387,7 @@ $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	    --model "$(if $(filter $(2),anonde-ner anonde-ner-stack),$(call GLINER_MODEL_FOR,$(2)),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
 	    --onnx-file "$(call GLINER_ONNX_FILE_FOR,$(2))" \
 	    --gliner-threshold $(if $(filter $(2),anonde-ner anonde-ner-stack),$(GLINER_THRESHOLD),0) \
+	    $(if $(filter $(2),anonde-hugot anonde-ner anonde-ner-stack),--label-set "$(call LABEL_SET_FOR,$(1))",) \
 	    $(if $(filter $(2),anonde-ner anonde-ner-stack),--ort-library "$(ORT_LIB)",) \
 	    $(if $(filter $(2),anonde-ner-stack),--flat-gliner-model "$(GLINER_LARGE_MODEL)" --flat-gliner-onnx "$(GLINER_LARGE_ONNX_FILE)" --flat-gliner-threshold 0,) \
 	    $(call FOLD_FOR_CORPUS,$(1))

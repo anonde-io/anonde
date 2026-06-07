@@ -34,6 +34,10 @@ ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
 # 0 = recognizer default; negative = disabled. Per-model tuning happens here.
 NER_SCORE_FLOOR  ?= 0
+# GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
+# the runner via --label-set. This corpus self-declares its domain
+# (clinical/PHI corpus); ignored on the patterns-only backend.
+LABEL_SET        ?= clinical
 
 # Only build hugot transitive deps when the backend actually needs them.
 GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
@@ -58,8 +62,8 @@ anonde: $(CORPUS)
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
 		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--reconciler $(RECONCILER) --ollama-model $(OLLAMA_MODEL) \
-		--auditor $(AUDITOR) --auditor-model $(AUDITOR_MODEL)
+		--label-set $(LABEL_SET) \
+		--ollama-model $(OLLAMA_MODEL)
 
 .PHONY: report
 report:

@@ -50,7 +50,7 @@ func (r *GLiNERFlatRecognizer) Name() string { return "GLiNERFlatNERRecognizer" 
 func (r *GLiNERFlatRecognizer) SupportedEntities() []string {
 	m := r.cfg.LabelToEntity
 	if len(m) == 0 {
-		m = DefaultLabelToEntity
+		m = defaultGLiNERLabelToEntity()
 	}
 	seen := make(map[string]struct{}, len(m))
 	out := make([]string, 0, len(m))

@@ -40,6 +40,10 @@ PYTHON           ?= python3
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
 NER_SCORE_FLOOR  ?= 0
+# GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
+# the runner via --label-set. This corpus self-declares its domain
+# (clinical/PHI corpus); ignored on the patterns-only backend.
+LABEL_SET        ?= clinical
 PRESIDIO_ENGINE  ?= default
 
 GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
@@ -75,7 +79,7 @@ anonde: $(CORPUS)
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
 		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--reconciler none --auditor none
+		--label-set $(LABEL_SET)
 
 .PHONY: presidio
 presidio: $(CORPUS)

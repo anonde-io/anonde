@@ -141,7 +141,7 @@ func (r *GLiNERFlatRecognizer) Name() string { return "GLiNERFlatNERRecognizer" 
 func (r *GLiNERFlatRecognizer) SupportedEntities() []string {
 	m := r.cfg.LabelToEntity
 	if len(m) == 0 {
-		m = DefaultLabelToEntity
+		m = defaultGLiNERLabelToEntity()
 	}
 	seen := make(map[string]struct{}, len(m))
 	out := make([]string, 0, len(m))
@@ -180,11 +180,11 @@ func (r *GLiNERFlatRecognizer) init(ctx context.Context) error {
 		// --- config defaults --------------------------------------
 		r.labels = r.cfg.Labels
 		if len(r.labels) == 0 {
-			r.labels = DefaultPIILabels
+			r.labels = defaultGLiNERLabels()
 		}
 		r.labelToEntity = r.cfg.LabelToEntity
 		if len(r.labelToEntity) == 0 {
-			r.labelToEntity = DefaultLabelToEntity
+			r.labelToEntity = defaultGLiNERLabelToEntity()
 		}
 		r.threshold = r.cfg.Threshold
 		if r.threshold == 0 {
@@ -738,8 +738,15 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	for c := 0; c < numClasses; c++ {
 		t := r.threshold
 		if c < len(r.labels) {
-			if override, ok := entityTypeThreshold[r.labelToEntity[r.labels[c]]]; ok && t > override {
+			canonical := r.labelToEntity[r.labels[c]]
+			// ClassThresholds replaces the built-in floor outright (used
+			// directly, not min()'d), so a deploy can RAISE a floor min()
+			// never can — e.g. PERSON above 0.22 to cut common-word FPs.
+			// Absent classes fall back to min(engineThreshold, floor).
+			if override, ok := r.cfg.ClassThresholds[canonical]; ok && override > 0 {
 				t = override
+			} else if floor, ok := entityTypeThreshold[canonical]; ok && t > floor {
+				t = floor
 			}
 		}
 		perClassThresh[c] = t
