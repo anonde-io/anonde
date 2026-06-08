@@ -93,7 +93,7 @@ jobs:
             latest=auto
 
       - name: Build and push linux/amd64 + linux/arm64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.anonde
@@ -151,7 +151,7 @@ jobs:
             latest=auto
 
       - name: Build and push linux/amd64 + linux/arm64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.anonde-ner
@@ -206,7 +206,7 @@ jobs:
             latest=auto
 
       - name: Build and push linux/amd64 + linux/arm64
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.anonde-ner-stack
