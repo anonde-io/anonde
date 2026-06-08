@@ -89,7 +89,7 @@ jobs:
   # ---- Per-cell bench. One runner per corpus, in parallel. ----------
   bench-cell:
     name: cell · ${{ matrix.corpus }}
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     # 75 min (was 45): the openai-pf cell is now part of the full matrix
     # and runs ~80 s/doc on CPU. We score it on a deterministic
     # OPENAI_PF_SAMPLE-doc subsample (40 → ~53 min) rather than the whole
