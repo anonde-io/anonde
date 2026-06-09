@@ -89,7 +89,7 @@ jobs:
   # ---- Per-cell bench. One runner per corpus, in parallel. ----------
   bench-cell:
     name: cell · ${{ matrix.corpus }}
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     # 75 min (was 45): the openai-pf cell is now part of the full matrix
     # and runs ~80 s/doc on CPU. We score it on a deterministic
     # OPENAI_PF_SAMPLE-doc subsample (40 → ~53 min) rather than the whole
@@ -342,7 +342,13 @@ jobs:
           # is in the hash — the per-cell run command lives here and
           # changes to it should also bust the cache. Bump rv* whenever
           # you want to force a clean refresh across all corpora.
-          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go', 'bench/Makefile', '.github/workflows/bench-full.yml') }}-maxdocs${{ env.MAX_DOCS }}-rv3
+          # The per-corpus Makefile is hashed too: its LABEL_SET ?= <domain>
+          # default now drives the cell's label set (via LABEL_SET_FOR in
+          # bench/Makefile), so a label-set change there must bust this corpus's
+          # cells. rv5: the cells now run under each corpus's OWN domain (the
+          # blanket clinical pin is gone), so every non-clinical corpus's recipe
+          # changed — force fresh across the matrix.
+          key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), format('bench/corpora/{0}/Makefile', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go', 'bench/Makefile', '.github/workflows/bench-full.yml') }}-maxdocs${{ env.MAX_DOCS }}-rv5
 
       - name: Verify hugot build (the bench needs it)
         run: |
@@ -360,6 +366,12 @@ jobs:
       # deterministic OPENAI_PF_SAMPLE-doc subsample; render_matrix.py
       # scores it over only the docs it returned. The ner-stack cell is
       # a fast in-process Go run (no gate needed).
+      # LABEL_SET is NOT pinned here. Each corpus is measured under its own
+      # domain: bench/Makefile's LABEL_SET_FOR maps the corpus to its label set
+      # (clinical/finance/legal/chat), mirroring each corpus's own Makefile
+      # default. Scoring a finance corpus with clinical labels is meaningless,
+      # so the old blanket clinical pin is gone. Passing LABEL_SET= here would
+      # force every cell to one set (the override path) — we deliberately don't.
       - name: Run cell — ${{ matrix.corpus }}
         env:
           ORT_LIB: ${{ env.ORT_LIB }}
@@ -386,7 +398,7 @@ jobs:
     # Render even if some cells failed — render_matrix is tolerant of
     # missing per-cell JSONLs (they show as "–" in the matrix UI).
     if: always()
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # Needed by the "Open PR with refreshed REPORT_MATRIX" step at the
     # end of this job. Scoped to render only — bench-cell stays

@@ -294,7 +294,7 @@ func (r *GLiNERRecognizer) Name() string { return "GLiNERRecognizer" }
 func (r *GLiNERRecognizer) SupportedEntities() []string {
 	m := r.cfg.LabelToEntity
 	if len(m) == 0 {
-		m = DefaultLabelToEntity
+		m = defaultGLiNERLabelToEntity()
 	}
 	seen := make(map[string]struct{}, len(m))
 	out := make([]string, 0, len(m))
@@ -336,11 +336,11 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		// --- config defaults --------------------------------------
 		r.labels = r.cfg.Labels
 		if len(r.labels) == 0 {
-			r.labels = DefaultPIILabels
+			r.labels = defaultGLiNERLabels()
 		}
 		r.labelToEntity = r.cfg.LabelToEntity
 		if len(r.labelToEntity) == 0 {
-			r.labelToEntity = DefaultLabelToEntity
+			r.labelToEntity = defaultGLiNERLabelToEntity()
 		}
 		r.threshold = r.cfg.Threshold
 		if r.threshold == 0 {

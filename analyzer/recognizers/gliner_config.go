@@ -1,5 +1,5 @@
 // gliner_config.go is intentionally NOT build-tagged. GLiNERConfig and
-// DefaultPIILabels are pure-data declarations (no hugot/onnxruntime
+// the label sets are pure-data declarations (no hugot/onnxruntime
 // dependency in any field type), so they can be defined and referenced in
 // non-hugot builds; the stub `DefaultAnalyzerEngineWithGLiNERConfig` in
 // ../../hugot_off.go uses GLiNERConfig in its signature so the public API
@@ -41,18 +41,29 @@ type GLiNERConfig struct {
 	AutoDownload bool
 
 	// Labels lists the open-set entity labels to score at inference.
-	// Empty uses DefaultPIILabels. The list is tuned per-model; GLiNER's
-	// zero-shot recall is sensitive to label phrasing.
+	// Empty uses DefaultPIILabels (= ChatPIILabels, see defaultGLiNERLabels);
+	// clinical/HIPAA callers set ClinicalPIILabels for AGE/DATE/clinical
+	// coverage. Tuned per-model; GLiNER's zero-shot recall is sensitive to
+	// label phrasing.
 	Labels []string
 
 	// LabelToEntity maps each prompt label (as it appears in Labels) to
-	// the anonde canonical entity type. Empty uses DefaultLabelToEntity.
+	// the anonde canonical entity type. Empty uses ChatPIILabelToEntity.
 	// Labels not in the map are dropped at result time.
 	LabelToEntity map[string]string
 
 	// Threshold filters spans whose sigmoid(logit) is below this value.
 	// Defaults to 0.40 (matches the Python sidecar).
 	Threshold float64
+
+	// ClassThresholds overrides the per-class score floor, keyed by canonical
+	// entity type (e.g. "PERSON"). A present value is used DIRECTLY as that
+	// class's threshold (not min()'d against Threshold), so it can RAISE a
+	// floor the built-in min() never can — e.g. PERSON above the compiled-in
+	// 0.22 to stop the large/flat model firing common words ("Hello") as
+	// PERSON. Absent classes keep their built-in floor; nil preserves today's
+	// behaviour. Only the flat (token-decoder) recognizer consults this map.
+	ClassThresholds map[string]float64
 
 	// MaxWidth caps span width in WORDS (not subword tokens). Defaults to
 	// 12, matching the model's `gliner_config.json::max_width`. Setting
@@ -91,13 +102,35 @@ type GLiNERConfig struct {
 	SharedLibraryPath string
 }
 
-// DefaultPIILabels is the curated PII label set used by the Python
-// sidecar (bench/runners/gliner.py). Tuning labels here changes
-// recall; keep the list narrow to avoid noisy false positives, but wide
-// enough to cover common anonde entity types.
+// defaultGLiNERLabels is the label set an empty GLiNERConfig.Labels resolves
+// to. The default IS the chat set (DefaultPIILabels = ChatPIILabels): no-label
+// callers get chat, which drops AGE/PROFESSION/DATE/clinical labels that
+// over-fire on conversation. Clinical/HIPAA opts back in via
+// GLINER_LABEL_SET=clinical → ClinicalPIILabels (the bench runner pins it).
+func defaultGLiNERLabels() []string { return DefaultPIILabels }
+
+// defaultGLiNERLabelToEntity is the companion default for an empty
+// GLiNERConfig.LabelToEntity, kept in lock-step with defaultGLiNERLabels.
+func defaultGLiNERLabelToEntity() map[string]string { return DefaultLabelToEntity }
+
+// DefaultPIILabels is THE default label set — the chat set — used by any
+// no-label caller (empty GLiNERConfig.Labels). Aliased to ChatPIILabels so the
+// default tracks chat tuning. Clinical/legal/finance callers select their
+// domain set explicitly (GLINER_LABEL_SET / *PIILabels).
+var DefaultPIILabels = ChatPIILabels
+
+// DefaultLabelToEntity is the label→canonical map for DefaultPIILabels; aliased
+// to ChatPIILabelToEntity, kept in lock-step with DefaultPIILabels.
+var DefaultLabelToEntity = ChatPIILabelToEntity
+
+// ClinicalPIILabels is the curated clinical/HIPAA PII label set, also mirrored
+// by the Python sidecar (bench/runners/gliner.py). It carries the broad
+// coverage chat drops: age, profession, date(/of birth), the clinical labels
+// (patient/doctor/hospital), and the German insurance/tax/case-file IDs. Select
+// via GLINER_LABEL_SET=clinical.
 //
 // Order matters only for determinism; the model treats labels as a set.
-var DefaultPIILabels = []string{
+var ClinicalPIILabels = []string{
 	"person",
 	"first name",
 	"last name",
@@ -140,12 +173,11 @@ var DefaultPIILabels = []string{
 	"Personalausweisnummer",
 }
 
-// DefaultLabelToEntity mirrors LABEL_TO_CANONICAL in
-// bench/runners/gliner.py: it maps each prompt label to the anonde
-// canonical entity type, the same identifiers the pattern recognizers
-// emit. Keep in lock-step with the Python sidecar so cross-engine
-// comparisons stay apples-to-apples.
-var DefaultLabelToEntity = map[string]string{
+// ClinicalLabelToEntity mirrors LABEL_TO_CANONICAL in bench/runners/gliner.py:
+// it maps each ClinicalPIILabels label to the anonde canonical entity type, the
+// same identifiers the pattern recognizers emit. Keep in lock-step with the
+// Python sidecar so cross-engine comparisons stay apples-to-apples.
+var ClinicalLabelToEntity = map[string]string{
 	"person":                       "PERSON",
 	"first name":                   "PERSON",
 	"last name":                    "PERSON",
@@ -186,4 +218,222 @@ var DefaultLabelToEntity = map[string]string{
 	"Geburtsdatum":                 "DATE_TIME",
 	"Steuer-Identifikationsnummer": "ID",
 	"Personalausweisnummer":        "ID",
+}
+
+// ChatPIILabels is tuned for casual / conversational traffic, NOT clinical or
+// legal docs. It drops the noisy-in-chat labels ClinicalPIILabels carries —
+// age, profession, job title, date(/of birth), the clinical labels, and the
+// German insurance/tax/case-file IDs — which over-fire on conversation (dogfood
+// saw "18 years of experience" tagged AGE, "tech" tagged PROFESSION). Retained:
+// names, org/company, contact handles, postal geography, and structured
+// financial/government IDs. Select via GLINER_LABEL_SET=chat.
+// Order is for determinism only; the model treats labels as a set.
+var ChatPIILabels = []string{
+	"person",
+	"first name",
+	"last name",
+	"full name",
+	"organization",
+	"company",
+	"email",
+	"email address",
+	"phone number",
+	"url",
+	"address",
+	"street address",
+	"street",
+	"city",
+	"country",
+	"state",
+	"postal code",
+	"zip code",
+	"credit card",
+	"credit card number",
+	"iban",
+	"ssn",
+	"social security number",
+	"passport",
+	"id number",
+}
+
+// ChatPIILabelToEntity maps each ChatPIILabels label to its canonical entity
+// type. A strict subset of ClinicalLabelToEntity (same mappings, minus the
+// dropped clinical/AGE/PROFESSION/DATE labels).
+var ChatPIILabelToEntity = map[string]string{
+	"person":                 "PERSON",
+	"first name":             "PERSON",
+	"last name":              "PERSON",
+	"full name":              "PERSON",
+	"organization":           "ORGANIZATION",
+	"company":                "ORGANIZATION",
+	"email":                  "EMAIL_ADDRESS",
+	"email address":          "EMAIL_ADDRESS",
+	"phone number":           "PHONE_NUMBER",
+	"url":                    "URL",
+	"address":                "ADDRESS",
+	"street address":         "STREET_ADDRESS",
+	"street":                 "STREET_ADDRESS",
+	"city":                   "LOCATION",
+	"country":                "LOCATION",
+	"state":                  "LOCATION",
+	"postal code":            "POSTAL_CODE",
+	"zip code":               "POSTAL_CODE",
+	"credit card":            "CREDIT_CARD",
+	"credit card number":     "CREDIT_CARD",
+	"iban":                   "IBAN_CODE",
+	"ssn":                    "US_SSN",
+	"social security number": "US_SSN",
+	"passport":               "ID",
+	"id number":              "ID",
+}
+
+// FinancePIILabels is tuned for financial documents — bank statements, KYC
+// onboarding, payment records, tax forms. It keeps the identity+contact core
+// (person, organization, email, phone) and adds the structured financial IDs:
+// bank account/routing numbers, IBAN, SWIFT/BIC, card PAN+CVV, tax IDs
+// (SSN/ITIN/EIN/Steuer-ID), and account/transaction identifiers. Drops
+// profession/job title/age. All labels map to existing canonical types; see
+// FinancePIILabelToEntity for the coarse folds (routing/SWIFT/EIN/transaction
+// → ID, CVV → CREDIT_CARD).
+// Order is for determinism only; the model treats labels as a set.
+var FinancePIILabels = []string{
+	"person",
+	"first name",
+	"last name",
+	"full name",
+	"account holder",
+	"organization",
+	"company",
+	"bank name",
+	"email",
+	"email address",
+	"phone number",
+	"bank account number",
+	"account number",
+	"routing number",
+	"iban",
+	"swift code",
+	"bic",
+	"credit card",
+	"credit card number",
+	"cvv",
+	"tax identification number",
+	"ein",
+	"employer identification number",
+	"ssn",
+	"social security number",
+	"itin",
+	"brokerage account number",
+	"investment account number",
+	"transaction id",
+}
+
+// FinancePIILabelToEntity maps each FinancePIILabels label to its canonical
+// entity type. Finance-specific labels with no dedicated type fold into the
+// generic "ID" (routing/SWIFT/BIC/EIN/brokerage/transaction) or share an
+// operator (account holder → PERSON, cvv → CREDIT_CARD, bank name → ORG).
+var FinancePIILabelToEntity = map[string]string{
+	"person":                          "PERSON",
+	"first name":                      "PERSON",
+	"last name":                       "PERSON",
+	"full name":                       "PERSON",
+	"account holder":                  "PERSON",
+	"organization":                    "ORGANIZATION",
+	"company":                         "ORGANIZATION",
+	"bank name":                       "ORGANIZATION",
+	"email":                           "EMAIL_ADDRESS",
+	"email address":                   "EMAIL_ADDRESS",
+	"phone number":                    "PHONE_NUMBER",
+	"bank account number":             "US_BANK_NUMBER",
+	"account number":                  "US_BANK_NUMBER",
+	"routing number":                  "ID",
+	"iban":                            "IBAN_CODE",
+	"swift code":                      "ID",
+	"bic":                             "ID",
+	"credit card":                     "CREDIT_CARD",
+	"credit card number":              "CREDIT_CARD",
+	"cvv":                             "CREDIT_CARD",
+	"tax identification number":       "ID",
+	"ein":                             "ID",
+	"employer identification number":  "ID",
+	"ssn":                             "US_SSN",
+	"social security number":          "US_SSN",
+	"itin":                            "US_ITIN",
+	"brokerage account number":        "ID",
+	"investment account number":       "ID",
+	"transaction id":                  "ID",
+}
+
+// LegalPIILabels is tuned for legal documents — pleadings, contracts, court
+// filings, matter files. It keeps the identity+contact+geography core and,
+// crucially, KEEPS date / date of birth (legal docs are date-sensitive, unlike
+// chat). It adds the legal-specific IDs: case/docket/matter/contract/bar
+// numbers, court name, and party roles (attorney/counsel/plaintiff/defendant/
+// judge). All map to existing canonical types: the IDs fold into "ID", party
+// roles into PERSON, court name into ORGANIZATION.
+// Order is for determinism only; the model treats labels as a set.
+var LegalPIILabels = []string{
+	"person",
+	"first name",
+	"last name",
+	"full name",
+	"attorney",
+	"counsel",
+	"plaintiff",
+	"defendant",
+	"judge",
+	"organization",
+	"company",
+	"court name",
+	"email",
+	"email address",
+	"phone number",
+	"address",
+	"street address",
+	"city",
+	"country",
+	"state",
+	"postal code",
+	"date",
+	"date of birth",
+	"case number",
+	"docket number",
+	"matter number",
+	"contract number",
+	"bar number",
+}
+
+// LegalPIILabelToEntity maps each LegalPIILabels label to its canonical entity
+// type. Legal IDs (case/docket/matter/contract/bar) fold into "ID"; party
+// roles into PERSON; court name into ORGANIZATION; date/DOB into DATE_TIME
+// (retained on purpose, unlike the chat set).
+var LegalPIILabelToEntity = map[string]string{
+	"person":          "PERSON",
+	"first name":      "PERSON",
+	"last name":       "PERSON",
+	"full name":       "PERSON",
+	"attorney":        "PERSON",
+	"counsel":         "PERSON",
+	"plaintiff":       "PERSON",
+	"defendant":       "PERSON",
+	"judge":           "PERSON",
+	"organization":    "ORGANIZATION",
+	"company":         "ORGANIZATION",
+	"court name":      "ORGANIZATION",
+	"email":           "EMAIL_ADDRESS",
+	"email address":   "EMAIL_ADDRESS",
+	"phone number":    "PHONE_NUMBER",
+	"address":         "ADDRESS",
+	"street address":  "STREET_ADDRESS",
+	"city":            "LOCATION",
+	"country":         "LOCATION",
+	"state":           "LOCATION",
+	"postal code":     "POSTAL_CODE",
+	"date":            "DATE_TIME",
+	"date of birth":   "DATE_TIME",
+	"case number":     "ID",
+	"docket number":   "ID",
+	"matter number":   "ID",
+	"contract number": "ID",
+	"bar number":      "ID",
 }

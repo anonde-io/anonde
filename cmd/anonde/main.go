@@ -640,6 +640,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 				threshold, modelName)
 			return anonde.DefaultAnalyzerEngineWithGLiNEREnsemble(ens), "gliner-ensemble", os.Getenv("ANONDE_NER_STACK")
 		}
+		labels, labelToEntity := glinerLabelSetFromEnv()
 		cfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         modelName,
@@ -647,7 +648,9 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
-			// Labels left empty → DefaultPIILabels.
+			// nil → library chat default; GLINER_LABEL_SET pins clinical/finance/legal.
+			Labels:        labels,
+			LabelToEntity: labelToEntity,
 		}
 		if poolSize := glinerPoolSizeFromEnv("GLINER_POOL_SIZE"); poolSize >= 2 {
 			pool, err := recognizers.NewGLiNERPool(cfg, poolSize)
@@ -667,6 +670,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		modelName := getenvDefault("GLINER_MODEL", "knowledgator/gliner-pii-large-v1.0")
 		onnxPath := glinerOnnxFileFromEnv(modelName)
 		threshold := glinerThresholdFromEnv()
+		labels, labelToEntity := glinerLabelSetFromEnv()
 		cfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         modelName,
@@ -674,6 +678,10 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
+			ClassThresholds:   glinerClassThresholdsFromEnv(),
+			// nil → library chat default; GLINER_LABEL_SET pins clinical/finance/legal.
+			Labels:        labels,
+			LabelToEntity: labelToEntity,
 		}
 		if poolSize := glinerPoolSizeFromEnv("GLINER_POOL_SIZE"); poolSize >= 2 {
 			pool, err := recognizers.NewGLiNERFlatPool(cfg, poolSize)
@@ -711,6 +719,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		log.Printf("analyzer backend: gliner-stack (base=%s onnx=%s thr=%.2f base_pool=%d) + flat (model=%s onnx=%s thr=%.2f flat_pool=%d)",
 			baseModel, baseOnnx, baseThreshold, basePoolSize,
 			flatModel, flatOnnx, flatThreshold, flatPoolSize)
+		labels, labelToEntity := glinerLabelSetFromEnv()
 		baseCfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         baseModel,
@@ -718,6 +727,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         baseThreshold,
+			Labels:            labels,
+			LabelToEntity:     labelToEntity,
 		}
 		flatCfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
@@ -726,6 +737,9 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         flatThreshold,
+			ClassThresholds:   glinerClassThresholdsFromEnv(),
+			Labels:            labels,
+			LabelToEntity:     labelToEntity,
 		}
 		// Build the base slot: pool when sized, single recognizer
 		// otherwise. The two helpers register the chosen NER in the same
@@ -803,6 +817,48 @@ func glinerThresholdFromEnv() float64 {
 		return 0
 	}
 	return v
+}
+
+// glinerClassThresholdsFromEnv builds the flat recognizer's per-class
+// threshold override map from env. Only PERSON is exposed today:
+// GLINER_PERSON_THRESHOLD is used DIRECTLY (not min()'d), so an operator can
+// RAISE PERSON above the compiled-in 0.22 floor to cut common-word FPs.
+// Unset → nil; a malformed value is logged and ignored (fails open).
+func glinerClassThresholdsFromEnv() map[string]float64 {
+	raw := strings.TrimSpace(os.Getenv("GLINER_PERSON_THRESHOLD"))
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v <= 0 {
+		log.Printf("GLINER_PERSON_THRESHOLD=%q ignored: %v", raw, err)
+		return nil
+	}
+	return map[string]float64{"PERSON": v}
+}
+
+// glinerLabelSetFromEnv selects the GLiNER label list + its label→entity map
+// from GLINER_LABEL_SET. chat is the default (unset/empty/default/unrecognised
+// → nil,nil, which the library's empty-Labels fallback resolves to the chat
+// DefaultPIILabels); clinical|finance|legal pin the matching
+// recognizers.*PIILabels set. Mirrors the bench runner's resolveLabelSet.
+func glinerLabelSetFromEnv() ([]string, map[string]string) {
+	switch set := strings.ToLower(strings.TrimSpace(os.Getenv("GLINER_LABEL_SET"))); set {
+	case "", "chat", "default":
+		return nil, nil
+	case "clinical":
+		log.Printf("gliner label set: clinical (ClinicalPIILabels; AGE/PROFESSION/DATE + clinical/German-insurance labels)")
+		return recognizers.ClinicalPIILabels, recognizers.ClinicalLabelToEntity
+	case "finance":
+		log.Printf("gliner label set: finance (FinancePIILabels; bank/routing/IBAN/SWIFT, card+CVV, tax IDs, account/transaction IDs)")
+		return recognizers.FinancePIILabels, recognizers.FinancePIILabelToEntity
+	case "legal":
+		log.Printf("gliner label set: legal (LegalPIILabels; identity+geography, DATE/DOB kept, case/docket/matter/contract/bar IDs, court, parties)")
+		return recognizers.LegalPIILabels, recognizers.LegalPIILabelToEntity
+	default:
+		log.Printf("GLINER_LABEL_SET=%q not recognised (valid: chat, clinical, finance, legal); defaulting to chat", set)
+		return nil, nil
+	}
 }
 
 // glinerOnnxFileFromEnv resolves which ONNX export of the GLiNER model

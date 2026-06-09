@@ -27,6 +27,10 @@ PYTHON           ?= python3
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
 NER_SCORE_FLOOR  ?= 0
+# GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
+# the runner via --label-set. Default finance (this is a financial corpus);
+# ignored on the patterns-only backend.
+LABEL_SET        ?= finance
 
 GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
 
@@ -48,8 +52,8 @@ anonde: $(CORPUS)
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
 		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--reconciler $(RECONCILER) --ollama-model $(OLLAMA_MODEL) \
-		--auditor $(AUDITOR) --auditor-model $(AUDITOR_MODEL)
+		--label-set $(LABEL_SET) \
+		--ollama-model $(OLLAMA_MODEL)
 
 # Re-uses compare.py + label_map.yaml from bench/scoring — gold labels
 # reuse the GraSCCo PHI vocabulary (NAME_PATIENT, CONTACT_PHONE, …) since

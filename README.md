@@ -85,6 +85,41 @@ curl -sS -X POST http://localhost:8081/v1/anonymizations \
 Image variants, port/listen-address overrides, persistent volumes, and
 docker compose profiles are all in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+#### GLiNER label sets (`GLINER_LABEL_SET`)
+
+The NER image runs open-set GLiNER, so the list of entity labels is
+supplied at inference time — anonde ships four curated label sets and
+selects one with the `GLINER_LABEL_SET` env var. `chat` is the default;
+the others are opt-in.
+
+| Set | Tuned for | Highlights |
+| --- | --- | --- |
+| `chat` *(default)* | Casual / conversational traffic | Names, org, email/phone/URL, postal geography, structured financial + government IDs. **Drops** `age`, `profession`, `job title`, `date` / `date of birth`, and the clinical / German-insurance labels — they over-redact ordinary chat ("18 years of experience" → AGE, "tech" → PROFESSION). |
+| `clinical` | Clinical / HIPAA de-identification | The full default set: everything in chat **plus** `age`, `profession`, `date` / `date of birth`, patient/doctor/hospital labels, and the German insurance / tax / case-file IDs (`Versicherungsnummer`, `Steuer-Identifikationsnummer`, `Aktenzeichen`, …). |
+| `finance` | Bank statements, KYC, payments, tax forms | Identity + contact core **plus** bank account / routing numbers, IBAN, SWIFT/BIC, credit-card number + CVV, tax IDs (SSN / ITIN / EIN / Steuer-ID), and account / transaction identifiers. |
+| `legal` | Pleadings, contracts, court filings, matter files | Identity + geography core, **keeps** `date` / `date of birth` (legal docs are date-sensitive, unlike chat), **plus** case / docket / matter / contract / bar numbers, court name, and party roles (attorney, plaintiff, defendant, judge). |
+
+```bash
+# Default (chat) — no env needed
+docker run --rm -p 8081:8080 ghcr.io/anonde-io/anonde-ner:latest
+
+# Clinical / HIPAA coverage (adds AGE / DATE + clinical labels)
+docker run --rm -p 8081:8080 -e GLINER_LABEL_SET=clinical ghcr.io/anonde-io/anonde-ner:latest
+
+# Finance (bank / IBAN / SWIFT / card+CVV / tax IDs)
+docker run --rm -p 8081:8080 -e GLINER_LABEL_SET=finance ghcr.io/anonde-io/anonde-ner:latest
+
+# Legal (case / docket / bar numbers + dates kept)
+docker run --rm -p 8081:8080 -e GLINER_LABEL_SET=legal ghcr.io/anonde-io/anonde-ner:latest
+```
+
+All four sets map onto the same canonical entity types the pattern
+recognizers emit (`PERSON`, `ORGANIZATION`, `IBAN_CODE`, `US_BANK_NUMBER`,
+`ID`, …), so anonymizer operators and reveal/detokenize behave identically
+regardless of which set is active. An unrecognised value falls back to
+`chat`. Go-library callers set `GLiNERConfig.Labels` / `LabelToEntity`
+directly (e.g. `recognizers.FinancePIILabels`).
+
 ### Go library
 
 ```bash
