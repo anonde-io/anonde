@@ -68,7 +68,7 @@ jobs:
   # ---- BASE GLiNER image: multi-arch, CGO + libonnxruntime ----------
   anonde-ner:
     name: build anonde-ner (amd64 + arm64)
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     # NER builds download the ~370 MB FP32 ONNX model from HF Hub inside
     # the build stage (the DOWNLOAD_MODELS_ONLY=1 bake) AND run the
     # produced CGO binary under QEMU for arm64. The arm64 leg in
@@ -111,7 +111,7 @@ jobs:
   # ---- BASE + LARGE stack image: multi-arch, biggest build ----------
   anonde-ner-stack:
     name: build anonde-ner-stack (amd64 + arm64)
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     # Same DOWNLOAD_MODELS_ONLY=1 pattern as anonde-ner but bakes BOTH
     # the BASE FP32 (~370 MB) AND the LARGE FP32 (~1.4 GB) into /models —
     # done once per arch. The arm64 leg is the long pole (QEMU CGO build

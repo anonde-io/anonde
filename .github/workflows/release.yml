@@ -107,7 +107,7 @@ jobs:
   # ---- BASE GLiNER image: multi-arch, CGO + libonnxruntime ----------
   anonde-ner:
     name: publish anonde-ner (amd64 + arm64)
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -165,7 +165,7 @@ jobs:
   # ---- BASE + LARGE stack image: multi-arch, biggest build ----------
   anonde-ner-stack:
     name: publish anonde-ner-stack (amd64 + arm64)
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
