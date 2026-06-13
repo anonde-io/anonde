@@ -9,7 +9,33 @@ each such change is called out under a **Changed** or **Removed** heading.
 
 ## [Unreleased]
 
-Nothing yet. Post-`v0.1.0` work-in-progress lands here.
+Nothing yet. Post-`v0.1.1` work-in-progress lands here.
+
+## [0.1.1] - 2026-06-13
+
+Maintenance release. Re-publishes the three image variants
+(`anonde`, `anonde-ner`, `anonde-ner-stack`) at `0.1.1`.
+
+### Added
+
+- **Selectable GLiNER label sets** (`GLINER_LABEL_SET`) — the NER image
+  ships four curated open-set label sets and selects one at inference
+  time: `chat` (default), `clinical`, `finance`, and `legal`. All four
+  map onto the same canonical entity types the pattern recognizers emit,
+  so anonymizer operators and reveal/detokenize behave identically
+  regardless of which set is active; an unrecognised value falls back to
+  `chat`. Go-library callers set `GLiNERConfig.Labels` / `LabelToEntity`
+  directly (e.g. `recognizers.FinancePIILabels`). See the README for the
+  per-set coverage table.
+
+### Changed
+
+- **Default NER label set is now `chat`** (was the full clinical set in
+  `0.1.0`). `chat` drops `age`, `profession`, `job title`,
+  `date` / `date of birth`, and the clinical / German-insurance labels
+  because they over-redact ordinary conversational text ("18 years of
+  experience" → AGE, "tech" → PROFESSION). Deployments that need the old
+  behavior set `GLINER_LABEL_SET=clinical`.
 
 ## [0.1.0] - 2026-05-28
 
@@ -70,5 +96,6 @@ Multi-arch (`linux/amd64` + `linux/arm64`).
 - Streaming SSE support for the OpenAI-compatible proxy (`stream: true`).
 - Anthropic and Gemini upstreams for the proxy, selected by model prefix.
 
-[Unreleased]: https://github.com/anonde-io/anonde/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/anonde-io/anonde/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/anonde-io/anonde/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/anonde-io/anonde/releases/tag/v0.1.0
