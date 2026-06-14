@@ -158,22 +158,56 @@ func fetchAndVerify(ctx context.Context, modelsDir, model, onnx string) error {
 	if onnx != "" {
 		opts.OnnxFilePath = onnx
 	}
-	// hugot.DownloadModel is a no-op fast path when the model already
-	// exists, so calling it unconditionally also REPAIRS a partial cache
-	// (the exact failure mode that produced random silent fallbacks).
-	if _, err := hugot.DownloadModel(ctx, model, modelsDir, opts); err != nil {
+
+	// First attempt. hugot.DownloadModel has a "model dir already exists →
+	// skip" fast path, so a normal cache hit is a cheap no-op here. On a
+	// cache-cold run (e.g. the first run after a cache-key bump) all matrix
+	// cells download from HF concurrently; retry with backoff so a single
+	// transient 429 / timeout doesn't redden a cell.
+	if err := downloadWithRetry(ctx, model, modelsDir, opts); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 
-	// Verify the ONNX blob using the SAME resolution order the GLiNER
-	// recognizer uses (analyzer/recognizers/ner_gliner.go ~514-528) so a
-	// pass here guarantees the recognizer also resolves an onnx at init:
-	//   1. model.onnx at the model-dir root, else
-	//   2. the requested -onnx path (a hint, not a hard requirement), else
-	//   3. the first *.onnx found by a recursive walk (findFirstOnnx).
-	// The on-disk layout of these HF repos is NOT necessarily
-	// onnx/model.onnx, which is why a single hard-coded path fail-closed
-	// while the recognizer loaded fine.
+	// Verify, and REPAIR a partial/empty cache. The first DownloadModel
+	// above no-ops when the model DIRECTORY exists, even if that directory
+	// is empty — which is exactly what a poisoned actions/cache restore
+	// produces (the static cache key was once saved with a ~0-byte dir, and
+	// actions/cache never re-saves a key that already exists, so every run
+	// restores the same empty stub and hugot skips the real download). The
+	// recognizer then silently falls back to patterns-only, leaking PII.
+	// See bench-full runs 64ad360 (canary caught meddocan_es/synth_finance_es
+	// at 0 NER findings) and ae38561 (every cell failed prefetch).
+	//
+	// Repair: if the cache stub is missing a usable onnx OR the tokenizer,
+	// purge the model dir and download once more — this time hugot has no
+	// existing dir to skip on, so it actually fetches the files.
+	if err := verifyModelFiles(modelPath, onnx); err != nil {
+		log.Printf("REPAIR  %s: cached dir incomplete (%v); purging and re-downloading", model, err)
+		if rmErr := os.RemoveAll(modelPath); rmErr != nil {
+			return fmt.Errorf("purge incomplete cache dir %s: %w", modelPath, rmErr)
+		}
+		if dlErr := downloadWithRetry(ctx, model, modelsDir, opts); dlErr != nil {
+			return fmt.Errorf("re-download after purge: %w", dlErr)
+		}
+		if err := verifyModelFiles(modelPath, onnx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verifyModelFiles checks that modelPath holds a usable, non-empty ONNX
+// export (resolved the same way the GLiNER recognizer resolves it) and a
+// non-empty tokenizer.json. Returns an error describing the first missing
+// artifact, or nil when the model is complete.
+//
+// ONNX resolution mirrors the recognizer (analyzer/recognizers/ner_gliner.go
+// ~514-528): model.onnx at the model-dir root, else the requested -onnx
+// path (a hint, not a hard requirement), else the first *.onnx found by a
+// recursive walk. The on-disk layout of these HF repos is NOT necessarily
+// onnx/model.onnx, which is why a single hard-coded path fail-closed while
+// the recognizer loaded fine off the walk fallback.
+func verifyModelFiles(modelPath, onnx string) error {
 	onnxFile, err := resolveOnnx(modelPath, onnx)
 	if err != nil {
 		return err
@@ -185,6 +219,39 @@ func fetchAndVerify(ctx context.Context, modelsDir, model, onnx string) error {
 		return err
 	}
 	return nil
+}
+
+// downloadWithRetry wraps hugot.DownloadModel with bounded exponential
+// backoff. On a cache-cold run every matrix cell hammers the HF Hub at
+// once for the same ~0.5 GB base + ~1.7 GB large export, and a fraction
+// reliably draw a 429 / connection-reset / read timeout. A single such
+// blip used to fail the whole cell (and pre-fail-loud, leak silently); a
+// few retries turn it into a momentary stall. The download deadline is
+// the shared ctx, so total time is still bounded by -timeout.
+func downloadWithRetry(ctx context.Context, model, modelsDir string, opts hugot.DownloadOptions) error {
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if _, err := hugot.DownloadModel(ctx, model, modelsDir, opts); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("download deadline reached after %d attempt(s): %w", attempt, lastErr)
+		}
+		if attempt < maxAttempts {
+			backoff := time.Duration(attempt*attempt) * 5 * time.Second
+			log.Printf("RETRY   %s: download attempt %d/%d failed (%v); retrying in %s",
+				model, attempt, maxAttempts, lastErr, backoff)
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("download deadline reached during backoff: %w", lastErr)
+			case <-time.After(backoff):
+			}
+		}
+	}
+	return fmt.Errorf("download failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 // resolveOnnx mirrors the GLiNER recognizer's ONNX resolution order and

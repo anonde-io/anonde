@@ -296,17 +296,29 @@ jobs:
       # anonde-ner-stack). The cache path covers both; the
       # `-base-large` key suffix is an explicit "this cache has both
       # variants" anchor.
+      # The `-v<N>` suffix is a MANUAL cache version on these two static
+      # keys. actions/cache NEVER re-saves a key that already exists, so a
+      # key once seeded with an empty/partial model dir (a run where the
+      # GLiNER download failed/raced) is frozen empty forever: every later
+      # run restores the ~0-byte stub, hugot's "dir exists → skip" fast path
+      # no-ops the real download, and the recognizer silently falls back to
+      # patterns-only. That poisoned-cache loop is what reddened bench-full
+      # (run 64ad360 canary: meddocan_es/synth_finance_es at 0 NER findings;
+      # ae38561: every cell failed prefetch). Bump v<N> to abandon a poisoned
+      # entry and force a fresh, fully-populated save. The prefetch step's
+      # purge-and-re-download repair (bench/tools/prefetch) is the in-run
+      # safety net; this bump is what lets the repaired dir actually persist.
       - name: Cache HuggingFace model cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
-          key: hf-cache-gliner-pii-base-large
+          key: hf-cache-gliner-pii-base-large-v2
 
       - name: Cache anonde model cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/anonde/models
-          key: anonde-models-gliner-pii-base-large
+          key: anonde-models-gliner-pii-base-large-v2
 
       # Cache key includes the recognizer + bench-runner source as well
       # as the corpus loader, because the cached path contains BOTH the
