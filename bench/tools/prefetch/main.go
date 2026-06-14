@@ -47,7 +47,13 @@
 //
 // Repeated -model/-onnx pairs are matched by position. Exit code is 0
 // only if every requested model resolved with a non-empty ONNX blob and
-// a tokenizer.json on disk.
+// a tokenizer.json on disk AND that ONNX opens as an onnxruntime session
+// (the only check that catches a >0-byte but corrupt/truncated model.onnx —
+// the "Protobuf parsing failed" load failure a partial/raced HF download
+// produces). The session check needs onnxruntime; set ORT_SO_PATH to the
+// shared library (the bench workflow already does). If the library is
+// absent the session check is skipped and verification degrades to the
+// legacy size-only check.
 package main
 
 import (
@@ -61,7 +67,39 @@ import (
 	"time"
 
 	"github.com/knights-analytics/hugot"
+	ort "github.com/yalue/onnxruntime_go"
 )
+
+// ortInitErr records the one-time onnxruntime environment init result.
+// A nil ortInitErr means the ONNX session-open verification (see
+// verifySession) is active; a non-nil one means we could not set up ORT
+// (no library on disk) and fall back to the size-only check.
+var ortInitErr error
+var ortReady bool
+
+// initORT points onnxruntime_go at the shared library named by ORT_SO_PATH
+// (set by .github/workflows/bench-full.yml, same var the recognizer reads)
+// and initialises the process-wide environment exactly once. If the library
+// is absent we record the error and skip session verification rather than
+// fail the prefetch — the workflow's separate "Verify libonnxruntime is
+// present" step already fails loud on a missing .so, so here a missing lib
+// just degrades to the legacy size-only check.
+func initORT() {
+	if libPath := os.Getenv("ORT_SO_PATH"); libPath != "" {
+		ort.SetSharedLibraryPath(libPath)
+	}
+	if err := ort.InitializeEnvironment(); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "already been initialized") ||
+			strings.Contains(msg, "already initialized") {
+			ortReady = true
+			return
+		}
+		ortInitErr = err
+		return
+	}
+	ortReady = true
+}
 
 // modelList collects repeated -model flags in order.
 type modelList []string
@@ -98,6 +136,17 @@ func main() {
 		}
 		// Mirror analyzer/recognizers/ner_gliner.go's default exactly.
 		*modelsDir = filepath.Join(home, ".cache", "anonde", "models")
+	}
+
+	// Initialise onnxruntime so verifyModelFiles can open an ORT session
+	// on each resolved ONNX — the ONLY check that catches a >0-byte but
+	// CORRUPT model.onnx (the "Protobuf parsing failed" load failure that
+	// a partial/raced HF download produces and the size-only check waves
+	// through). If the library is unavailable we degrade gracefully.
+	initORT()
+	if !ortReady {
+		log.Printf("WARN    onnxruntime unavailable (%v); skipping ONNX session verification "+
+			"(size-only check active — a corrupt-but-nonempty model.onnx could slip through)", ortInitErr)
 	}
 	if err := os.MkdirAll(*modelsDir, 0o755); err != nil {
 		log.Fatalf("create models dir %s: %v", *modelsDir, err)
@@ -218,6 +267,52 @@ func verifyModelFiles(modelPath, onnx string) error {
 	if err := verifyNonEmpty(filepath.Join(modelPath, "tokenizer.json"), "tokenizer"); err != nil {
 		return err
 	}
+	// The load-bearing check: open an ORT session on the resolved ONNX,
+	// exactly as analyzer/recognizers/ner_gliner.go does. A size-only
+	// check passes a truncated/corrupt model.onnx (a partial or raced HF
+	// download leaves a >0-byte file whose protobuf graph is incomplete),
+	// which then dies at the recognizer's NewDynamicAdvancedSession with
+	// "Protobuf parsing failed" — a fail-loud cell crash AFTER prefetch
+	// reported OK (bench-full run 27504028826: legal_de + ai4privacy_de).
+	// Surfacing that here as a verify error makes fetchAndVerify's
+	// purge-and-re-download repair fix the corrupt cache in-run.
+	if err := verifySession(onnxFile); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifySession opens a throwaway ORT session on onnxFile with the same
+// input/output names the GLiNER recognizer uses (ner_gliner.go ~534-542),
+// then immediately destroys it. This forces onnxruntime to parse the model
+// protobuf — the step that fails on a corrupt/truncated export. A nil
+// return means the recognizer will load this file; any error means the
+// on-disk model is unusable despite being present and non-empty.
+//
+// If onnxruntime could not be initialised (no shared library on disk),
+// verification is skipped — the workflow's dedicated libonnxruntime check
+// already gates that case, and we don't want to fail-close on a missing lib
+// when the model itself may be fine.
+func verifySession(onnxFile string) error {
+	if !ortReady {
+		return nil
+	}
+	// Mirror ner_gliner.go's session input/output names exactly so the
+	// session-open path is identical to the recognizer's.
+	inputNames := []string{
+		"input_ids",
+		"attention_mask",
+		"words_mask",
+		"text_lengths",
+		"span_idx",
+		"span_mask",
+	}
+	outputNames := []string{"logits"}
+	session, err := ort.NewDynamicAdvancedSession(onnxFile, inputNames, outputNames, nil)
+	if err != nil {
+		return fmt.Errorf("onnx session open failed (model present but unparseable — corrupt/partial download): %w", err)
+	}
+	_ = session.Destroy()
 	return nil
 }
 
