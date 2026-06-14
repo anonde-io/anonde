@@ -1218,6 +1218,91 @@ func splitWords(text string) []wordRange {
 	return out
 }
 
+// personLeadingNonNameWords is a tight, deliberately-small set of leading
+// tokens that GLiNER occasionally swallows into the FRONT of a PERSON span
+// even though they are titles or generic role/common nouns, not part of the
+// name. The live repro is "Customer john doe" returned as ONE PERSON span at
+// 1.000 — threshold can't fix a 1.0 span, so we trim the leading token.
+//
+// Scope discipline (recall > precision still holds): this list is matched
+// ONLY against the FIRST word of a multi-word PERSON span, and only when the
+// remainder is itself still a plausible name. It is NOT a general stop-word
+// denylist — every entry is a word that, standing at the head of a "<word>
+// Firstname Lastname" span, is overwhelmingly a title or role label rather
+// than a given name. Keep it short; prefer leaving a span untrimmed over
+// risking a real first name (so e.g. "Mark", "Bill", "Will" are NOT here even
+// though they are also English words).
+var personLeadingNonNameWords = map[string]struct{}{
+	// Honorifics / titles (period already stripped by word split).
+	"mr": {}, "mrs": {}, "ms": {}, "miss": {}, "mister": {}, "madam": {},
+	"sir": {}, "dr": {}, "prof": {}, "doctor": {}, "professor": {},
+	"pt": {}, "patient": {}, "nurse": {}, "physician": {},
+	// Generic role / record-label common nouns that prefix a real name in
+	// support / finance / ticketing prose.
+	"customer": {}, "client": {}, "user": {}, "member": {}, "account": {},
+	"ticket": {}, "caller": {}, "contact": {}, "applicant": {}, "vendor": {},
+	"employee": {}, "agent": {}, "subscriber": {}, "guest": {}, "tenant": {},
+}
+
+// looksLikeNameToken reports whether s has the surface shape of a name token:
+// it must start with a letter and contain only letters plus the in-name
+// punctuation GLiNER name spans use (apostrophe, hyphen). Digits or symbols
+// disqualify it, so we never treat "#1240" or "INV-22" as the start of a name.
+func looksLikeNameToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			// letter, always allowed
+		case (r == '\'' || r == '-') && i > 0:
+			// in-name punctuation, never leading
+		case r >= 0x80:
+			// non-ASCII letter (accented names); allow conservatively
+		default:
+			return false
+		}
+	}
+	// First rune must be a letter (rejects "-Luc", "'Brien" as a lone token).
+	first := s[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first >= 0x80) {
+		return false
+	}
+	return true
+}
+
+// trimPersonLeadingNonName trims a single leading title / role common-noun
+// token off the FRONT of a PERSON span, returning the adjusted span word
+// indices [newStart, end]. It is conservative by construction:
+//
+//   - only fires on a span of ≥2 words (never empties a span),
+//   - only strips the FIRST word, and only when it is in the tight
+//     personLeadingNonNameWords set (matched case-insensitively),
+//   - only when the remaining first word still looks like a name token.
+//
+// So "Customer john doe" → "john doe", "Mr Smith" → "Smith", while real
+// multi-token names are untouched: "Mary Jane Watson", "Jean-Luc Picard",
+// "Anita Brown" all have a lead word that is NOT in the set, so they are
+// returned unchanged. Returns (start, false) when nothing was trimmed.
+func trimPersonLeadingNonName(text string, words []wordRange, start, end int) (int, bool) {
+	if start >= end { // need ≥2 words to have a remainder
+		return start, false
+	}
+	if start < 0 || end >= len(words) {
+		return start, false
+	}
+	lead := text[words[start].start:words[start].end]
+	if _, ok := personLeadingNonNameWords[strings.ToLower(lead)]; !ok {
+		return start, false
+	}
+	next := text[words[start+1].start:words[start+1].end]
+	if !looksLikeNameToken(next) {
+		return start, false
+	}
+	return start + 1, true
+}
+
 // gliner_clsID returns the [CLS] token ID. The DeBERTa tokenizer.json
 // has [CLS] at id=1; cached after first resolution so repeated calls
 // are O(1).

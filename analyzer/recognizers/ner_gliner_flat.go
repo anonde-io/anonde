@@ -859,7 +859,24 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 			continue
 		}
 		kept = append(kept, keptSpan{cd.s, cd.e})
-		startByte := wordRanges[cd.s].start
+		startWord := cd.s
+		// Left-boundary trim: GLiNER sometimes glues a leading title /
+		// role common noun ("Customer", "Mr", …) into the FRONT of a
+		// PERSON span ("Customer john doe" @ 1.000). A score threshold
+		// can't fix a 1.0 span, so strip the leading non-name token when
+		// the remainder is still a plausible name. Conservative — never
+		// truncates real multi-token names (see trimPersonLeadingNonName).
+		if isPerson(cd.c) {
+			if trimmed, ok := trimPersonLeadingNonName(text, wordRanges, cd.s, cd.e); ok {
+				if GLiNERDebug {
+					debugLog("FlatRunChunk: trimmed PERSON lead %q -> %q\n",
+						text[wordRanges[cd.s].start:wordRanges[cd.e].end],
+						text[wordRanges[trimmed].start:wordRanges[cd.e].end])
+				}
+				startWord = trimmed
+			}
+		}
+		startByte := wordRanges[startWord].start
 		endByte := wordRanges[cd.e].end
 		out = append(out, glinerSpan{
 			byteStart: startByte,
