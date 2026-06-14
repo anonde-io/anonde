@@ -206,16 +206,12 @@ func main() {
 		nerOff = true
 	}
 
-	// Fail-closed NER verification for the bench matrix. A gliner* cell
-	// that silently falls back to patterns-only (model didn't load, ONNX
-	// session didn't open, libonnxruntime missing) poisons the matrix:
-	// the cell is LABELLED anonde-ner but the findings are patterns-only,
-	// so the leak-rate number is a lie and the silent-fallback canary in
-	// the scorer trips nondeterministically (see synth_clinical_fr /
-	// meddocan_es / synth_finance_es on main). Refuse to emit findings
-	// under a gliner* engine label unless the NER recognizer actually
-	// loads and runs once. nerOff (--disable-ner) is the intentional
-	// patterns-only path and skips this check.
+	// Fail-closed NER verification for the bench matrix. A gliner* cell that
+	// falls back to patterns-only (model/ONNX/libonnxruntime didn't load) is
+	// still LABELLED anonde-ner, so its leak-rate is a lie and the scorer's
+	// silent-fallback canary trips nondeterministically (see synth_clinical_fr
+	// / meddocan_es / synth_finance_es on main). --disable-ner is the
+	// intentional patterns-only path and skips this.
 	if strings.HasPrefix(*backend, "gliner") && !nerOff {
 		if !analyzer.HasNERRecognizer(engine) {
 			log.Fatalf("--backend %s requested but no NER recognizer registered "+

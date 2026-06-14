@@ -32,13 +32,8 @@ func main() {
 	addr := listenAddr()
 	analyzerEngine, backendName, modelName := analyzerFromEnv()
 
-	// Fail-closed NER verification. When an NER backend was explicitly
-	// requested (anything but patterns), prove at boot that the NER
-	// recognizer actually loads and runs — BEFORE the server starts
-	// serving traffic — instead of discovering at request time that
-	// every doc is silently falling back to patterns-only. See
-	// verifyNERBackendOrFail for the full rationale and the
-	// ANONDE_ALLOW_NER_FALLBACK opt-in degrade escape hatch.
+	// Fail-closed NER verification before serving traffic; see
+	// verifyNERBackendOrFail (and the ANONDE_ALLOW_NER_FALLBACK escape hatch).
 	verifyNERBackendOrFail(analyzerEngine, backendName)
 
 	// One-shot bootstrap used by Dockerfile.anonde-ner: initialise the
@@ -368,32 +363,22 @@ func buildSHA() string {
 	return ""
 }
 
-// verifyNERBackendOrFail is the fail-closed guard for the silent-fallback
-// bug class. When the operator explicitly selected a NER backend
-// (ANALYZER_BACKEND=gliner|gliner-flat|gliner-stack|hugot|ollama), this
-// runs one trivial inference through the NER recognizer in isolation at
-// boot. If the model can't load / the ONNX session can't open /
-// libonnxruntime is missing, the recognizer errors — and we exit non-zero
-// here instead of booting a server that silently degrades to patterns-only
-// while reporting backend=gliner. Every redacted document would otherwise
-// leak PERSON / ORG / LOCATION PII with no error surfaced anywhere.
-//
-// No-op for the patterns backend (backendName == "patterns" / ""), so the
-// patterns-only deployment path and per-request disable_ner are unaffected.
-//
-// Escape hatch (deliberate, visible degrade): ANONDE_ALLOW_NER_FALLBACK=1
-// downgrades the hard exit to a loud ERROR-level log and lets the server
-// boot in patterns-only mode. This exists for operators who knowingly want
-// "patterns-only is better than down" availability semantics; it is OFF by
+// verifyNERBackendOrFail is the boot-time fail-closed guard for the
+// silent-fallback bug class: when an NER backend was explicitly selected
+// (ANALYZER_BACKEND=gliner|gliner-flat|gliner-stack|hugot|ollama) but the model
+// can't load, we exit non-zero rather than serve patterns-only while reporting
+// backend=gliner and leaking PERSON/ORG/LOCATION with no error surfaced. No-op
+// for the patterns backend, so that path and per-request disable_ner are
+// unaffected. ANONDE_ALLOW_NER_FALLBACK=1 is a deliberate escape hatch that
+// downgrades the hard exit to a loud ERROR log and boots patterns-only; OFF by
 // default because fail-closed is the safe default for a redaction tool.
 func verifyNERBackendOrFail(engine *analyzer.AnalyzerEngine, backendName string) {
 	if backendName == "" || backendName == "patterns" {
 		return
 	}
 	if !analyzer.HasNERRecognizer(engine) {
-		// The operator asked for a NER backend but the engine came back
-		// with zero NER recognizers. The usual cause is a default-build
-		// binary (no -tags hugot) running with ANALYZER_BACKEND=gliner.
+		// Usual cause: a default-build binary (no -tags hugot) running with
+		// ANALYZER_BACKEND=gliner.
 		msg := fmt.Sprintf("ANALYZER_BACKEND=%s requested but no NER recognizer is registered "+
 			"(is this binary built with -tags hugot?); refusing to serve patterns-only under a NER backend label", backendName)
 		if boolFromEnv("ANONDE_ALLOW_NER_FALLBACK", false) {

@@ -1,38 +1,20 @@
 //go:build hugot
 
-// Command prefetch deterministically downloads the GLiNER PII model
-// exports the bench matrix needs and FAILS LOUD if any of them is
-// missing, partial, or zero-byte.
+// Command prefetch downloads the GLiNER PII model exports the bench matrix
+// needs and FAILS LOUD if any is missing, partial, or corrupt. It exists for
+// CI reliability, not as a runtime path: the recognizers auto-download on
+// first use, but a slow/interrupted/partially-evicted download makes init
+// fail — and the analyzer swallows that and falls back to patterns-only,
+// which the matrix only ever sees as a cell with "0 NER findings" (a silent
+// PII leak). Running this before the scored cell turns "silent runtime
+// fallback" into "download failed, step fails here loudly."
 //
-// Why this exists (CI reliability, not a runtime path):
-//
-// The GLiNER recognizers (analyzer/recognizers/ner_gliner.go,
-// ner_gliner_flat.go) auto-download their ONNX export on first use via
-// hugot.DownloadModel into ~/.cache/anonde/models. If that download is
-// slow, interrupted, or the cache was partially evicted, the recognizer
-// init fails — and the analyzer SWALLOWS that error and falls back to
-// patterns-only. In the bench matrix that surfaces as a cell that
-// renders with "0 NER findings" (a silent PII leak), and the render
-// guard rail then fails the whole run on a random subset of cells.
-//
-// Running this tool BEFORE the scored cell turns "model absent at
-// runtime → silent fallback" into "download failed → step fails here,
-// loudly, with a clear message." A gliner cell can then never run
-// without its model: either prefetch succeeds and the model is on disk,
-// or the job stops before scoring.
-//
-// It mirrors exactly what the recognizers do (same hugot.DownloadModel,
-// same ~/.cache/anonde/models layout, same sanitizeModelName "/"→"_"
-// mapping) so a successful prefetch guarantees the recognizer's own ONNX
-// resolution passes and it loads from cache instead of re-downloading.
-//
-// Verification mirrors the recognizer's ONNX resolution order
-// (analyzer/recognizers/ner_gliner.go): model.onnx at the model-dir root,
-// else the requested -onnx path (a HINT, not a hard requirement), else
-// the first *.onnx found by a recursive walk. The on-disk layout of these
-// HF repos is not necessarily onnx/model.onnx, so the verifier must NOT
-// hard-require that single path — it would fail-close while the recognizer
-// loads fine off the walk fallback.
+// It mirrors the recognizers exactly — same hugot.DownloadModel, same
+// ~/.cache/anonde/models layout, same "/"→"_" sanitize, same ONNX resolution
+// order (model.onnx at the model-dir root, else the -onnx hint, else the
+// first *.onnx found by recursive walk). These HF repos are not necessarily
+// laid out as onnx/model.onnx, so verification must NOT hard-require that one
+// path or it fails-close while the recognizer loads fine off the walk fallback.
 //
 // Usage:
 //
@@ -40,20 +22,13 @@
 //	    -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx \
 //	    -model knowledgator/gliner-pii-large-v1.0 -onnx onnx/model.onnx
 //
-// The -onnx values SHOULD match GLINER_ONNX_FILE / GLINER_LARGE_ONNX_FILE
-// in bench/Makefile so the resolution order matches the recognizer, but
-// they are a download/order hint only — verification falls back to any
-// usable *.onnx on disk just like the recognizer does.
-//
-// Repeated -model/-onnx pairs are matched by position. Exit code is 0
-// only if every requested model resolved with a non-empty ONNX blob and
-// a tokenizer.json on disk AND that ONNX opens as an onnxruntime session
-// (the only check that catches a >0-byte but corrupt/truncated model.onnx —
-// the "Protobuf parsing failed" load failure a partial/raced HF download
-// produces). The session check needs onnxruntime; set ORT_SO_PATH to the
-// shared library (the bench workflow already does). If the library is
-// absent the session check is skipped and verification degrades to the
-// legacy size-only check.
+// Repeated -model/-onnx pairs are matched by position; -onnx is a download
+// hint only. Exit 0 requires every model to resolve a non-empty ONNX +
+// tokenizer.json AND for that ONNX to open as an onnxruntime session — the
+// only check that catches a >0-byte but corrupt model.onnx (the "Protobuf
+// parsing failed" failure a partial/raced HF download produces). The session
+// check needs onnxruntime via ORT_SO_PATH; absent the library it is skipped
+// and verification degrades to the size-only check.
 package main
 
 import (
@@ -70,20 +45,15 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-// ortInitErr records the one-time onnxruntime environment init result.
-// A nil ortInitErr means the ONNX session-open verification (see
-// verifySession) is active; a non-nil one means we could not set up ORT
-// (no library on disk) and fall back to the size-only check.
+// ortReady gates session verification; when false (no library on disk) we
+// degrade to the size-only check rather than fail-close.
 var ortInitErr error
 var ortReady bool
 
-// initORT points onnxruntime_go at the shared library named by ORT_SO_PATH
-// (set by .github/workflows/bench-full.yml, same var the recognizer reads)
-// and initialises the process-wide environment exactly once. If the library
-// is absent we record the error and skip session verification rather than
-// fail the prefetch — the workflow's separate "Verify libonnxruntime is
-// present" step already fails loud on a missing .so, so here a missing lib
-// just degrades to the legacy size-only check.
+// initORT points onnxruntime_go at ORT_SO_PATH (same var the recognizer reads)
+// and initialises the process-wide environment once. A missing library is not
+// fatal here — the workflow's separate libonnxruntime check already gates that
+// — so we just degrade to the size-only check.
 func initORT() {
 	if libPath := os.Getenv("ORT_SO_PATH"); libPath != "" {
 		ort.SetSharedLibraryPath(libPath)
@@ -138,11 +108,8 @@ func main() {
 		*modelsDir = filepath.Join(home, ".cache", "anonde", "models")
 	}
 
-	// Initialise onnxruntime so verifyModelFiles can open an ORT session
-	// on each resolved ONNX — the ONLY check that catches a >0-byte but
-	// CORRUPT model.onnx (the "Protobuf parsing failed" load failure that
-	// a partial/raced HF download produces and the size-only check waves
-	// through). If the library is unavailable we degrade gracefully.
+	// Init ORT so verifyModelFiles can open a session on each ONNX (the only
+	// check that catches a >0-byte but corrupt model.onnx). Degrades if absent.
 	initORT()
 	if !ortReady {
 		log.Printf("WARN    onnxruntime unavailable (%v); skipping ONNX session verification "+
@@ -208,28 +175,21 @@ func fetchAndVerify(ctx context.Context, modelsDir, model, onnx string) error {
 		opts.OnnxFilePath = onnx
 	}
 
-	// First attempt. hugot.DownloadModel has a "model dir already exists →
-	// skip" fast path, so a normal cache hit is a cheap no-op here. On a
-	// cache-cold run (e.g. the first run after a cache-key bump) all matrix
-	// cells download from HF concurrently; retry with backoff so a single
-	// transient 429 / timeout doesn't redden a cell.
+	// hugot.DownloadModel no-ops when the model dir already exists, so a cache
+	// hit is cheap. On a cache-cold run every matrix cell hits HF at once;
+	// retry with backoff so a single transient 429/timeout doesn't redden a cell.
 	if err := downloadWithRetry(ctx, model, modelsDir, opts); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 
-	// Verify, and REPAIR a partial/empty cache. The first DownloadModel
-	// above no-ops when the model DIRECTORY exists, even if that directory
-	// is empty — which is exactly what a poisoned actions/cache restore
-	// produces (the static cache key was once saved with a ~0-byte dir, and
-	// actions/cache never re-saves a key that already exists, so every run
-	// restores the same empty stub and hugot skips the real download). The
-	// recognizer then silently falls back to patterns-only, leaking PII.
-	// See bench-full runs 64ad360 (canary caught meddocan_es/synth_finance_es
-	// at 0 NER findings) and ae38561 (every cell failed prefetch).
-	//
-	// Repair: if the cache stub is missing a usable onnx OR the tokenizer,
-	// purge the model dir and download once more — this time hugot has no
-	// existing dir to skip on, so it actually fetches the files.
+	// Verify, and REPAIR a partial/empty cache. DownloadModel's skip-if-dir-
+	// exists fast path also skips when the dir exists but is EMPTY — exactly
+	// what a poisoned actions/cache restore produces: the static key was once
+	// saved with a ~0-byte dir, and actions/cache never re-saves an existing
+	// key, so every run restores the same empty stub and hugot skips the real
+	// download (recognizer then silently falls back to patterns-only). See
+	// bench-full runs 64ad360 + ae38561. Repair: purge the dir and re-download
+	// so hugot has no dir to skip on.
 	if err := verifyModelFiles(modelPath, onnx); err != nil {
 		log.Printf("REPAIR  %s: cached dir incomplete (%v); purging and re-downloading", model, err)
 		if rmErr := os.RemoveAll(modelPath); rmErr != nil {
@@ -245,17 +205,9 @@ func fetchAndVerify(ctx context.Context, modelsDir, model, onnx string) error {
 	return nil
 }
 
-// verifyModelFiles checks that modelPath holds a usable, non-empty ONNX
-// export (resolved the same way the GLiNER recognizer resolves it) and a
-// non-empty tokenizer.json. Returns an error describing the first missing
-// artifact, or nil when the model is complete.
-//
-// ONNX resolution mirrors the recognizer (analyzer/recognizers/ner_gliner.go
-// ~514-528): model.onnx at the model-dir root, else the requested -onnx
-// path (a hint, not a hard requirement), else the first *.onnx found by a
-// recursive walk. The on-disk layout of these HF repos is NOT necessarily
-// onnx/model.onnx, which is why a single hard-coded path fail-closed while
-// the recognizer loaded fine off the walk fallback.
+// verifyModelFiles checks that modelPath holds a usable, non-empty ONNX export
+// (resolved exactly as the recognizer resolves it — see resolveOnnx) and a
+// non-empty tokenizer.json, and that the ONNX opens as an ORT session.
 func verifyModelFiles(modelPath, onnx string) error {
 	onnxFile, err := resolveOnnx(modelPath, onnx)
 	if err != nil {
@@ -267,38 +219,26 @@ func verifyModelFiles(modelPath, onnx string) error {
 	if err := verifyNonEmpty(filepath.Join(modelPath, "tokenizer.json"), "tokenizer"); err != nil {
 		return err
 	}
-	// The load-bearing check: open an ORT session on the resolved ONNX,
-	// exactly as analyzer/recognizers/ner_gliner.go does. A size-only
-	// check passes a truncated/corrupt model.onnx (a partial or raced HF
-	// download leaves a >0-byte file whose protobuf graph is incomplete),
-	// which then dies at the recognizer's NewDynamicAdvancedSession with
-	// "Protobuf parsing failed" — a fail-loud cell crash AFTER prefetch
-	// reported OK (bench-full run 27504028826: legal_de + ai4privacy_de).
-	// Surfacing that here as a verify error makes fetchAndVerify's
-	// purge-and-re-download repair fix the corrupt cache in-run.
+	// Load-bearing check: a size-only check passes a truncated/corrupt
+	// model.onnx, which then dies at the recognizer's session open with
+	// "Protobuf parsing failed" AFTER prefetch reported OK (bench-full run
+	// 27504028826: legal_de + ai4privacy_de). Surfacing it here lets
+	// fetchAndVerify's purge-and-re-download repair the corrupt cache in-run.
 	if err := verifySession(onnxFile); err != nil {
 		return err
 	}
 	return nil
 }
 
-// verifySession opens a throwaway ORT session on onnxFile with the same
-// input/output names the GLiNER recognizer uses (ner_gliner.go ~534-542),
-// then immediately destroys it. This forces onnxruntime to parse the model
-// protobuf — the step that fails on a corrupt/truncated export. A nil
-// return means the recognizer will load this file; any error means the
-// on-disk model is unusable despite being present and non-empty.
-//
-// If onnxruntime could not be initialised (no shared library on disk),
-// verification is skipped — the workflow's dedicated libonnxruntime check
-// already gates that case, and we don't want to fail-close on a missing lib
-// when the model itself may be fine.
+// verifySession opens (and destroys) a throwaway ORT session on onnxFile,
+// forcing onnxruntime to parse the model protobuf — the step that fails on a
+// corrupt/truncated export but which a size check waves through. Skipped when
+// ORT is unavailable (see initORT). Uses the recognizer's exact input/output
+// names so the open path is identical to ner_gliner.go's.
 func verifySession(onnxFile string) error {
 	if !ortReady {
 		return nil
 	}
-	// Mirror ner_gliner.go's session input/output names exactly so the
-	// session-open path is identical to the recognizer's.
 	inputNames := []string{
 		"input_ids",
 		"attention_mask",
@@ -317,12 +257,8 @@ func verifySession(onnxFile string) error {
 }
 
 // downloadWithRetry wraps hugot.DownloadModel with bounded exponential
-// backoff. On a cache-cold run every matrix cell hammers the HF Hub at
-// once for the same ~0.5 GB base + ~1.7 GB large export, and a fraction
-// reliably draw a 429 / connection-reset / read timeout. A single such
-// blip used to fail the whole cell (and pre-fail-loud, leak silently); a
-// few retries turn it into a momentary stall. The download deadline is
-// the shared ctx, so total time is still bounded by -timeout.
+// backoff: on a cache-cold run every matrix cell hits HF at once and a
+// fraction draw a 429/reset/timeout. Total time stays bounded by ctx (-timeout).
 func downloadWithRetry(ctx context.Context, model, modelsDir string, opts hugot.DownloadOptions) error {
 	const maxAttempts = 4
 	var lastErr error
@@ -354,18 +290,16 @@ func downloadWithRetry(ctx context.Context, model, modelsDir string, opts hugot.
 // found anywhere under modelPath (fail-loud: a download that landed
 // without an onnx is still a hard failure).
 func resolveOnnx(modelPath, onnxHint string) (string, error) {
-	// 1. model.onnx at the root.
 	if root := filepath.Join(modelPath, "model.onnx"); statRegular(root) {
 		return root, nil
 	}
-	// 2. the requested -onnx path, treated as a hint.
 	if onnxHint != "" {
 		if candidate := filepath.Join(modelPath, onnxHint); statRegular(candidate) {
 			return candidate, nil
 		}
 	}
-	// 3. recursive walk for any *.onnx — replicates findFirstOnnx in
-	// analyzer/recognizers/ner_gliner.go (deterministic walk order).
+	// Fallback: any *.onnx under modelPath — replicates findFirstOnnx in
+	// ner_gliner.go (deterministic walk order).
 	if found, err := findFirstOnnx(modelPath); err == nil && found != "" {
 		return found, nil
 	}

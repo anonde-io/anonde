@@ -1,17 +1,14 @@
-// Structural-shape post-validator for decoded NER spans. GLiNER is
-// open-set and will tag a model slug ("gpt-4o"), a UUID, a locale code,
-// or a semver string as PERSON/ORGANIZATION/LOCATION because those
-// surfaces are lexically name-shaped; on request-metadata-heavy traffic
-// that floods false positives and corrupts requests. After a span is
-// decoded, if its surface matches a known structural shape AND its type is
-// a fuzzy/name-like type, reject it. Structured types (EMAIL/IBAN/CARD/...)
-// are never touched: a UUID the model called an "id number" is plausibly a
-// real ID we want. Every reject rule is conservative, so enabling the
-// filter only raises precision and leaves real-PII recall unchanged.
+// Structural-shape post-validator for decoded NER spans. GLiNER is open-set
+// and tags name-shaped surfaces (model slugs, UUIDs, locale codes, semver) as
+// PERSON/ORGANIZATION/LOCATION, flooding false positives on metadata-heavy
+// traffic. A decoded span is rejected only when its surface matches a known
+// structural shape AND its type is fuzzy/name-like; structured types
+// (EMAIL/IBAN/CARD/...) are never touched, since a UUID the model called an
+// "id number" is plausibly real PII. Every rule is conservative: the filter
+// only raises precision, never lowers real-PII recall.
 //
-// Not build-tagged: pure-data, so it is defined, unit-tested, and benched
-// in the default (no-CGO) build and reused by every GLiNER variant
-// (span / flat / pool / ensemble) under -tags hugot.
+// Not build-tagged on purpose — pure data, so it is unit-tested and benched in
+// the default no-CGO build and reused by every GLiNER variant under -tags hugot.
 
 package recognizers
 
@@ -20,11 +17,9 @@ import (
 	"strings"
 )
 
-// spanFilterFuzzyTypes is the set of canonical entity types the shape
-// filter may reject on — the open-set, name-like types where GLiNER
-// over-fires on structural surfaces. Structured types are deliberately
-// absent: a structural surface labelled as one of those is likely a real
-// identifier we want to keep.
+// spanFilterFuzzyTypes is the set of name-like types the filter may reject on.
+// Structured types are deliberately absent: a structural surface labelled as
+// one of those is likely a real identifier we want to keep.
 var spanFilterFuzzyTypes = map[string]bool{
 	"PERSON":       true,
 	"ORGANIZATION": true,
@@ -140,12 +135,9 @@ func (f SpanFilterConfig) Reject(entityType, surface string) bool {
 	return f.rejectSpanSurface(entityType, surface)
 }
 
-// rejectSpanSurface reports whether a decoded span with the given canonical
-// entity type and surface text should be rejected. Returns false (keep)
-// when disabled, when the type is not fuzzy, or when the surface is
-// plausibly real PII; true (drop) only on a structurally incompatible
-// surface. Pure function of (config, type, surface); the single decision
-// point every recognizer and the tests call.
+// rejectSpanSurface reports whether a decoded (type, surface) span should be
+// dropped. Pure function of (config, type, surface) — the single decision
+// point every recognizer and the tests share.
 func (f SpanFilterConfig) rejectSpanSurface(entityType, surface string) bool {
 	if !f.Enabled {
 		return false
