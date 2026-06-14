@@ -1,14 +1,9 @@
 //go:build !hugot
 
-// ner_gliner_ensemble_off.go is the fail-fast stub for the GLiNER
-// ensemble recognizer, used when the binary is built WITHOUT the
-// `hugot` tag. The real implementation lives in
-// ner_gliner_ensemble.go and requires CGO + onnxruntime + tokenizers;
-// this stub keeps the public
-// surface stable so cmd/anonde/main.go can reference the ensemble
-// symbols regardless of build tag, and falls through cleanly to a
-// boot-time error when an operator sets ANONDE_NER_STACK on a
-// patterns-only build.
+// ner_gliner_ensemble_off.go is the fail-fast stub for the GLiNER ensemble
+// in non-hugot builds. It keeps the public symbols stable so
+// cmd/anonde/main.go compiles regardless of build tag, and turns
+// ANONDE_NER_STACK on a patterns-only build into a clear boot-time error.
 
 package recognizers
 
@@ -23,24 +18,21 @@ import (
 )
 
 // errEnsembleDisabled is returned by Analyze when the binary lacks
-// `-tags hugot`. Same shape as errGLiNERDisabled (sentinel + errors.Is
-// friendly).
+// `-tags hugot`.
 var errEnsembleDisabled = errors.New("gliner-ensemble: backend not available: " +
 	"this binary was built without -tags hugot. " +
 	"Rebuild with `go build -tags hugot ./...` to enable the GLiNER ensemble.")
 
-// EnsembleGLiNERRecognizer is the no-op fallback used in non-hugot
-// builds. Stores the model IDs purely for diagnostics; Analyze always
-// errors.
+// EnsembleGLiNERRecognizer is the no-op fallback in non-hugot builds;
+// Analyze always errors.
 type EnsembleGLiNERRecognizer struct {
 	modelIDs []string
 }
 
-// NewEnsembleGLiNERRecognizer mirrors the real constructor's signature
-// so cmd/anonde/main.go compiles under both build tags. Construction
-// always succeeds; the error surfaces only at Analyze-time so a
-// wired-up engine still boots and reports which backend is missing.
-func NewEnsembleGLiNERRecognizer(modelIDs []string, _ float64, _ string) *EnsembleGLiNERRecognizer {
+// NewEnsembleGLiNERRecognizer mirrors the real constructor's signature so
+// cmd/anonde/main.go compiles under both build tags. The error surfaces
+// only at Analyze-time.
+func NewEnsembleGLiNERRecognizer(modelIDs []string, _ float64, _ string, _ ...SpanFilterConfig) *EnsembleGLiNERRecognizer {
 	ids := make([]string, 0, len(modelIDs))
 	for _, id := range modelIDs {
 		if id = strings.TrimSpace(id); id != "" {
@@ -50,17 +42,10 @@ func NewEnsembleGLiNERRecognizer(modelIDs []string, _ float64, _ string) *Ensemb
 	return &EnsembleGLiNERRecognizer{modelIDs: ids}
 }
 
-// EnsembleFromEnv mirrors the real implementation's three-way return
-// contract:
-//   - (nil, nil) if ANONDE_NER_STACK is unset → caller falls through to
-//     the single-model path with no behaviour change
-//   - (nil, error) if ANONDE_NER_STACK is set on a build without
-//     `-tags hugot` → boot-time error, surfaces a deployer mistake
-//     loudly (a patterns-only image shouldn't be asked to run an
-//     ensemble; better to refuse than to silently disable NER)
-//   - we never reach the (*EnsembleGLiNERRecognizer, nil) branch in the
-//     stub; the backend isn't available
-func EnsembleFromEnv(_ float64, _ string) (*EnsembleGLiNERRecognizer, error) {
+// EnsembleFromEnv mirrors the real return contract: (nil, nil) when
+// ANONDE_NER_STACK is unset, and a boot-time error when it is set on a
+// build without `-tags hugot` (refuse rather than silently disable NER).
+func EnsembleFromEnv(_ float64, _ string, _ ...SpanFilterConfig) (*EnsembleGLiNERRecognizer, error) {
 	if strings.TrimSpace(os.Getenv("ANONDE_NER_STACK")) == "" {
 		return nil, nil
 	}
@@ -73,13 +58,10 @@ func (e *EnsembleGLiNERRecognizer) Name() string {
 	return "GLiNEREnsembleNERRecognizer"
 }
 
-// SupportedEntities returns the default ensemble entity coverage. The
-// stub can't actually run, but consumers that interrogate
-// SupportedEntities() before Analyze (e.g. registry routing) deserve
-// the same shape they'd see on the real path.
+// SupportedEntities returns the default ensemble entity coverage so
+// consumers that interrogate it before Analyze (e.g. registry routing) see
+// the same shape as the real path.
 func (e *EnsembleGLiNERRecognizer) SupportedEntities() []string {
-	// Mirror GLiNERRecognizer stub's behaviour: derive from
-	// DefaultLabelToEntity.
 	seen := make(map[string]struct{}, len(DefaultLabelToEntity))
 	out := make([]string, 0, len(DefaultLabelToEntity))
 	for _, v := range DefaultLabelToEntity {

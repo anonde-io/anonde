@@ -158,6 +158,33 @@ jobs:
         run: |
           go test ./analyzer/... ./anonymizer/... ./internal/...
 
+      # Fail LOUD if onnxruntime isn't on disk — without it the gliner
+      # ORT session create fails and the analyzer silently falls back to
+      # patterns-only.
+      - name: Verify libonnxruntime is present
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ORT_LIB" ]; then
+            echo "::error::libonnxruntime missing or zero-byte at $ORT_LIB"
+            ls -la "$ORT_LIB_DIR" || true
+            exit 1
+          fi
+          echo "libonnxruntime present: $(ls -la "$ORT_LIB")"
+
+      # Deterministically fetch the BASE GLiNER PII model before the bench
+      # run and fail if it's absent/partial/zero-byte. The recognizer
+      # auto-downloads on first use and the analyzer SWALLOWS a failed
+      # download into a silent patterns-only fallback; prefetching here
+      # makes that a loud, early failure and repairs a partial cache.
+      # This per-push bench only exercises the BASE model (no ner-stack),
+      # so only one export is prefetched. Tool: bench/tools/prefetch.
+      - name: Prefetch GLiNER model (fail if absent/partial)
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=1 ORT_SO_PATH="$ORT_LIB" \
+            go run -tags hugot ./bench/tools/prefetch \
+              -model knowledgator/gliner-pii-base-v1.0 -onnx onnx/model.onnx
+
       # The bench cells use the `gliner` backend which needs ORT_LIB set
       # so onnxruntime_go can find libonnxruntime.so at runtime. Without
       # this the recognizer's init silently errors (logged via the

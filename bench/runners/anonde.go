@@ -94,8 +94,25 @@ func main() {
 		// Makefile pins its own domain (LABEL_SET ?= ...) so measurement is
 		// domain-appropriate. Flag wins over $GLINER_LABEL_SET; see resolveLabelSet.
 		labelSet = flag.String("label-set", "", "GLiNER label set: chat|clinical|finance|legal (empty = $GLINER_LABEL_SET, then chat)")
+
+		// STRICT precision profile: span-shape filter + raised per-class
+		// floors for the noisy fuzzy types. Off by default.
+		strictNER     = flag.Bool("strict-ner", false, "enable the STRICT precision profile: span-shape filter + raised PERSON/ORG/LOCATION/NRP floors")
+		spanFilter    = flag.Bool("span-filter", false, "enable the structural-shape span filter only (no threshold changes)")
+		stoplistExtra = flag.String("stoplist", "", "comma-separated extra lower-cased stoplist terms appended to the default")
+		personThr     = flag.Float64("person-threshold", 0, "override PERSON class threshold (0 = leave default/STRICT)")
+		orgThr        = flag.Float64("org-threshold", 0, "override ORGANIZATION class threshold (0 = leave default/STRICT)")
+		locThr        = flag.Float64("location-threshold", 0, "override LOCATION class threshold (0 = leave default/STRICT)")
+		nrpThr        = flag.Float64("nrp-threshold", 0, "override NRP class threshold (0 = leave default/STRICT)")
 	)
 	flag.Parse()
+
+	// Resolve the STRICT precision profile into a SpanFilterConfig + a
+	// per-class threshold override map, shared by every NER backend below.
+	nerSpanFilter, nerClassThresholds := resolveStrictProfile(
+		*strictNER, *spanFilter, *stoplistExtra,
+		*personThr, *orgThr, *locThr, *nrpThr,
+	)
 	if *inPath == "" || *outPath == "" {
 		log.Fatal("--in and --out required")
 	}
@@ -128,6 +145,8 @@ func main() {
 			AutoDownload:      *autoDL,
 			Threshold:         *glinerThr,
 			SharedLibraryPath: *ortLibPath,
+			SpanFilter:        nerSpanFilter,
+			ClassThresholds:   nerClassThresholds,
 			// Resolved label set (default chat; per-corpus Makefile pins its domain).
 			Labels:        nerLabels,
 			LabelToEntity: nerLabelToEntity,
@@ -153,6 +172,8 @@ func main() {
 			AutoDownload:      *autoDL,
 			Threshold:         *glinerThr,
 			SharedLibraryPath: *ortLibPath,
+			SpanFilter:        nerSpanFilter,
+			ClassThresholds:   nerClassThresholds,
 			// Resolved label set (default chat; per-corpus Makefile pins its domain).
 			Labels:        nerLabels,
 			LabelToEntity: nerLabelToEntity,
@@ -185,6 +206,33 @@ func main() {
 		nerOff = true
 	}
 
+	// Fail-closed NER verification for the bench matrix. A gliner* cell
+	// that silently falls back to patterns-only (model didn't load, ONNX
+	// session didn't open, libonnxruntime missing) poisons the matrix:
+	// the cell is LABELLED anonde-ner but the findings are patterns-only,
+	// so the leak-rate number is a lie and the silent-fallback canary in
+	// the scorer trips nondeterministically (see synth_clinical_fr /
+	// meddocan_es / synth_finance_es on main). Refuse to emit findings
+	// under a gliner* engine label unless the NER recognizer actually
+	// loads and runs once. nerOff (--disable-ner) is the intentional
+	// patterns-only path and skips this check.
+	if strings.HasPrefix(*backend, "gliner") && !nerOff {
+		if !analyzer.HasNERRecognizer(engine) {
+			log.Fatalf("--backend %s requested but no NER recognizer registered "+
+				"(is this built with -tags hugot?); refusing to emit patterns-only findings under a %q label",
+				*backend, engineLabel)
+		}
+		vctx, vcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if err := analyzer.VerifyNERBackend(vctx, engine); err != nil {
+			vcancel()
+			log.Fatalf("--backend %s failed NER verification: %v "+
+				"(refusing to emit patterns-only findings mislabelled as %q)",
+				*backend, err, engineLabel)
+		}
+		vcancel()
+		log.Printf("NER backend verified for %q", engineLabel)
+	}
+
 	// Optional second-stage GLiNER (token / flat decoder, e.g. LARGE).
 	// Registers alongside the existing recognizers so both inferences
 	// run per doc; the analyzer's RemoveConflicts merges overlaps. Only
@@ -197,6 +245,8 @@ func main() {
 			AutoDownload:      *autoDL,
 			Threshold:         *flatGLiNERThr,
 			SharedLibraryPath: *ortLibPath,
+			SpanFilter:        nerSpanFilter,
+			ClassThresholds:   nerClassThresholds,
 			// Same resolved set as the base slot, so the ner-stack flat slot
 			// matches the base + the sidecar.
 			Labels:        nerLabels,
@@ -275,6 +325,57 @@ func main() {
 	log.Printf("processed %d docs (engine=%s, language=%s)", docs, engineLabel, *language)
 }
 
+// resolveStrictProfile turns the precision-profile flags into a
+// SpanFilterConfig + per-class threshold map. Mirrors main.go's
+// glinerSpanFilterFromEnv + glinerClassThresholdsFromEnv so the bench
+// measures what the STRICT deploy runs. strictNER enables the span filter
+// and raises PERSON 0.50 / ORG,LOC,NRP 0.55; spanFilter enables the filter
+// only; per-class flags override the STRICT floor for that class.
+func resolveStrictProfile(strictNER, spanFilter bool, stoplist string,
+	personThr, orgThr, locThr, nrpThr float64,
+) (recognizers.SpanFilterConfig, map[string]float64) {
+	var sf recognizers.SpanFilterConfig
+	if strictNER || spanFilter {
+		var extra []string
+		for _, t := range strings.Split(stoplist, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				extra = append(extra, t)
+			}
+		}
+		sf = recognizers.StrictSpanFilter(extra...)
+	}
+
+	thresholds := map[string]float64{}
+	// STRICT default floors for the noisy fuzzy types.
+	if strictNER {
+		thresholds["PERSON"] = 0.50
+		thresholds["ORGANIZATION"] = 0.55
+		thresholds["LOCATION"] = 0.55
+		thresholds["NRP"] = 0.55
+	}
+	// Explicit per-class flags win over the STRICT default.
+	if personThr > 0 {
+		thresholds["PERSON"] = personThr
+	}
+	if orgThr > 0 {
+		thresholds["ORGANIZATION"] = orgThr
+	}
+	if locThr > 0 {
+		thresholds["LOCATION"] = locThr
+	}
+	if nrpThr > 0 {
+		thresholds["NRP"] = nrpThr
+	}
+	if len(thresholds) == 0 {
+		thresholds = nil
+	}
+	if sf.Enabled || thresholds != nil {
+		log.Printf("strict-profile: span_filter=%v stoplist=%d thresholds=%v",
+			sf.Enabled, len(sf.Stoplist), thresholds)
+	}
+	return sf, thresholds
+}
+
 // resolveLabelSet picks the GLiNER label list + its label→entity map for every
 // NER config this run. Order: --label-set flag, then $GLINER_LABEL_SET, then
 // the global DEFAULT "chat". Each per-corpus Makefile self-declares its domain
@@ -283,10 +384,10 @@ func main() {
 // chat. An unrecognised value falls back to chat too. Mirrors
 // cmd/anonde/main.go's glinerLabelSetFromEnv.
 //
-//   chat, default → DefaultPIILabels  / DefaultLabelToEntity (= chat, global default)
-//   clinical      → ClinicalPIILabels / ClinicalLabelToEntity
-//   finance       → FinancePIILabels  / FinancePIILabelToEntity
-//   legal         → LegalPIILabels    / LegalPIILabelToEntity
+//	chat, default → DefaultPIILabels  / DefaultLabelToEntity (= chat, global default)
+//	clinical      → ClinicalPIILabels / ClinicalLabelToEntity
+//	finance       → FinancePIILabels  / FinancePIILabelToEntity
+//	legal         → LegalPIILabels    / LegalPIILabelToEntity
 func resolveLabelSet(flagVal string) ([]string, map[string]string) {
 	set := strings.ToLower(strings.TrimSpace(flagVal))
 	if set == "" {

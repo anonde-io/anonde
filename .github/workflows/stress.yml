@@ -40,11 +40,18 @@ concurrency:
 
 jobs:
   stress:
-    # 4 vCPU / 16 GB. standard-2 (8 GB) was too tight for the ner-stack
-    # variant (~2.8 GB runtime + Docker overhead) and starved load
-    # generation of CPU under sustained PII-dense traffic. Bump to
-    # standard-4 so the ner-stack matrix row has actual headroom.
-    runs-on: ubuntu-latest-4-cores
+    # GitHub-hosted standard runner (public-repo ubuntu-latest = 4 vCPU /
+    # 16 GB), matching the NER image jobs in release.yml / docker-build.yml.
+    #
+    # Runner-label history: the ner-stack variant (~2.8 GB runtime +
+    # Docker overhead) needs the 16 GB tier — the old 8 GB box starved
+    # load generation of CPU under sustained PII-dense traffic. We sized
+    # up to a larger-runner label (ubuntu-latest-4-cores) for that, but
+    # that label is NOT provisioned in this org, so this job could never
+    # schedule (same root cause that cancelled the NER release jobs in
+    # commit d4360f6). Point it at the provisioned ubuntu-latest, which on
+    # this public repo is the 4 vCPU / 16 GB runner the matrix needs.
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

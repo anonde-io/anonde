@@ -1,9 +1,7 @@
-// gliner_config.go is intentionally NOT build-tagged. GLiNERConfig and
-// the label sets are pure-data declarations (no hugot/onnxruntime
-// dependency in any field type), so they can be defined and referenced in
-// non-hugot builds; the stub `DefaultAnalyzerEngineWithGLiNERConfig` in
-// ../../hugot_off.go uses GLiNERConfig in its signature so the public API
-// surface stays stable across build variants.
+// GLiNERConfig and the label sets are pure-data declarations, so this file
+// is NOT build-tagged: it is referenced in non-hugot builds (the stub
+// DefaultAnalyzerEngineWithGLiNERConfig keeps the public API stable across
+// build variants).
 
 package recognizers
 
@@ -56,14 +54,20 @@ type GLiNERConfig struct {
 	// Defaults to 0.40 (matches the Python sidecar).
 	Threshold float64
 
-	// ClassThresholds overrides the per-class score floor, keyed by canonical
-	// entity type (e.g. "PERSON"). A present value is used DIRECTLY as that
-	// class's threshold (not min()'d against Threshold), so it can RAISE a
-	// floor the built-in min() never can — e.g. PERSON above the compiled-in
-	// 0.22 to stop the large/flat model firing common words ("Hello") as
-	// PERSON. Absent classes keep their built-in floor; nil preserves today's
-	// behaviour. Only the flat (token-decoder) recognizer consults this map.
+	// ClassThresholds overrides the per-class score floor, keyed by
+	// canonical entity type. A present value is used DIRECTLY (not min()'d
+	// against Threshold), so it can RAISE a floor the built-in min() never
+	// can — e.g. PERSON above the compiled-in 0.22 to stop the model firing
+	// common words as PERSON. Absent classes keep their built-in floor; nil
+	// preserves today's behaviour. Both the span and flat recognizers
+	// consult this map.
 	ClassThresholds map[string]float64
+
+	// SpanFilter, when Enabled, runs the structural-shape post-validator on
+	// every decoded NER span (see span_shape_filter.go). Zero value is a
+	// no-op; select the STRICT profile via StrictSpanFilter() or the
+	// GLINER_STRICT env knob. Consulted by every GLiNER variant.
+	SpanFilter SpanFilterConfig
 
 	// MaxWidth caps span width in WORDS (not subword tokens). Defaults to
 	// 12, matching the model's `gliner_config.json::max_width`. Setting
@@ -333,35 +337,35 @@ var FinancePIILabels = []string{
 // generic "ID" (routing/SWIFT/BIC/EIN/brokerage/transaction) or share an
 // operator (account holder → PERSON, cvv → CREDIT_CARD, bank name → ORG).
 var FinancePIILabelToEntity = map[string]string{
-	"person":                          "PERSON",
-	"first name":                      "PERSON",
-	"last name":                       "PERSON",
-	"full name":                       "PERSON",
-	"account holder":                  "PERSON",
-	"organization":                    "ORGANIZATION",
-	"company":                         "ORGANIZATION",
-	"bank name":                       "ORGANIZATION",
-	"email":                           "EMAIL_ADDRESS",
-	"email address":                   "EMAIL_ADDRESS",
-	"phone number":                    "PHONE_NUMBER",
-	"bank account number":             "US_BANK_NUMBER",
-	"account number":                  "US_BANK_NUMBER",
-	"routing number":                  "ID",
-	"iban":                            "IBAN_CODE",
-	"swift code":                      "ID",
-	"bic":                             "ID",
-	"credit card":                     "CREDIT_CARD",
-	"credit card number":              "CREDIT_CARD",
-	"cvv":                             "CREDIT_CARD",
-	"tax identification number":       "ID",
-	"ein":                             "ID",
-	"employer identification number":  "ID",
-	"ssn":                             "US_SSN",
-	"social security number":          "US_SSN",
-	"itin":                            "US_ITIN",
-	"brokerage account number":        "ID",
-	"investment account number":       "ID",
-	"transaction id":                  "ID",
+	"person":                         "PERSON",
+	"first name":                     "PERSON",
+	"last name":                      "PERSON",
+	"full name":                      "PERSON",
+	"account holder":                 "PERSON",
+	"organization":                   "ORGANIZATION",
+	"company":                        "ORGANIZATION",
+	"bank name":                      "ORGANIZATION",
+	"email":                          "EMAIL_ADDRESS",
+	"email address":                  "EMAIL_ADDRESS",
+	"phone number":                   "PHONE_NUMBER",
+	"bank account number":            "US_BANK_NUMBER",
+	"account number":                 "US_BANK_NUMBER",
+	"routing number":                 "ID",
+	"iban":                           "IBAN_CODE",
+	"swift code":                     "ID",
+	"bic":                            "ID",
+	"credit card":                    "CREDIT_CARD",
+	"credit card number":             "CREDIT_CARD",
+	"cvv":                            "CREDIT_CARD",
+	"tax identification number":      "ID",
+	"ein":                            "ID",
+	"employer identification number": "ID",
+	"ssn":                            "US_SSN",
+	"social security number":         "US_SSN",
+	"itin":                           "US_ITIN",
+	"brokerage account number":       "ID",
+	"investment account number":      "ID",
+	"transaction id":                 "ID",
 }
 
 // LegalPIILabels is tuned for legal documents — pleadings, contracts, court
