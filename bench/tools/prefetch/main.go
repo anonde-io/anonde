@@ -23,9 +23,16 @@
 //
 // It mirrors exactly what the recognizers do (same hugot.DownloadModel,
 // same ~/.cache/anonde/models layout, same sanitizeModelName "/"→"_"
-// mapping) so a successful prefetch guarantees the recognizer's own
-// os.Stat(modelPath) check passes and it loads from cache instead of
-// re-downloading.
+// mapping) so a successful prefetch guarantees the recognizer's own ONNX
+// resolution passes and it loads from cache instead of re-downloading.
+//
+// Verification mirrors the recognizer's ONNX resolution order
+// (analyzer/recognizers/ner_gliner.go): model.onnx at the model-dir root,
+// else the requested -onnx path (a HINT, not a hard requirement), else
+// the first *.onnx found by a recursive walk. The on-disk layout of these
+// HF repos is not necessarily onnx/model.onnx, so the verifier must NOT
+// hard-require that single path — it would fail-close while the recognizer
+// loads fine off the walk fallback.
 //
 // Usage:
 //
@@ -33,9 +40,10 @@
 //	    -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx \
 //	    -model knowledgator/gliner-pii-large-v1.0 -onnx onnx/model.onnx
 //
-// Both knowledgator GLiNER PII exports ship their FP32 ONNX at
-// onnx/model.onnx; the -onnx values MUST match GLINER_ONNX_FILE /
-// GLINER_LARGE_ONNX_FILE in bench/Makefile.
+// The -onnx values SHOULD match GLINER_ONNX_FILE / GLINER_LARGE_ONNX_FILE
+// in bench/Makefile so the resolution order matches the recognizer, but
+// they are a download/order hint only — verification falls back to any
+// usable *.onnx on disk just like the recognizer does.
 //
 // Repeated -model/-onnx pairs are matched by position. Exit code is 0
 // only if every requested model resolved with a non-empty ONNX blob and
@@ -157,21 +165,73 @@ func fetchAndVerify(ctx context.Context, modelsDir, model, onnx string) error {
 		return fmt.Errorf("download: %w", err)
 	}
 
-	// Verify the ONNX blob: present, regular file, non-zero size. The
-	// large FP32 export is the one most likely to land truncated on a
-	// memory- or disk-pressured runner.
-	onnxRel := onnx
-	if onnxRel == "" {
-		// Recognizer default for the base export when none is given.
-		onnxRel = filepath.Join("onnx", "model.onnx")
+	// Verify the ONNX blob using the SAME resolution order the GLiNER
+	// recognizer uses (analyzer/recognizers/ner_gliner.go ~514-528) so a
+	// pass here guarantees the recognizer also resolves an onnx at init:
+	//   1. model.onnx at the model-dir root, else
+	//   2. the requested -onnx path (a hint, not a hard requirement), else
+	//   3. the first *.onnx found by a recursive walk (findFirstOnnx).
+	// The on-disk layout of these HF repos is NOT necessarily
+	// onnx/model.onnx, which is why a single hard-coded path fail-closed
+	// while the recognizer loaded fine.
+	onnxFile, err := resolveOnnx(modelPath, onnx)
+	if err != nil {
+		return err
 	}
-	if err := verifyNonEmpty(filepath.Join(modelPath, onnxRel), "onnx export"); err != nil {
+	if err := verifyNonEmpty(onnxFile, "onnx export"); err != nil {
 		return err
 	}
 	if err := verifyNonEmpty(filepath.Join(modelPath, "tokenizer.json"), "tokenizer"); err != nil {
 		return err
 	}
 	return nil
+}
+
+// resolveOnnx mirrors the GLiNER recognizer's ONNX resolution order and
+// returns the path it would load. It only errors if NO usable onnx is
+// found anywhere under modelPath (fail-loud: a download that landed
+// without an onnx is still a hard failure).
+func resolveOnnx(modelPath, onnxHint string) (string, error) {
+	// 1. model.onnx at the root.
+	if root := filepath.Join(modelPath, "model.onnx"); statRegular(root) {
+		return root, nil
+	}
+	// 2. the requested -onnx path, treated as a hint.
+	if onnxHint != "" {
+		if candidate := filepath.Join(modelPath, onnxHint); statRegular(candidate) {
+			return candidate, nil
+		}
+	}
+	// 3. recursive walk for any *.onnx — replicates findFirstOnnx in
+	// analyzer/recognizers/ner_gliner.go (deterministic walk order).
+	if found, err := findFirstOnnx(modelPath); err == nil && found != "" {
+		return found, nil
+	}
+	return "", fmt.Errorf("no *.onnx found under %s (checked root model.onnx, %s, and a recursive walk)",
+		modelPath, onnxLabel(onnxHint))
+}
+
+// statRegular reports whether path exists and is a regular file.
+func statRegular(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
+}
+
+// findFirstOnnx walks dir and returns the first *.onnx file (deterministic
+// walk order). Replicated from analyzer/recognizers/ner_gliner.go so the
+// prefetch verifier accepts exactly what the recognizer accepts.
+func findFirstOnnx(dir string) (string, error) {
+	var found string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || found != "" || info.IsDir() {
+			return walkErr
+		}
+		if strings.HasSuffix(strings.ToLower(path), ".onnx") {
+			found = path
+		}
+		return nil
+	})
+	return found, err
 }
 
 func verifyNonEmpty(path, what string) error {

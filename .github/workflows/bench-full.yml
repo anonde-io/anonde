@@ -384,15 +384,19 @@ jobs:
       #
       # The two exports mirror bench/Makefile exactly: BASE (used by
       # anonde-ner and the BASE slot of anonde-ner-stack) and LARGE (the
-      # flat decoder added by anonde-ner-stack). BOTH ship their FP32 ONNX
-      # at `onnx/model.onnx` — the LARGE repo does NOT put model.onnx at
-      # the root (a stale assumption that 404'd the LARGE download and
-      # made the stack byte-equivalent to the BASE; see the
-      # GLINER_LARGE_ONNX_FILE comment in bench/Makefile, verified against
-      # the HF tree API 2026-05-27). The -onnx args here MUST match
-      # GLINER_ONNX_FILE / GLINER_LARGE_ONNX_FILE in bench/Makefile. Tool:
-      # bench/tools/prefetch/main.go — same hugot.DownloadModel +
-      # ~/.cache/anonde/models layout as the recognizer.
+      # flat decoder added by anonde-ner-stack). The -onnx args below are a
+      # download/resolution HINT, not a hard path: the prefetch verifier
+      # mirrors the recognizer's ONNX resolution order
+      # (analyzer/recognizers/ner_gliner.go) — model.onnx at root, else the
+      # -onnx hint, else any *.onnx found by a recursive walk. The on-disk
+      # HF layout is not necessarily onnx/model.onnx, so a verifier that
+      # hard-required that single path fail-closed while the recognizer
+      # loaded fine off the walk fallback (the bug behind bench-full run
+      # 27502162712). The -onnx args SHOULD still match GLINER_ONNX_FILE /
+      # GLINER_LARGE_ONNX_FILE in bench/Makefile so the resolution order
+      # matches the recognizer. Tool: bench/tools/prefetch/main.go — same
+      # hugot.DownloadModel + ~/.cache/anonde/models layout as the
+      # recognizer.
       - name: Prefetch GLiNER models (fail if absent/partial)
         run: |
           set -euo pipefail
