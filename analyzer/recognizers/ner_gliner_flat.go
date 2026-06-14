@@ -1,51 +1,22 @@
 //go:build hugot
 
 // ner_gliner_flat.go runs the flat (token / sequence-tag) decoder GLiNER
-// variants end-to-end inside the Go process. Companion to ner_gliner.go,
-// which targets the uni-encoder SPAN decoder used by gliner-pii-base-v1.0.
+// variants in-process. Companion to ner_gliner.go (the uni-encoder SPAN
+// decoder used by gliner-pii-base-v1.0).
 //
-// What differs from ner_gliner.go
-// -------------------------------
-// The LARGE PII model (`knowledgator/gliner-pii-large-v1.0`) and other
-// token-decoder GLiNER exports take 4 ONNX inputs instead of 6:
+// Flat-decoder exports (e.g. gliner-pii-large-v1.0) take 4 ONNX inputs
+// (input_ids, attention_mask, words_mask, text_lengths) instead of 6 — no
+// span_idx/span_mask, the model emits per-word BIO logits directly. The
+// output `logits` is shape [B, L, C, 3], the trailing 3-vector per
+// (word, class) being [start, end, inside]. Reference:
+// gliner/decoding/decoder.py::TokenDecoder.decode. Per-chunk decoding is
+// start/end pair assembly with an inside gate; score = min(start_sig,
+// end_sig, inside_min), matching gliner-py's combined.min() rule.
 //
-//	input_ids, attention_mask, words_mask, text_lengths        (4 inputs)
-//
-// (No span_idx / span_mask; the model emits per-word BIO-style logits
-// directly instead of scoring pre-enumerated spans.)
-//
-// The output `logits` tensor has shape `[B, L, C, 3]`, where the trailing
-// 3-vector per (word, class) is `[start, end, inside]` (BIO-style).
-// Reference: gliner/decoding/decoder.py::TokenDecoder.decode (the
-// `model_output.permute(3, 0, 1, 2)` line splits this into
-// scores_start / scores_end / scores_inside slices).
-//
-// Decoding per chunk is start/end pair assembly with an inside gate:
-//
-//   - sigmoid(start[s, c])  > thresh[c] selects candidate starts
-//   - sigmoid(end[e, c])    > thresh[c] selects candidate ends
-//   - sigmoid(inside[i, c]) > thresh[c] must hold for EVERY i in [s, e]
-//     (otherwise the model is signalling a non-entity word inside the
-//     candidate span; gliner-py's `_calculate_span_score` filters these
-//     same pairs)
-//   - score = min(start_sig, end_sig, min(inside_sig[s..e]))   (matches
-//     gliner-py's "combined.min()" scoring rule)
-//
-// Greedy non-overlap dedup mirrors the span decoder (sort-by-score-desc,
-// with the PERSON wider-span tiebreak so surnames don't leak).
-//
-// Everything else; tokenizer setup, prompt encoding (Lever 0: per-piece
-// encode to avoid the metaspace prompt-inflation bug), word splitting,
-// sliding-window chunking, max-chunk cap, error/recover discipline, the
-// per-class threshold table; is identical to ner_gliner.go. Production
-// safety of the base path is unaffected: this file does not touch
-// ner_gliner.go, anonymizer/, or the analyzer engine.
-//
-// CGO contract
-// ------------
-// Same as ner_gliner.go: compiled only under `-tags hugot` AND
-// CGO_ENABLED=1. The default (no-tag) build picks up
-// ner_gliner_flat_off.go which raises a clear error at Analyze-time.
+// Everything else (tokenizer setup, per-piece prompt encode, chunking,
+// max-chunk cap, recover discipline, per-class threshold table) is
+// identical to ner_gliner.go. Compiled only under `-tags hugot` AND
+// CGO_ENABLED=1; the no-tag build uses ner_gliner_flat_off.go.
 
 package recognizers
 
@@ -254,7 +225,7 @@ func (r *GLiNERFlatRecognizer) init(ctx context.Context) error {
 		}
 		r.tokenizer = tok
 
-		// Pre-build the prompt prefix string. Format:
+		// Pre-build the prompt prefix string:
 		//   "<<ENT>> label1 <<ENT>> label2 ... <<SEP>> "
 		var sb strings.Builder
 		for _, lbl := range r.labels {
@@ -268,9 +239,8 @@ func (r *GLiNERFlatRecognizer) init(ctx context.Context) error {
 		r.promptString = sb.String()
 		r.promptCharLength = len(r.promptString)
 
-		// CRITICAL: per-piece prompt encoding. See ner_gliner.go for the
-		// metaspace-bug rationale; this is Lever 0 and must NOT regress.
-		// Copying verbatim.
+		// Per-piece prompt encoding. See ner_gliner.go for the
+		// metaspace-bug rationale; must NOT regress.
 		if err := tok.With(api.EncodeOptions{AddSpecialTokens: false, IncludeSpans: false}); err != nil {
 			r.initErr = fmt.Errorf("gliner-flat: configure tokenizer for prompt encode: %w", err)
 			return
@@ -449,9 +419,21 @@ func (r *GLiNERFlatRecognizer) Analyze(ctx context.Context, text string, entitie
 					continue
 				}
 			}
+			absStart := chunk.ByteStart + s.byteStart
+			absEnd := chunk.ByteStart + s.byteEnd
+			// Structural-shape post-filter: drop fuzzy-type spans whose
+			// surface is structurally non-PII. No-op unless Enabled.
+			if r.cfg.SpanFilter.Enabled && absStart >= 0 && absEnd <= len(text) && absStart < absEnd {
+				if r.cfg.SpanFilter.rejectSpanSurface(canonical, text[absStart:absEnd]) {
+					if GLiNERDebug {
+						debugLog("FlatAnalyze: shape-filter dropped %s %q\n", canonical, text[absStart:absEnd])
+					}
+					continue
+				}
+			}
 			cands = append(cands, hugotCand{
-				start: chunk.ByteStart + s.byteStart,
-				end:   chunk.ByteStart + s.byteEnd,
+				start: absStart,
+				end:   absEnd,
 				score: s.score,
 				typ:   canonical,
 			})
@@ -739,10 +721,9 @@ func (r *GLiNERFlatRecognizer) runChunk(text string) ([]glinerSpan, error) {
 		t := r.threshold
 		if c < len(r.labels) {
 			canonical := r.labelToEntity[r.labels[c]]
-			// ClassThresholds replaces the built-in floor outright (used
-			// directly, not min()'d), so a deploy can RAISE a floor min()
-			// never can — e.g. PERSON above 0.22 to cut common-word FPs.
-			// Absent classes fall back to min(engineThreshold, floor).
+			// ClassThresholds is used DIRECTLY (not min()'d), so a deploy
+			// can RAISE a floor above its default to cut common-word FPs.
+			// Absent classes fall back to min(threshold, floor).
 			if override, ok := r.cfg.ClassThresholds[canonical]; ok && override > 0 {
 				t = override
 			} else if floor, ok := entityTypeThreshold[canonical]; ok && t > floor {

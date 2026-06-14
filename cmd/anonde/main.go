@@ -633,7 +633,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		// with no change. EnsembleFromEnv returns (nil, nil) on unset
 		// and (nil, error) on a malformed value (e.g. ",,,") so a typo
 		// fails fast at boot rather than silently disabling NER.
-		if ens, ensErr := recognizers.EnsembleFromEnv(threshold, os.Getenv("ORT_SO_PATH")); ensErr != nil {
+		if ens, ensErr := recognizers.EnsembleFromEnv(threshold, os.Getenv("ORT_SO_PATH"), glinerSpanFilterFromEnv()); ensErr != nil {
 			log.Fatalf("ANONDE_NER_STACK: %v", ensErr)
 		} else if ens != nil {
 			log.Printf("analyzer backend: gliner-ensemble (threshold=%.2f); single-model GLINER_MODEL=%s ignored",
@@ -648,6 +648,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
+			ClassThresholds:   glinerClassThresholdsFromEnv(),
+			SpanFilter:        glinerSpanFilterFromEnv(),
 			// nil → library chat default; GLINER_LABEL_SET pins clinical/finance/legal.
 			Labels:        labels,
 			LabelToEntity: labelToEntity,
@@ -679,6 +681,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         threshold,
 			ClassThresholds:   glinerClassThresholdsFromEnv(),
+			SpanFilter:        glinerSpanFilterFromEnv(),
 			// nil → library chat default; GLINER_LABEL_SET pins clinical/finance/legal.
 			Labels:        labels,
 			LabelToEntity: labelToEntity,
@@ -720,6 +723,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			baseModel, baseOnnx, baseThreshold, basePoolSize,
 			flatModel, flatOnnx, flatThreshold, flatPoolSize)
 		labels, labelToEntity := glinerLabelSetFromEnv()
+		stackSpanFilter := glinerSpanFilterFromEnv()
+		stackClassThresholds := glinerClassThresholdsFromEnv()
 		baseCfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
 			ModelName:         baseModel,
@@ -727,6 +732,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         baseThreshold,
+			ClassThresholds:   stackClassThresholds,
+			SpanFilter:        stackSpanFilter,
 			Labels:            labels,
 			LabelToEntity:     labelToEntity,
 		}
@@ -737,7 +744,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 			AutoDownload:      true,
 			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
 			Threshold:         flatThreshold,
-			ClassThresholds:   glinerClassThresholdsFromEnv(),
+			ClassThresholds:   stackClassThresholds,
+			SpanFilter:        stackSpanFilter,
 			Labels:            labels,
 			LabelToEntity:     labelToEntity,
 		}
@@ -819,22 +827,65 @@ func glinerThresholdFromEnv() float64 {
 	return v
 }
 
-// glinerClassThresholdsFromEnv builds the flat recognizer's per-class
-// threshold override map from env. Only PERSON is exposed today:
-// GLINER_PERSON_THRESHOLD is used DIRECTLY (not min()'d), so an operator can
-// RAISE PERSON above the compiled-in 0.22 floor to cut common-word FPs.
-// Unset → nil; a malformed value is logged and ignored (fails open).
+// glinerClassThresholdsFromEnv builds the GLiNER per-class threshold
+// override map from env (GLINER_{PERSON,ORG,LOCATION,NRP}_THRESHOLD). Each
+// value is used DIRECTLY (not min()'d), so an operator can RAISE a noisy
+// fuzzy class above its recall-tuned floor to cut FPs. GLINER_STRICT=1
+// applies the bench-picked STRICT floors (PERSON 0.50, ORG/LOC/NRP 0.55)
+// for any class without an explicit override. Unset (and no STRICT) → nil;
+// malformed values are logged and ignored (fails open).
 func glinerClassThresholdsFromEnv() map[string]float64 {
-	raw := strings.TrimSpace(os.Getenv("GLINER_PERSON_THRESHOLD"))
-	if raw == "" {
+	strict := boolFromEnv("GLINER_STRICT", false)
+	out := map[string]float64{}
+	type knob struct {
+		env, canonical string
+		strictFloor    float64
+	}
+	for _, k := range []knob{
+		{"GLINER_PERSON_THRESHOLD", "PERSON", 0.50},
+		{"GLINER_ORG_THRESHOLD", "ORGANIZATION", 0.55},
+		{"GLINER_LOCATION_THRESHOLD", "LOCATION", 0.55},
+		{"GLINER_NRP_THRESHOLD", "NRP", 0.55},
+	} {
+		if raw := strings.TrimSpace(os.Getenv(k.env)); raw != "" {
+			v, err := strconv.ParseFloat(raw, 64)
+			if err != nil || v <= 0 {
+				log.Printf("%s=%q ignored: %v", k.env, raw, err)
+			} else {
+				out[k.canonical] = v
+				continue
+			}
+		}
+		if strict {
+			out[k.canonical] = k.strictFloor
+		}
+	}
+	if len(out) == 0 {
 		return nil
 	}
-	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil || v <= 0 {
-		log.Printf("GLINER_PERSON_THRESHOLD=%q ignored: %v", raw, err)
-		return nil
+	return out
+}
+
+// glinerSpanFilterFromEnv builds the span-shape filter config from env.
+// GLINER_STRICT=1 or GLINER_SPAN_FILTER=1 enables it with the default
+// stoplist; GLINER_STOPLIST=a,b,c appends extra lower-cased denylist terms.
+// Returns a zero (disabled) config when neither switch is set, so the
+// default deploy is byte-for-byte unchanged.
+func glinerSpanFilterFromEnv() recognizers.SpanFilterConfig {
+	if !boolFromEnv("GLINER_STRICT", false) && !boolFromEnv("GLINER_SPAN_FILTER", false) {
+		return recognizers.SpanFilterConfig{}
 	}
-	return map[string]float64{"PERSON": v}
+	var extra []string
+	if raw := strings.TrimSpace(os.Getenv("GLINER_STOPLIST")); raw != "" {
+		for _, t := range strings.Split(raw, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				extra = append(extra, t)
+			}
+		}
+	}
+	sf := recognizers.StrictSpanFilter(extra...)
+	log.Printf("gliner: STRICT span-shape filter enabled (stoplist=%d terms; rejects UUID/locale/semver/model-slug/hex/base64/SCREAMING_SNAKE on fuzzy types)", len(sf.Stoplist))
+	return sf
 }
 
 // glinerLabelSetFromEnv selects the GLiNER label list + its label→entity map

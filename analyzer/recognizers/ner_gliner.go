@@ -128,7 +128,7 @@ const (
 	// (SSN / MRN / IBAN class). gliner-py wins by 15-30 pp on finance_de
 	// and legal_de, again pointing to a recall ceiling driven by the
 	// global threshold rather than a model gap. 0.30 mirrors ORG.
-	defaultIdThreshold = 0.30
+	defaultIdThreshold     = 0.30
 	defaultGLiNERMaxWidth  = 12
 	defaultGLiNERMaxTokens = 384
 
@@ -676,9 +676,21 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 					continue
 				}
 			}
+			absStart := chunk.ByteStart + s.byteStart
+			absEnd := chunk.ByteStart + s.byteEnd
+			// Structural-shape post-filter: drop fuzzy-type spans whose
+			// surface is structurally non-PII. No-op unless Enabled.
+			if r.cfg.SpanFilter.Enabled && absStart >= 0 && absEnd <= len(text) && absStart < absEnd {
+				if r.cfg.SpanFilter.rejectSpanSurface(canonical, text[absStart:absEnd]) {
+					if GLiNERDebug {
+						debugLog("Analyze: shape-filter dropped %s %q\n", canonical, text[absStart:absEnd])
+					}
+					continue
+				}
+			}
 			cands = append(cands, hugotCand{
-				start: chunk.ByteStart + s.byteStart,
-				end:   chunk.ByteStart + s.byteEnd,
+				start: absStart,
+				end:   absEnd,
 				score: s.score,
 				typ:   canonical,
 			})
@@ -1079,8 +1091,14 @@ func (r *GLiNERRecognizer) runChunk(text string) ([]glinerSpan, error) {
 	for c := 0; c < numClasses; c++ {
 		t := r.threshold
 		if c < len(r.labels) {
-			if override, ok := entityTypeThreshold[r.labelToEntity[r.labels[c]]]; ok && t > override {
+			canonical := r.labelToEntity[r.labels[c]]
+			// ClassThresholds is used DIRECTLY (not min()'d), so a deploy
+			// can RAISE a floor above its recall-tuned default to cut
+			// common-word FPs. Absent classes fall back to min(threshold, floor).
+			if override, ok := r.cfg.ClassThresholds[canonical]; ok && override > 0 {
 				t = override
+			} else if floor, ok := entityTypeThreshold[canonical]; ok && t > floor {
+				t = floor
 			}
 		}
 		perClassThresh[c] = t
