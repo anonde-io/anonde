@@ -354,6 +354,53 @@ jobs:
         run: |
           CGO_ENABLED=1 go build -tags hugot ./...
 
+      # Fail LOUD if onnxruntime isn't actually on disk. The cache +
+      # download steps above are best-effort; without the .so the gliner
+      # recognizer's ORT session create fails and the analyzer silently
+      # falls back to patterns-only. Assert the file exists and is
+      # non-empty before any gliner cell can run.
+      - name: Verify libonnxruntime is present
+        run: |
+          set -euo pipefail
+          if [ ! -s "$ORT_LIB" ]; then
+            echo "::error::libonnxruntime missing or zero-byte at $ORT_LIB"
+            echo "A gliner cell cannot create an ORT session without it and"
+            echo "would silently fall back to patterns-only. Check the"
+            echo "'Cache libonnxruntime' / 'Download libonnxruntime' steps."
+            ls -la "$ORT_LIB_DIR" || true
+            exit 1
+          fi
+          echo "libonnxruntime present: $(ls -la "$ORT_LIB")"
+
+      # Deterministically fetch the GLiNER PII model exports BEFORE the
+      # scored cell, and fail the step if any is absent/partial/zero-byte.
+      # This is the core reliability fix: the recognizers auto-download on
+      # first use and the analyzer SWALLOWS a failed/partial download,
+      # turning a missing model into a silent patterns-only fallback (the
+      # "0 NER findings" the render guard rail catches on random cells).
+      # Prefetching here converts that into a loud, early failure and also
+      # repairs a partially-restored HF/anonde model cache. After this
+      # step every gliner cell is guaranteed to load its model from cache.
+      #
+      # The two exports mirror bench/Makefile exactly: BASE (used by
+      # anonde-ner and the BASE slot of anonde-ner-stack) and LARGE (the
+      # flat decoder added by anonde-ner-stack). BOTH ship their FP32 ONNX
+      # at `onnx/model.onnx` — the LARGE repo does NOT put model.onnx at
+      # the root (a stale assumption that 404'd the LARGE download and
+      # made the stack byte-equivalent to the BASE; see the
+      # GLINER_LARGE_ONNX_FILE comment in bench/Makefile, verified against
+      # the HF tree API 2026-05-27). The -onnx args here MUST match
+      # GLINER_ONNX_FILE / GLINER_LARGE_ONNX_FILE in bench/Makefile. Tool:
+      # bench/tools/prefetch/main.go — same hugot.DownloadModel +
+      # ~/.cache/anonde/models layout as the recognizer.
+      - name: Prefetch GLiNER models (fail if absent/partial)
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=1 ORT_SO_PATH="$ORT_LIB" \
+            go run -tags hugot ./bench/tools/prefetch \
+              -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx \
+              -model knowledgator/gliner-pii-large-v1.0 -onnx onnx/model.onnx
+
       # Run the always-on engines (corpus-X = patterns + anonde-ner +
       # presidio + gliner-py), then the anonde-ner-stack cell, then the
       # openai-pf cell. The stack + openai-pf cells are kept off the
