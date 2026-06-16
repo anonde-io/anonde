@@ -51,7 +51,7 @@ was charged twice on <DATE_TIME_1> for $89.99, please refund.
 - **Drop-in for any LLM workflow.** Same shape in, same shape out. Plug it between your app and OpenAI, Anthropic, Bedrock, Ollama, or your own model. They see only tokens.
 - **Wins on leak rate.** anonde-ner has the lowest leak rate on all 29 gold-annotated corpora the bench tracks across English, German, Spanish, French and Italian — covering clinical, legal, finance, structured PII, and adversarial / out-of-distribution text. ([numbers](#benchmarks))
 - **Local-first.** Ships as a Go library or a Docker image you run yourself. No cloud calls. NER models are baked into the image, so there is no outbound HuggingFace traffic at request time.
-- **Multilingual.** Open-set NER (GLiNER) plus 52 region-aware pattern recognizers covering 12+ jurisdictions: international IDs, US, UK, Germany, Italy, Spain, Australia, India, Poland, Singapore, Finland, Korea.
+- **Multilingual.** Open-set NER (GLiNER) plus 70 region-aware pattern recognizers covering 12+ jurisdictions: international IDs, US, UK, Germany, Italy, Spain, Australia, India, Poland, Singapore, Finland, Korea.
 - **Reversible, audited.** Tokens map back to cleartext only where you allow it. The reveal call requires `actor` + `purpose` and is the only place plaintext comes back.
 - **Recall-biased.** Missing a span is a leak; tokenising one too many is cheap. The bench tracks this explicitly via `leak_rate` (lower is better).
 
@@ -157,7 +157,7 @@ func main() {
 }
 ```
 
-Default build is pure Go, no CGO. The `-tags hugot` build enables in-process NER (GLiNER, hugot); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Default build is pure Go, no CGO. The `-tags ner` build enables in-process GLiNER NER; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## HTTP API
 
@@ -231,7 +231,7 @@ that boost the score when they appear nearby. Add one two ways:
 
 Either path joins the parallel-dispatch pipeline and the conflict resolver
 handles overlap automatically. Worked examples (context boosts, both paths),
-the 52-recognizer catalogue, and how to add a model-backed NER recognizer are
+the 70-recognizer catalogue, and how to add a model-backed NER recognizer are
 in [docs/RECOGNIZERS.md](docs/RECOGNIZERS.md). NER preferences and the full
 pipeline rules are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -297,7 +297,7 @@ Presidio and OpenAI Privacy Filter weren't run on every corpus: Presidio's bench
   - Local: open [`docs/api/index.html`](docs/api/) after `make proto` (serve over HTTP, e.g. `python3 -m http.server`)
   - Source JSON: [`gen/anonde/v1/anonde.swagger.json`](gen/anonde/v1/anonde.swagger.json)
 - [Developer guide](docs/DEVELOPER_GUIDE.md): text + PDF + scanned-image flows, per-request PDF knobs, Prometheus metrics
-- [Recognizers](docs/RECOGNIZERS.md): 52-recognizer table and writing custom recognizers
+- [Recognizers](docs/RECOGNIZERS.md): 70-recognizer table and writing custom recognizers
 - [Architecture](docs/ARCHITECTURE.md): pipeline, directory tree, conflict resolution
 - [Operators](docs/OPERATORS.md): Replace, Redact, Mask, Hash, Encrypt, Synthesize
 - [OpenAI proxy](docs/OPENAI_PROXY.md): point an OpenAI SDK at anonde

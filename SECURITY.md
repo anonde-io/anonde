@@ -32,7 +32,7 @@ problem.** Use one of the private channels below:
 Please include, as far as you can:
 
 - The affected version, commit, or image tag.
-- The build variant (patterns-only or `-tags hugot` NER).
+- The build variant (patterns-only or `-tags ner` NER).
 - A minimal reproduction — input, request, and observed vs. expected
   behavior. Redact any real PII from the report itself.
 - Impact: what an attacker gains (e.g. plaintext leak, vault bypass,

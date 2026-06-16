@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // gliner_pool.go is an OPTIONAL, opt-in wrapper that lets a caller run
 // up to N GLiNER inferences in parallel.

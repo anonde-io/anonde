@@ -19,12 +19,8 @@ GRASCCO_ZIP := $(DATA)/grascco_phi_annotation_json.zip
 
 ANONDE_BACKEND   ?= patterns-only
 LANGUAGE         ?= de
-RECONCILER       ?= none
-AUDITOR          ?= none
-OLLAMA_MODEL     ?= llama3.2:3b
-AUDITOR_MODEL    ?= llama3.1:8b
 PYTHON           ?= python3
-# NER backend knobs — only meaningful when ANONDE_BACKEND=hugot.
+# NER backend knobs — only meaningful when ANONDE_BACKEND=gliner.
 # Empty ANONDE_MODEL keeps the recognizer-package default
 # (onnx-community/multilang-pii-ner-ONNX, int8). Override to bench
 # alternative backends (GLiNER, ai4privacy fine-tunes, …) without code
@@ -33,14 +29,13 @@ PYTHON           ?= python3
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
 # 0 = recognizer default; negative = disabled. Per-model tuning happens here.
-NER_SCORE_FLOOR  ?= 0
 # GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
 # the runner via --label-set. This corpus self-declares its domain
 # (clinical/PHI corpus); ignored on the patterns-only backend.
 LABEL_SET        ?= clinical
 
-# Only build hugot transitive deps when the backend actually needs them.
-GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
+# Only build the NER transitive deps when the backend actually needs them.
+GO_TAGS := $(if $(filter gliner,$(ANONDE_BACKEND)),-tags ner)
 
 .PHONY: all data anonde report clean
 
@@ -61,9 +56,7 @@ anonde: $(CORPUS)
 		--in $(CORPUS) --out $(ANONDE_OUT) \
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
-		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--label-set $(LABEL_SET) \
-		--ollama-model $(OLLAMA_MODEL)
+		--label-set $(LABEL_SET)
 
 .PHONY: report
 report:

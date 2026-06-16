@@ -22,7 +22,7 @@ it enables.
 ## Tests
 
 - [ ] `go test ./...` passes locally.
-- [ ] `go test -tags hugot ./...` passes (only required if the change
+- [ ] `go test -tags ner ./...` passes (only required if the change
       touches the analyzer / NER recognizers / build tags).
 - [ ] New unit tests cover the change, or an existing test was extended.
 

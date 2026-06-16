@@ -79,7 +79,7 @@ type RedactStats struct {
 // called; the operator didn't opt in via ANONDE_PDF_ENABLED=1. Mapped
 // to codes.Unimplemented / HTTP 501 by the transport layer so callers
 // see a clear "not configured" signal.
-var ErrPDFRedactorUnconfigured = fmt.Errorf("pdf redactor not configured: start the server with ANONDE_PDF_ENABLED=1 (requires the NER image or a -tags hugot build)")
+var ErrPDFRedactorUnconfigured = fmt.Errorf("pdf redactor not configured: start the server with ANONDE_PDF_ENABLED=1 (requires the NER image or a -tags ner build)")
 
 // SetPDFRedactor injects the redactor used by AnonymizePDF. Safe to
 // call once during server bootstrap. Leaving it unset disables the PDF

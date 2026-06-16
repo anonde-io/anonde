@@ -7,8 +7,8 @@ name: bench
 #   * Corpora: openmed (GraSCCo PHI, auto-fetched from Zenodo) +
 #     synth_clinical (in-process generator). Both ship gold annotations,
 #     so F1 + leak rate are meaningful. ai4privacy_en (5000 docs) and
-#     anonde-hugot (~30 min/corpus) and openai-pf (~80 s/doc) are
-#     deliberately excluded — they belong in a nightly or release bench,
+#     openai-pf (~80 s/doc) is deliberately excluded — it belongs in a
+#     nightly or release bench,
 #     not on every PR.
 #   * Engines: anonde-patterns, anonde-ner (default NER image), and
 #     gliner-py (parity check: same model, Python sidecar). If
@@ -39,7 +39,7 @@ on:
       - 'anonymizer/**'
       - 'bench/**'
       - 'cmd/anonde/**'
-      - 'hugot_*.go'
+      - 'ner_*.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/bench.yml'
@@ -50,7 +50,7 @@ on:
       - 'anonymizer/**'
       - 'bench/**'
       - 'cmd/anonde/**'
-      - 'hugot_*.go'
+      - 'ner_*.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/bench.yml'
@@ -137,22 +137,22 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-cache-gliner-pii-base-v1.0
 
-      # The Go-native GLiNER recognizer uses hugot's downloader, which
-      # writes to ~/.cache/anonde/models/. Same model, different on-disk
-      # layout — cache both.
+      # The Go-native GLiNER recognizer uses the hugot library's
+      # downloader, which writes to ~/.cache/anonde/models/. Same model,
+      # different on-disk layout — cache both.
       - name: Cache anonde model cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/anonde/models
           key: anonde-models-gliner-pii-base-v1.0
 
-      - name: Verify default build (no hugot, no CGO)
+      - name: Verify default build (no NER tag, no CGO)
         run: |
           CGO_ENABLED=0 go build ./...
 
-      - name: Verify hugot build (CGO=1, with NER backends)
+      - name: Verify NER build (CGO=1, with NER backends)
         run: |
-          CGO_ENABLED=1 go build -tags hugot ./...
+          CGO_ENABLED=1 go build -tags ner ./...
 
       - name: Run unit tests
         run: |
@@ -182,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=1 ORT_SO_PATH="$ORT_LIB" \
-            go run -tags hugot ./bench/tools/prefetch \
+            go run -tags ner ./bench/tools/prefetch \
               -model knowledgator/gliner-pii-base-v1.0 -onnx onnx/model.onnx
 
       # The bench cells use the `gliner` backend which needs ORT_LIB set

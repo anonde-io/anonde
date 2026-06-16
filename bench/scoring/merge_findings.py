@@ -2,7 +2,7 @@
 """merge_findings — union two or more findings JSONLs into one stream.
 
 Why this exists: the Python sidecar runners (GLiNER, OpenAI Privacy Filter)
-emit NER-only findings. The Go bench's hugot variants emit findings from
+emit NER-only findings. The Go bench's gliner variants emit findings from
 **both** patterns AND NER because anonde's analyzer runs the full registry.
 That makes a direct compare unfair — the sidecar engines look much worse
 because they lack the patterns leg.

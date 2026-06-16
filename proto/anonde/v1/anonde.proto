@@ -283,7 +283,7 @@ message DeleteAnonymizationResponse {
 message GetVersionRequest {}
 
 message GetVersionResponse {
-  // analyzer_backend = patterns | hugot | gliner | ollama.
+  // analyzer_backend = patterns | gliner | gliner-flat | gliner-stack.
   string analyzer_backend = 1;
   // model name reported by the backend, empty for patterns.
   string model = 2;

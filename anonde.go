@@ -129,32 +129,21 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 // fastest, smallest binary footprint, but PERSON / LOCATION / ORGANIZATION
 // will not be detected.
 //
-// For NER, use DefaultAnalyzerEngineWithHugot (in-process ONNX, recommended)
-// or DefaultAnalyzerEngineWithOllama.
+// For NER, use DefaultAnalyzerEngineWithGLiNERConfig (in-process ONNX,
+// recommended).
 func DefaultAnalyzerEngine() *analyzer.AnalyzerEngine {
 	registry := analyzer.NewRecognizerRegistry()
 	registry.Add(patternRecognizers()...)
 	return analyzer.NewAnalyzerEngine(registry)
 }
 
-// DefaultAnalyzerEngineWithOllama returns an engine that uses a local Ollama instance for NER.
-// All inference runs locally; no data leaves the machine.
-// endpoint defaults to "http://localhost:11434" if empty; model defaults to "phi3:mini" if empty.
-func DefaultAnalyzerEngineWithOllama(endpoint, model string) *analyzer.AnalyzerEngine {
-	registry := analyzer.NewRecognizerRegistry()
-	registry.Add(recognizers.NewOllamaNERRecognizer(endpoint, model))
-	registry.Add(patternRecognizers()...)
-	return analyzer.NewAnalyzerEngine(registry)
-}
-
-// DefaultAnalyzerEngineWithHugot returns an engine that uses a pre-trained
-// ONNX transformer model (via hugot) for NER.
+// DefaultAnalyzerEngineWithGLiNERConfig wires a Go-native GLiNER recognizer
+// for in-process open-set NER.
 //
-// Build-tagged: the real implementation lives in hugot_on.go and only
-// compiles with `-tags hugot`. The default build uses hugot_off.go, which
-// log.Fatalfs on call. This keeps the hugot transitive dependency graph
-// (onnxruntime-go, tokenizers, …) out of patterns-only and Ollama-only
-// builds.
+// Build-tagged: the real implementation lives in ner_on.go and only
+// compiles with `-tags ner`. The default build uses ner_off.go, which
+// log.Fatalfs on call. This keeps the GLiNER transitive dependency graph
+// (onnxruntime-go, tokenizers, …) out of patterns-only builds.
 
 // DefaultAnonymizerEngine returns a new AnonymizerEngine.
 func DefaultAnonymizerEngine() *anonymizer.AnonymizerEngine {

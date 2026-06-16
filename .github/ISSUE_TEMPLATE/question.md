@@ -32,6 +32,6 @@ where you are.
 ## Environment (if relevant)
 
 - anonde version / image tag:
-- Build variant (patterns-only / `-tags hugot`):
+- Build variant (patterns-only / `-tags ner`):
 - OS + arch:
 - Analyzer backend (`ANALYZER_BACKEND`):

@@ -35,20 +35,15 @@ ANONDE_BACKEND   ?= patterns-only
 LANGUAGE         ?= de
 PER_SUBLANGUAGE  ?= 30
 SEED             ?= 20260512
-RECONCILER       ?= none
-AUDITOR          ?= none
-OLLAMA_MODEL     ?= llama3.2:3b
-AUDITOR_MODEL    ?= llama3.1:8b
 PYTHON           ?= python3
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
-NER_SCORE_FLOOR  ?= 0
 # GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
 # the runner via --label-set. This corpus self-declares its domain
 # (clinical/PHI corpus); ignored on the patterns-only backend.
 LABEL_SET        ?= clinical
 
-GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
+GO_TAGS := $(if $(filter gliner,$(ANONDE_BACKEND)),-tags ner)
 
 .PHONY: all data anonde report clean
 
@@ -68,9 +63,7 @@ anonde: $(CORPUS)
 		--in $(CORPUS) --out $(ANONDE_OUT) \
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
-		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--label-set $(LABEL_SET) \
-		--ollama-model $(OLLAMA_MODEL)
+		--label-set $(LABEL_SET)
 
 # Re-uses compare.py + label_map.yaml from bench/scoring — gold labels
 # match GraSCCo PHI conventions (NAME_PATIENT, LOCATION_HOSPITAL, etc.).

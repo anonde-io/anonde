@@ -13,7 +13,7 @@ Two ways: native Go (fastest dev loop) or Docker (closest to prod).
 # patterns-only (fast, no model download)
 make run                # ANALYZER_BACKEND=patterns on :8081
 
-# NER (GLiNER, requires -tags hugot + CGO + libonnxruntime)
+# NER (GLiNER, requires -tags ner + CGO + libonnxruntime)
 make run-ner            # ANALYZER_BACKEND=gliner on :8081
 
 # NER + PDF endpoint + Prometheus on 127.0.0.1:9090

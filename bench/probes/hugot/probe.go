@@ -1,10 +1,10 @@
-//go:build hugot
+//go:build ner
 
 // probe_hugot — single-purpose diagnostic that answers "will hugot load
 // model X?" without running a full bench.
 //
-// Background: anonde's HugotNERRecognizer maps a small set of known labels
-// (CoNLL, ai4privacy, multilang-pii-ner) to anonde entity types and drops
+// Background: anonde's NER recognizers map a small set of known labels
+// (CoNLL, ai4privacy, multilang-pii-ner) to anonde entity types and drop
 // everything else. That's correct for production but misleading for a
 // probe — a model that *did* load but emitted unfamiliar labels would
 // look identical to one that produced nothing. This tool deliberately
@@ -14,7 +14,7 @@
 //
 // Single file, hugot-tagged. Run with:
 //
-//	go run -tags hugot ./bench/probes/hugot \
+//	go run -tags ner ./bench/probes/hugot \
 //	  --model urchade/gliner_multi-v2.1
 //
 // Useful for evaluating alternatives such as:

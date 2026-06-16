@@ -100,7 +100,7 @@ func RegisterGauges(reg *prometheus.Registry, cfg GaugesConfig) prometheus.Colle
 		),
 		descNERFlag: prometheus.NewDesc(
 			"anonde_ner_enabled",
-			"1 when an NER recognizer (hugot|gliner|ollama) is wired into the active analyzer engine, 0 otherwise.",
+			"1 when an NER recognizer (gliner) is wired into the active analyzer engine, 0 otherwise.",
 			nil, nil,
 		),
 		descBuildInfo: prometheus.NewDesc(

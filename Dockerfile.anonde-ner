@@ -93,7 +93,7 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 \
-    go build -tags hugot -o /out/anonde ./cmd/anonde
+    go build -tags ner -o /out/anonde ./cmd/anonde
 
 # Regression gate: vcs.revision must be baked into the binary. Empty
 # version → the telemetry Worker rejects heartbeats with HTTP 400.

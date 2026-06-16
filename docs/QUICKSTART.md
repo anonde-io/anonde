@@ -20,7 +20,7 @@ make run            # ANALYZER_BACKEND=patterns ANONDE_ADDR=:8081 go run ./cmd/a
 
 - `ANALYZER_BACKEND=patterns`: pattern recognizers only, no NER model
   download. Fastest start. Swap to `make run-ner` for the GLiNER pass
-  (requires `-tags hugot` + CGO), or `make run-ner-pdf` for the full
+  (requires `-tags ner` + CGO), or `make run-ner-pdf` for the full
   developer suite (NER + PDF endpoint + Prometheus on `:9090`).
 - `ANONDE_ADDR=:8081`: HTTP listen address. Defaults to `:8080`.
 
@@ -241,9 +241,12 @@ other.
 
 ## Notes
 
-- All ingest data lives in memory (TTL configurable via
-  `MEMORY_VAULT_TTL` and `MEMORY_STORE_TTL` env vars). The anonde server
-  is designed for a tenant to plug in their own vault + store.
+- All ingest data lives in memory. Retention is configurable via the
+  `ANONDE_VAULT_TTL` and `ANONDE_STORE_TTL` env vars, both default `0` —
+  no auto-expiry, so entries persist until you `DELETE` them or the
+  process restarts. Set e.g. `ANONDE_VAULT_TTL=30m` to bound retention.
+  The anonde server is designed for a tenant to plug in their own vault
+  + store.
 - The same cleartext within a single doc gets the same token. The same
   cleartext across docs does NOT, because `mintToken` is per-(tenant, entity)
   with a monotonic counter, not content-addressable.

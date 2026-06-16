@@ -35,7 +35,7 @@ make tools
 # Default build — pure Go, no CGO. Production-safe everywhere.
 make build
 
-# NER build — `-tags hugot` enables the GLiNER + hugot in-process
+# NER build — `-tags ner` enables the in-process GLiNER
 # recognizers. Needs CGO and a reachable libonnxruntime.so. The
 # Dockerfile.anonde-ner image handles all of this for you; if you
 # want it locally, see docs/DEPLOYMENT.md.
@@ -54,8 +54,8 @@ make ci                                      # what CI runs: vet + tests
 ```
 
 Tests are expected to pass on a default `make build` (no `-tags
-hugot`). If your change touches the NER recognizers, run
-`go test -tags hugot ./...` too — but flag in the PR description that
+ner`). If your change touches the NER recognizers, run
+`go test -tags ner ./...` too — but flag in the PR description that
 you couldn't (or did) run it, since the libonnxruntime requirement
 isn't on every contributor's machine.
 
@@ -96,7 +96,7 @@ runs map your label onto a canonical type.
 Full pipeline + conflict-resolution rules (NER beats patterns for
 PERSON/ORG/LOC/AGE/PROFESSION/NRP regardless of score) live in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The full
-52-recognizer table is in [`docs/RECOGNIZERS.md`](docs/RECOGNIZERS.md).
+70-recognizer table is in [`docs/RECOGNIZERS.md`](docs/RECOGNIZERS.md).
 
 ## PR conventions
 

@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // probe_gliner — diagnostic harness for the Go-native GLiNER
 // recognizer (analyzer/recognizers.GLiNERRecognizer). Loads the model
@@ -8,7 +8,7 @@
 //
 // Run with:
 //
-//	go run -tags hugot ./bench/probes/gliner --text "..."
+//	go run -tags ner ./bench/probes/gliner --text "..."
 //
 // Flags:
 //

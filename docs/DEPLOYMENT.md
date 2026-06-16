@@ -39,13 +39,11 @@ In-memory vault and store are cleared on each redeploy, so a token issued under 
 
 | Value | What it does | Build requirement |
 |---|---|---|
-| `patterns` | No NER. 52 regex/checksum pattern recognizers only. | default Go build |
-| `hugot` | One XLM-R PII transformer via hugot's ONNX runtime. | `-tags hugot` + CGO |
-| `gliner` | One GLiNER PII recognizer (span decoder, BASE model). | `-tags hugot` + CGO |
-| `gliner-flat` | One GLiNER recognizer with the flat / token decoder (LARGE-style 4-input BIO ONNX exports). | `-tags hugot` + CGO |
-| `gliner-stack` | BOTH the span-decoder base + the flat-decoder recognizer in one engine. The conflict resolver unions findings. Lowest-leak option; pairs with `Dockerfile.anonde-ner-stack`. | `-tags hugot` + CGO |
-| `gliner-ensemble` | Multi-model GLiNER ensemble; gated by `ANONDE_NER_STACK=id1,id2,...` env var. | `-tags hugot` + CGO |
-| `ollama` | NER via a local Ollama daemon (no in-process model). | default Go build |
+| `patterns` | No NER. 70 regex/checksum pattern recognizers only. | default Go build |
+| `gliner` | One GLiNER PII recognizer (span decoder, BASE model). | `-tags ner` + CGO |
+| `gliner-flat` | One GLiNER recognizer with the flat / token decoder (LARGE-style 4-input BIO ONNX exports). | `-tags ner` + CGO |
+| `gliner-stack` | BOTH the span-decoder base + the flat-decoder recognizer in one engine. The conflict resolver unions findings. Lowest-leak option; pairs with `Dockerfile.anonde-ner-stack`. | `-tags ner` + CGO |
+| `gliner-ensemble` | Multi-model GLiNER ensemble; gated by `ANONDE_NER_STACK=id1,id2,...` env var. | `-tags ner` + CGO |
 
 ### NER variant (defaults wired in `Dockerfile.anonde-ner`)
 
@@ -53,12 +51,18 @@ In-memory vault and store are cleared on each redeploy, so a token issued under 
 ANALYZER_BACKEND=gliner
 GLINER_MODELS_DIR=/models
 GLINER_MODEL=knowledgator/gliner-pii-base-v1.0
-GLINER_ONNX_FILE=onnx/model.onnx        # FP32 by default (production)
+GLINER_QUANT=fp32                       # FP32 by default (production)
 GLINER_THRESHOLD=0.40
 ORT_SO_PATH=/lib/libonnxruntime.so.1    # arch-neutral path; image is multi-arch
 ```
 
-Memory-constrained deployments can opt back into INT8 by rebuilding with `GLINER_ONNX_FILE=onnx/model_quint8.onnx` (saves ~240 MB image size at the cost of ~6pp Σ ALL leak rate on multilingual legal / clinical text, measured in the bench matrix).
+> **Model default note.** The bare `-tags ner` binary's `gliner` backend defaults to the multilingual `onnx-community/gliner_multi_pii-v1` when `GLINER_MODEL` is unset. The shipped NER images and the recommended production config pin `knowledgator/gliner-pii-base-v1.0` via `GLINER_MODEL` (the documented production default) — set it explicitly if you run your own binary.
+
+Memory-constrained deployments can opt back into INT8 at runtime with `GLINER_QUANT=int8` — it auto-resolves the correct per-repo quantized filename (`onnx/model_quint8.onnx` for knowledgator, `onnx/model_quantized.onnx` for onnx-community) without a rebuild. INT8 saves ~240 MB image size at the cost of ~6pp Σ ALL leak rate on multilingual legal / clinical text (measured in the bench matrix). For a smaller pre-built image, rebuild with the INT8 ONNX baked in; runtime `GLINER_QUANT` is the cheaper flip when the FP32 file is already on disk.
+
+| Var | Default | What |
+|---|---|---|
+| `GLINER_QUANT` | `fp32` | ONNX precision selector: `fp32` (production, lowest leak), `int8` (smallest, ~6pp more leak), or `fp16`. Auto-resolves the conventional filename per HF repo; `GLINER_ONNX_FILE` overrides it with an explicit in-repo path. (Note: `fp16` is currently rejected by onnxruntime for `gliner-pii-base-v1.0`; use `fp32`.) |
 
 ### Stack variant (defaults wired in `Dockerfile.anonde-ner-stack`)
 
@@ -102,12 +106,34 @@ Applies to every GLiNER recognizer (single + pooled). Defaults match onnxruntime
 | `ANONDE_ORT_INTER_OP_THREADS` | ORT default (1) | Threads used to run independent ops in parallel. Rarely worth tweaking for GLiNER; its compute graph is mostly sequential. |
 | `ANONDE_ORT_GRAPH_OPT_LEVEL` | ORT default (`basic`) | One of `disabled`, `basic`, `extended`, `all`. Higher levels can shave 5–15% per inference at the cost of longer first-call init. Try `extended` first; `all` may break on specific ONNX exports. |
 
+### GLiNER / NER tuning
+
+These knobs change detection behaviour and output, not just performance. Defaults are tuned for recall; reach for them when you see specific false positives or want a stricter precision profile.
+
+| Var | Default | What |
+|---|---|---|
+| `ANONDE_ALLOW_NER_FALLBACK` | unset (fail-closed) | When an NER backend is selected but the model can't load/verify, the server **exits** rather than silently serving patterns-only under a NER label. Set `1` to instead log a loud ERROR and degrade to patterns-only (reduced recall, PII leaks possible). Off is the safe default for a redaction tool. |
+| `GLINER_THRESHOLD` | recognizer default (`0.40`) | Global span-confidence floor. The single highest-impact GLiNER knob. Multilingual variants usually want lower (~0.25); the English base ~0.40. |
+| `GLINER_PERSON_THRESHOLD` | unset | Per-class override for `PERSON`. Used directly (not `min()`'d), so you can raise a noisy class above the global floor to cut false positives. |
+| `GLINER_ORG_THRESHOLD` | unset | Per-class override for `ORGANIZATION`. |
+| `GLINER_LOCATION_THRESHOLD` | unset | Per-class override for `LOCATION`. |
+| `GLINER_NRP_THRESHOLD` | unset | Per-class override for `NRP` (nationality / religion / political group). |
+| `GLINER_STRICT` | unset (off) | `1` enables the bench-picked STRICT precision profile: per-class floors (PERSON `0.50`, ORG/LOC/NRP `0.55`) for any class without an explicit override, **and** the span-shape filter (see below). |
+| `GLINER_SPAN_FILTER` | unset (off) | `1` enables only the span-shape filter (without the STRICT class floors): rejects UUID / locale / semver / model-slug / hex / base64 / SCREAMING_SNAKE matches on fuzzy types. Implied by `GLINER_STRICT=1`. |
+| `GLINER_STOPLIST` | empty | Comma-separated extra denylist terms appended (lower-cased) to the span filter's built-in stoplist. Only effective when the span filter is on. |
+| `GLINER_POOL_SIZE` | 1 (single recognizer) | Integer ≥ 2 builds an N-instance pool for the BASE recognizer to serve concurrent requests (each instance serialises its own ONNX session). Sized against RAM, not vCPU — see Pool sizing above. |
+| `ANONDE_NER_STACK` | unset | Comma-separated GLiNER model IDs. When set with `ANALYZER_BACKEND=gliner`, builds a multi-model ensemble (OR-union of findings) instead of the single-model path. A value that trims to empty (e.g. `,,,`) fails loudly at boot rather than silently disabling NER. |
+| `ANONDE_NER_STACK_PARALLEL` | unset (sequential) | `1` runs ensemble members concurrently (one goroutine each) when latency matters more than peak RAM. Default runs them sequentially. |
+| `WARMUP_ON_START` | unset | `1` fires one startup Analyze and pre-warms every pool instance in parallel, so the first user requests don't each pay the 5–30 s cold ONNX init. Recommended for any NER deploy behind a load balancer. |
+| `ANONDE_NER_VERIFY_TIMEOUT` | `5m` | Timeout for the boot-time fail-closed NER verification (above). Raise on slow disks / cold model caches; lower for a tighter boot SLA. |
+| `ANONDE_WARMUP_TIMEOUT` | `5m` | Timeout for the `WARMUP_ON_START` priming call. |
+
 ### Vault + request limits (both variants)
 
 | Var | Default | What |
 |---|---|---|
-| `MEMORY_VAULT_TTL` | `5m` | token ↔ cleartext retention |
-| `MEMORY_STORE_TTL` | `5m` | anonymized-document retention |
+| `ANONDE_VAULT_TTL` | `0` (no expiry) | token ↔ cleartext retention. `0` means entries never auto-expire — they live until you `DELETE` them or the process restarts (in-memory backend) / are evicted. Set e.g. `30m` to bound retention. |
+| `ANONDE_STORE_TTL` | `0` (no expiry) | anonymized-document retention. Same `0` = no auto-expiry semantics as above. |
 | `MAX_CONTENT_BYTES` | 10 MiB | request body cap |
 
 ### Persistent data directory
@@ -191,8 +217,8 @@ the language packs you need; nothing else changes in the server.
 
 `GET /v1/anonymizations/{id}/reveal-pdf` takes the same tenant
 header / query and returns the original PDF bytes. Subject to the same
-`MEMORY_STORE_TTL` as text anonymizations: 404 once expired or
-deleted.
+`ANONDE_STORE_TTL` as text anonymizations: 404 once expired (only if a
+non-zero TTL is set) or deleted.
 
 ### Env vars
 
@@ -240,7 +266,7 @@ disabled entirely.
 `.github/workflows/bench.yml` runs on every push to `main` and every PR whose changes touch `analyzer/**`, `bench/**`, `cmd/anonde/**`, or the build chain:
 
 1. Builds the default (no-CGO) target.
-2. Builds the `-tags hugot` target with CGO.
+2. Builds the `-tags ner` target with CGO.
 3. Runs the Go unit-test suite.
 4. Runs `make corpus-openmed && make corpus-synth_clinical`: patterns + GLiNER + GLiNER-py sidecar across two German corpora.
 5. Renders `bench/REPORT_MATRIX.md` and uploads it (+ `results_matrix.csv` + per-cell findings JSONLs) as workflow artifacts.

@@ -1,7 +1,7 @@
-//go:build !hugot
+//go:build !ner
 
 // ner_gliner_off.go is the fail-fast stub used when the binary is built
-// WITHOUT the `hugot` tag. The real implementation in ner_gliner.go
+// WITHOUT the `ner` tag. The real implementation in ner_gliner.go
 // pulls in onnxruntime_go + tokenizers, both CGO. Default builds skip
 // all of that and surface a clear error message when something tries to
 // construct or call a GLiNERRecognizer.
@@ -21,13 +21,13 @@ import (
 )
 
 // errGLiNERDisabled is the canned error returned by every Analyze call
-// when the hugot tag is absent. It's a sentinel; callers can check via
+// when the ner tag is absent. It's a sentinel; callers can check via
 // errors.Is for clean handling in tests.
 var errGLiNERDisabled = errors.New("gliner: backend not available: " +
-	"this binary was built without -tags hugot. " +
-	"Rebuild with `go build -tags hugot ./...` to enable the GLiNER recognizer.")
+	"this binary was built without -tags ner. " +
+	"Rebuild with `go build -tags ner ./...` to enable the GLiNER recognizer.")
 
-// GLiNERRecognizer is the no-op fallback used in non-hugot builds. It
+// GLiNERRecognizer is the no-op fallback used in non-ner builds. It
 // stores the config for diagnostics but Analyze always errors.
 type GLiNERRecognizer struct {
 	cfg GLiNERConfig

@@ -1,7 +1,7 @@
 // runner_anonde reads a corpus JSONL, runs anonde on each doc, and
 // writes a per-doc findings JSONL. Single source of truth across the
 // bench matrix — every corpus's Makefile invokes this binary via
-// `go run -tags hugot ./bench/runners/anonde.go ...`.
+// `go run -tags ner ./bench/runners/anonde.go ...`.
 //
 // Corpus shape is the contract:
 //
@@ -15,7 +15,6 @@
 // Backends:
 //
 //   patterns-only   no NER (DisableNER=true) — fastest, no model
-//   hugot           hugot/ONNX TokenClassification (XLM-R PII default)
 //   gliner          GLiNER zero-shot NER, span decoder (knowledgator/gliner-pii-base-v1.0)
 //   gliner-flat     GLiNER zero-shot NER, flat / token decoder
 //                   (knowledgator/gliner-pii-large-v1.0 and other 4-input exports)
@@ -71,19 +70,15 @@ func main() {
 		outPath    = flag.String("out", "", "output findings jsonl")
 		threshold  = flag.Float64("threshold", 0.3, "score threshold")
 		language   = flag.String("language", "de", "AnalysisConfig.Language")
-		backend    = flag.String("backend", "patterns-only", "hugot|gliner|gliner-flat|ollama|patterns-only")
-		modelsDir  = flag.String("models-dir", "", "hugot models cache (default ~/.cache/anonde/models)")
-		modelName  = flag.String("model", "", "hugot/gliner model id (empty = backend default)")
+		backend    = flag.String("backend", "patterns-only", "gliner|gliner-flat|patterns-only")
+		modelsDir  = flag.String("models-dir", "", "model cache dir (default ~/.cache/anonde/models)")
+		modelName  = flag.String("model", "", "gliner model id (empty = backend default)")
 		onnxFile   = flag.String("onnx-file", "", "ONNX file path inside the HF repo (e.g. onnx/model_quantized.onnx); empty = repo default")
-		scoreFloor = flag.Float64("ner-score-floor", 0, "drop NER predictions below this score before threshold filtering (0 = recognizer default, <0 = disabled)")
 		glinerThr  = flag.Float64("gliner-threshold", 0, "gliner prediction threshold (0 = recognizer default, ~0.40)")
 		ortLibPath = flag.String("ort-library", "", "onnxruntime shared library path (gliner backend; empty = system default)")
-		autoDL     = flag.Bool("auto-download", true, "auto-download hugot model on first run")
+		autoDL     = flag.Bool("auto-download", true, "auto-download model on first run")
 		disableNER = flag.Bool("disable-ner", false, "force DisableNER=true regardless of backend")
 		foldParity = flag.Bool("fold-parity-labels", false, "fold STREET_ADDRESS + POSTAL_CODE to LOCATION (ai4privacy gold schema)")
-
-		ollamaEndpoint = flag.String("ollama-endpoint", "http://localhost:11434", "Ollama base URL (used by --backend ollama)")
-		ollamaModel    = flag.String("ollama-model", "llama3.2:3b", "Ollama model tag (used by --backend ollama)")
 
 		flatGLiNERModel = flag.String("flat-gliner-model", "", "additional flat-decoder GLiNER model id (e.g. knowledgator/gliner-pii-large-v1.0); registered alongside the base")
 		flatGLiNEROnnx  = flag.String("flat-gliner-onnx", "", "ONNX file path inside the flat-GLiNER repo (e.g. model.onnx)")
@@ -125,18 +120,6 @@ func main() {
 		nerOff      bool
 	)
 	switch *backend {
-	case "hugot":
-		engine = anonde.DefaultAnalyzerEngineWithHugotConfig(recognizers.HugotNERConfig{
-			ModelsDir:    *modelsDir,
-			ModelName:    *modelName,
-			OnnxFilePath: *onnxFile,
-			AutoDownload: *autoDL,
-			ScoreFloor:   *scoreFloor,
-		})
-		engineLabel = "anonde-hugot"
-		if *modelName != "" {
-			engineLabel = "anonde-hugot[" + *modelName + "]"
-		}
 	case "gliner":
 		engine = anonde.DefaultAnalyzerEngineWithGLiNERConfig(recognizers.GLiNERConfig{
 			ModelsDir:         *modelsDir,
@@ -186,21 +169,8 @@ func main() {
 		engine = anonde.DefaultAnalyzerEngine()
 		nerOff = true
 		engineLabel = "anonde-patterns-only"
-	case "ollama":
-		// Ollama as the NER backend. Pure-Go path (no CGO, no
-		// libonnxruntime), uses a local Ollama daemon over HTTP.
-		// Reuses the --ollama-endpoint / --ollama-model flags that
-		// were previously reconciler-only. ONLY emits PERSON /
-		// LOCATION / ORGANIZATION / NRP — pattern recognizers cover
-		// the rest of the entity surface.
-		ollMod := strings.TrimSpace(*ollamaModel)
-		if ollMod == "" {
-			ollMod = "llama3.2:3b"
-		}
-		engine = anonde.DefaultAnalyzerEngineWithOllama(*ollamaEndpoint, ollMod)
-		engineLabel = "anonde-ollama[" + ollMod + "]"
 	default:
-		log.Fatalf("unknown --backend %q (valid: hugot, gliner, gliner-flat, ollama, patterns-only)", *backend)
+		log.Fatalf("unknown --backend %q (valid: gliner, gliner-flat, patterns-only)", *backend)
 	}
 	if *disableNER {
 		nerOff = true
@@ -215,7 +185,7 @@ func main() {
 	if strings.HasPrefix(*backend, "gliner") && !nerOff {
 		if !analyzer.HasNERRecognizer(engine) {
 			log.Fatalf("--backend %s requested but no NER recognizer registered "+
-				"(is this built with -tags hugot?); refusing to emit patterns-only findings under a %q label",
+				"(is this built with -tags ner?); refusing to emit patterns-only findings under a %q label",
 				*backend, engineLabel)
 		}
 		vctx, vcancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -232,7 +202,7 @@ func main() {
 	// Optional second-stage GLiNER (token / flat decoder, e.g. LARGE).
 	// Registers alongside the existing recognizers so both inferences
 	// run per doc; the analyzer's RemoveConflicts merges overlaps. Only
-	// wired for the `gliner` backend — patterns-only / hugot ignore it.
+	// wired for the `gliner` backend — patterns-only ignores it.
 	if *backend == "gliner" && strings.TrimSpace(*flatGLiNERModel) != "" {
 		flatRec := recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
 			ModelsDir:         *modelsDir,

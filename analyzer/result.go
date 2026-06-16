@@ -23,13 +23,10 @@ type RecognizerResult struct {
 // add its Name() string here.
 var nerRecognizerNames = map[string]bool{
 	"GLiNERRecognizer":            true,
-	"GLiNERFlatRecognizer":        true,
 	"GLiNERFlatNERRecognizer":     true,
 	"GLiNEREnsembleNERRecognizer": true,
 	"GLiNERPool":                  true,
 	"GLiNERFlatPool":              true,
-	"HugotNERRecognizer":          true,
-	"OllamaNERRecognizer":         true,
 }
 
 // nerPreferredEntities is the set of entity types where NER is more

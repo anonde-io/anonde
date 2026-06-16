@@ -15,7 +15,7 @@ bench/
 │   ├── wiki_de/             # German medical Wikipedia (precision probe)
 │   └── ai4privacy_en/       # English PII (ai4privacy/pii-masking-200k; Presidio parity)
 ├── runners/                 # every engine the matrix can score
-│   ├── anonde.go            # unified Go runner — patterns / hugot / gliner
+│   ├── anonde.go            # unified Go runner — patterns-only / gliner / gliner-flat
 │   ├── presidio.py          # Microsoft Presidio (Python sidecar)
 │   ├── gliner.py            # GLiNER PII (Python sidecar, reference for the Go-native build)
 │   └── openai_pf.py         # OpenAI Privacy Filter (Python sidecar)
@@ -69,11 +69,11 @@ load → predict → score loop using the unified runner:
 ```sh
 make -C bench/corpora/openmed all ANONDE_BACKEND=patterns-only   # fastest
 make -C bench/corpora/openmed all ANONDE_BACKEND=gliner          # production stack
-make -C bench/corpora/openmed all ANONDE_BACKEND=hugot ANONDE_MODEL=urchade/gliner_multi-v2.1
+make -C bench/corpora/openmed all ANONDE_BACKEND=gliner-flat   # flat-decoder GLiNER
 ```
 
-The per-corpus Makefiles also accept `RECONCILER=ollama`, `AUDITOR=ollama`,
-`NER_SCORE_FLOOR=...`, etc. — see each corpus's source for the full set.
+The per-corpus Makefiles also accept `ANONDE_BACKEND=...`, `ANONDE_MODEL=...`,
+`LABEL_SET=...`, etc. — see each corpus's source for the full set.
 
 ## Schema
 

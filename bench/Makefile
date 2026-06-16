@@ -1,7 +1,7 @@
 # bench/Makefile — top-level entry to the anonde bench matrix.
 #
 # The headline target is `make matrix`: it runs every engine (patterns,
-# GLiNER, hugot, Presidio, GLiNER-py sidecar) across every corpus
+# GLiNER, Presidio, GLiNER-py sidecar) across every corpus
 # (German clinical + English PII) and renders a single combined
 # REPORT_MATRIX.md that answers "does anonde+patterns+GLiNER win across
 # both languages?"
@@ -30,16 +30,14 @@
 # openai-pf column renders as "–". See the ENGINES block below.
 #
 # Tuning knobs forwarded to each per-corpus Makefile:
-#   ANONDE_BACKEND       which anonde mode (patterns-only|hugot|gliner)
+#   ANONDE_BACKEND       which anonde mode (patterns-only|gliner)
 #   ANONDE_MODEL         override default model id for the active backend
 #   ANONDE_ONNX_FILE     override default ONNX file inside the HF repo
-#   NER_SCORE_FLOOR      drop NER predictions below this score
 #   LABEL_SET            GLiNER label set: chat|clinical|finance|legal.
 #                        Default: per-corpus (each corpus runs its own domain);
 #                        setting it forces that label set across every cell.
 #   GLINER_MODEL         model id for the GLiNER cells (default: PII base)
 #   GLINER_THRESHOLD     GLiNER threshold (default: 0.40)
-#   HUGOT_MODEL          model id for the hugot cells (default: multilang PII)
 #   RUN_OPENAI_PF        set to 1 to run the (slow) openai-pf cells
 #   OPENAI_PF_SAMPLE     docs the openai-pf cell scores (default: 40)
 #   PYTHON               python3 executable (default: python3)
@@ -76,10 +74,8 @@ GLINER_LARGE_MODEL     ?= knowledgator/gliner-pii-large-v1.0
 # anonde-ner). Verified against the HF tree API on 2026-05-27.
 GLINER_LARGE_ONNX_FILE ?= onnx/model.onnx
 GLINER_THRESHOLD ?= 0.40
-HUGOT_MODEL      ?=
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
-NER_SCORE_FLOOR  ?= 0
 
 # GLiNER label set the NER cells run: chat|clinical|finance|legal. Threaded
 # to the runner's --label-set flag, but per-corpus via LABEL_SET_FOR (below)
@@ -190,12 +186,6 @@ endif
 # do NOT, so a PR bench never pays the openai-pf cost. When RUN_OPENAI_PF
 # is unset the openai-pf column simply renders as "–" (cell not run).
 #
-# anonde-hugot stays dropped from the auto-matrix: hugot's XLM-R PII
-# model is ~25 000× slower than patterns and the openmed cell proved
-# it strictly underperforms `anonde-ner` (F1 0.473 vs 0.529 on
-# GraSCCo). It is still reachable as a one-off:
-#   make -C bench/corpora/<NAME> all ANONDE_BACKEND=hugot
-#
 # anonde-ner is the default NER tier — the engine that ships in
 # `ghcr.io/anonde-io/anonde-ner`. It loads the BASE GLiNER PII model
 # at FP32 (`onnx/model.onnx`) and is the verdict anchor in the
@@ -297,9 +287,8 @@ $(addprefix data-,$(ALL_CORPORA)):
 # appended by CELL_anonde only when $(2) == anonde-ner-stack.
 define ANONDE_BACKEND_FOR
 $(if $(filter anonde-patterns,$(1)),patterns-only,\
-$(if $(filter anonde-hugot,$(1)),hugot,\
 $(if $(filter anonde-ner anonde-ner-stack,$(1)),gliner,\
-)))
+))
 endef
 
 # anonde-* engine name → ONNX file (BASE NER slot).
@@ -377,17 +366,16 @@ define CELL_anonde
 $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	@echo "[matrix] $(1) x $(2)"
 	cd $(ROOT) && go run \
-	  $(if $(filter $(2),anonde-hugot anonde-ner anonde-ner-stack),-tags hugot,) \
+	  $(if $(filter $(2),anonde-ner anonde-ner-stack),-tags ner,) \
 	  ./bench/runners/anonde.go \
 	    --in  bench/corpora/$(1)/data/corpus.jsonl \
 	    --out bench/corpora/$(1)/data/anonde_$(2).jsonl \
 	    --backend $(call ANONDE_BACKEND_FOR,$(2)) \
 	    --language $(call LANG_FOR_CORPUS,$(1)) \
-	    --ner-score-floor $(NER_SCORE_FLOOR) \
-	    --model "$(if $(filter $(2),anonde-ner anonde-ner-stack),$(call GLINER_MODEL_FOR,$(2)),$(if $(filter $(2),anonde-hugot),$(HUGOT_MODEL),))" \
+	    --model "$(if $(filter $(2),anonde-ner anonde-ner-stack),$(call GLINER_MODEL_FOR,$(2)),)" \
 	    --onnx-file "$(call GLINER_ONNX_FILE_FOR,$(2))" \
 	    --gliner-threshold $(if $(filter $(2),anonde-ner anonde-ner-stack),$(GLINER_THRESHOLD),0) \
-	    $(if $(filter $(2),anonde-hugot anonde-ner anonde-ner-stack),--label-set "$(call LABEL_SET_FOR,$(1))",) \
+	    $(if $(filter $(2),anonde-ner anonde-ner-stack),--label-set "$(call LABEL_SET_FOR,$(1))",) \
 	    $(if $(filter $(2),anonde-ner anonde-ner-stack),--ort-library "$(ORT_LIB)",) \
 	    $(if $(filter $(2),anonde-ner-stack),--flat-gliner-model "$(GLINER_LARGE_MODEL)" --flat-gliner-onnx "$(GLINER_LARGE_ONNX_FILE)" --flat-gliner-threshold 0,) \
 	    $(call FOLD_FOR_CORPUS,$(1))

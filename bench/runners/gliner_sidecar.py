@@ -35,8 +35,9 @@ import time
 import unicodedata
 from pathlib import Path
 
-# GLiNER label → anonde canonical entity type. Same shape as
-# analyzer/recognizers/ner_hugot.go::hugotLabelToEntity but for the
+# GLiNER label → anonde canonical entity type. Same shape as the
+# in-process GLiNER label mapping in analyzer/recognizers/gliner_config.go
+# (defaultGLiNERLabelToEntity) but for the
 # label vocabulary GLiNER PII responds well to. Tuning is per-label
 # wording — GLiNER's zero-shot scoring is sensitive to label phrasing.
 LABEL_TO_CANONICAL: dict[str, str] = {

@@ -1,7 +1,7 @@
-//go:build !hugot
+//go:build !ner
 
 // ner_gliner_ensemble_off.go is the fail-fast stub for the GLiNER ensemble
-// in non-hugot builds. It keeps the public symbols stable so
+// in non-ner builds. It keeps the public symbols stable so
 // cmd/anonde/main.go compiles regardless of build tag, and turns
 // ANONDE_NER_STACK on a patterns-only build into a clear boot-time error.
 
@@ -18,12 +18,12 @@ import (
 )
 
 // errEnsembleDisabled is returned by Analyze when the binary lacks
-// `-tags hugot`.
+// `-tags ner`.
 var errEnsembleDisabled = errors.New("gliner-ensemble: backend not available: " +
-	"this binary was built without -tags hugot. " +
-	"Rebuild with `go build -tags hugot ./...` to enable the GLiNER ensemble.")
+	"this binary was built without -tags ner. " +
+	"Rebuild with `go build -tags ner ./...` to enable the GLiNER ensemble.")
 
-// EnsembleGLiNERRecognizer is the no-op fallback in non-hugot builds;
+// EnsembleGLiNERRecognizer is the no-op fallback in non-ner builds;
 // Analyze always errors.
 type EnsembleGLiNERRecognizer struct {
 	modelIDs []string
@@ -44,12 +44,12 @@ func NewEnsembleGLiNERRecognizer(modelIDs []string, _ float64, _ string, _ ...Sp
 
 // EnsembleFromEnv mirrors the real return contract: (nil, nil) when
 // ANONDE_NER_STACK is unset, and a boot-time error when it is set on a
-// build without `-tags hugot` (refuse rather than silently disable NER).
+// build without `-tags ner` (refuse rather than silently disable NER).
 func EnsembleFromEnv(_ float64, _ string, _ ...SpanFilterConfig) (*EnsembleGLiNERRecognizer, error) {
 	if strings.TrimSpace(os.Getenv("ANONDE_NER_STACK")) == "" {
 		return nil, nil
 	}
-	return nil, fmt.Errorf("ANONDE_NER_STACK is set but this binary lacks `-tags hugot`: %w", errEnsembleDisabled)
+	return nil, fmt.Errorf("ANONDE_NER_STACK is set but this binary lacks `-tags ner`: %w", errEnsembleDisabled)
 }
 
 // Name mirrors the real implementation so the analyzer engine's

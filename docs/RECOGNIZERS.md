@@ -1,8 +1,8 @@
 # Recognizers
 
-anonde ships **52 pattern recognizers** plus pluggable **NER backends**. Pattern recognizers handle structured PII (IDs, phone numbers, emails, IBANs); NER catches unstructured PII (people, organisations, locations, ages, professions).
+anonde ships **70 pattern recognizers** plus pluggable **NER backends**. Pattern recognizers handle structured PII (IDs, phone numbers, emails, IBANs); NER catches unstructured PII (people, organisations, locations, ages, professions).
 
-## Pattern recognizers (52)
+## Pattern recognizers (70)
 
 Score is each pattern's confidence band; recognizers that validate via checksums score higher than pure-regex ones.
 
@@ -26,11 +26,9 @@ Most recognizers are language-gated (`SupportedLanguages()`), so a request with 
 ## NER backends
 
 - **GLiNER** (in-process, production default): open-set NER trained for PII; ~280 MB ONNX, ~200 ms/doc on a single amd64 vCPU. Wins leak rate vs Presidio, OpenAI Privacy Filter, and patterns-only across every benched corpus.
-- **hugot/XLM-R** (in-process, legacy): pre-GLiNER backend, kept for regression detection. Slower and less recall than GLiNER on German clinical text.
-- **Ollama** (local LLM): opt-in NER backend for users who already run an Ollama daemon. Pure-Go path (no CGO, no libonnxruntime).
 - **Patterns-only** mode is fully supported (no model download, no CGO).
 
-Both `GLiNER` and `hugot` require the `-tags hugot` build (CGO + libonnxruntime). See [DEPLOYMENT.md](DEPLOYMENT.md) for runtime requirements.
+The GLiNER recognizers require the `-tags ner` build (CGO + libonnxruntime). See [DEPLOYMENT.md](DEPLOYMENT.md) for runtime requirements.
 
 ## Building a custom engine
 

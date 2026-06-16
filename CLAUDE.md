@@ -64,8 +64,9 @@ state.
 ## Build tags
 
 - Default build: pure Go, no NER, no CGO. Production-safe everywhere.
-- `-tags hugot`: enables the in-process ONNX recognizers
-  (HugotNERRecognizer + GLiNERRecognizer). Used by `Dockerfile.anonde-ner`.
+- `-tags ner`: enables the in-process GLiNER recognizers
+  (GLiNERRecognizer + flat / stack / ensemble variants). Used by
+  `Dockerfile.anonde-ner`.
 - For the GLiNER path, CGO is required AND libonnxruntime.so must be
   reachable at runtime via `ORT_SO_PATH` (set by the Dockerfile).
 
@@ -74,7 +75,7 @@ state.
 Day-to-day dev targets live in the top-level [`Makefile`](Makefile);
 `make help` lists every one with its description. Highlights:
 
-- `make build` / `make build-ner` — default Go build / `-tags hugot` build.
+- `make build` / `make build-ner` — default Go build / `-tags ner` build.
 - `make test` — full test suite. `make test-api` for `internal/api/...` only.
   Run a single test with `go test ./internal/api/ -run TestName`.
 - `make ci` — what CI runs (`go vet ./...` + `go test ./...`).
@@ -105,9 +106,10 @@ points:
   native gRPC. Wire JSON is snake_case but camelCase inputs are also
   accepted.
 - [`analyzer/`](analyzer/) — recognizer registry + parallel dispatch +
-  `RemoveConflicts`. The 52 pattern recognizers live in
-  `analyzer/recognizers/`; the `-tags hugot` NER recognizers are
-  `ner_hugot.go` / `ner_gliner.go` in the same directory.
+  `RemoveConflicts`. The 70 pattern recognizers live in
+  `analyzer/recognizers/`; the `-tags ner` GLiNER recognizers are
+  `ner_gliner.go` / `ner_gliner_flat.go` (+ pool / ensemble variants) in
+  the same directory.
 - [`anonymizer/`](anonymizer/) — operators (Replace, Redact, Mask, Hash,
   Encrypt, Synthesize) and the adjacent-span merge.
 - [`internal/store/`](internal/store/) — in-memory + bbolt vault/store
@@ -153,8 +155,8 @@ Everything lives under `bench/`. The top-level entry is `bench/Makefile`:
     (German) and ai4privacy_en (English).
   - `make -C bench matrix-de` / `matrix-en` for language subsets.
   - `make -C bench/corpora/<NAME> all` runs one corpus directly; per-corpus
-    Makefiles accept `ANONDE_BACKEND={patterns-only|hugot|gliner}`,
-    `ANONDE_MODEL`, `ANONDE_ONNX_FILE`, `NER_SCORE_FLOOR`, etc.
+    Makefiles accept `ANONDE_BACKEND={patterns-only|gliner}`,
+    `ANONDE_MODEL`, `ANONDE_ONNX_FILE`, `LABEL_SET`, etc.
 
 The Go bench runner is `bench/runners/anonde.go` (single source of truth).
 Python sidecars for non-Go backends: `bench/runners/{presidio,gliner,

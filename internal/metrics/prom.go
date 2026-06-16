@@ -72,7 +72,7 @@ func newPromRecorder() *promRecorder {
 
 		analyzeDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "anonde_analyze_duration_seconds",
-			Help:    "Duration of the analyzer.Analyze sub-span, by backend (patterns|hugot|gliner|ollama).",
+			Help:    "Duration of the analyzer.Analyze sub-span, by backend (patterns|gliner).",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"backend"}),
 

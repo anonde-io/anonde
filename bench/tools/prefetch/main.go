@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // Command prefetch downloads the GLiNER PII model exports the bench matrix
 // needs and FAILS LOUD if any is missing, partial, or corrupt. It exists for
@@ -18,7 +18,7 @@
 //
 // Usage:
 //
-//	go run -tags hugot ./bench/tools/prefetch \
+//	go run -tags ner ./bench/tools/prefetch \
 //	    -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx \
 //	    -model knowledgator/gliner-pii-large-v1.0 -onnx onnx/model.onnx
 //
@@ -167,7 +167,7 @@ func onnxLabel(onnx string) string {
 // cache rather than re-downloading.
 func fetchAndVerify(ctx context.Context, modelsDir, model, onnx string) error {
 	// "/" → "_": matches sanitizeModelName in
-	// analyzer/recognizers/ner_hugot.go.
+	// analyzer/recognizers/ner_shared.go.
 	modelPath := filepath.Join(modelsDir, strings.ReplaceAll(model, "/", "_"))
 
 	opts := hugot.NewDownloadOptions()

@@ -15,7 +15,7 @@
 // reveal, …), entity types (PERSON, EMAIL_ADDRESS, …), recognizer
 // names (EmailRecognizer, GLiNERRecognizer, …), winner/loser kinds
 // (ner|pattern), status (ok|denied|error), backend names (patterns|
-// hugot|gliner|ollama). Tenant IDs, request IDs, tokens, raw cleartext
+// gliner). Tenant IDs, request IDs, tokens, raw cleartext
 // or any text-derived value MUST NEVER appear as a label; they would
 // (a) blow up cardinality (Prometheus best practice is <100 distinct
 // label values per series) and (b) leak PII through /metrics, which is
@@ -46,7 +46,7 @@ type Recorder interface {
 
 	// EntityDetected records one surviving finding emitted by the
 	// analyzer after RemoveConflicts. Called once per finding,
-	// cardinality is bounded by (entity types ~30) × (recognizers ~52).
+	// cardinality is bounded by (entity types ~30) × (recognizers ~70).
 	EntityDetected(entityType, recognizer string, score float64)
 
 	// ConflictResolved records one pair-wise conflict resolved

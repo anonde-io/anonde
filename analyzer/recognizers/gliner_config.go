@@ -1,5 +1,5 @@
 // GLiNERConfig and the label sets are pure-data declarations, so this file
-// is NOT build-tagged: it is referenced in non-hugot builds (the stub
+// is NOT build-tagged: it is referenced in non-ner builds (the stub
 // DefaultAnalyzerEngineWithGLiNERConfig keeps the public API stable across
 // build variants).
 
@@ -11,7 +11,7 @@ package recognizers
 // supplied at inference time, not baked into the model weights. The
 // recognizer wraps an ONNX export of the model and runs entirely
 // in-process with no Python sidecar. See ner_gliner.go for the
-// implementation (build-tagged `hugot`).
+// implementation (build-tagged `ner`).
 type GLiNERConfig struct {
 	// ModelsDir is the local directory where models are stored.
 	// Defaults to ~/.cache/anonde/models.
@@ -34,8 +34,8 @@ type GLiNERConfig struct {
 	OnnxFilePath string
 
 	// AutoDownload, when true, downloads the model on first use if not
-	// present locally. The recognizer reuses hugot's downloader so the
-	// on-disk layout matches HugotNERRecognizer's.
+	// present locally. The recognizer reuses the hugot library's
+	// downloader so the on-disk cache layout matches hugot's.
 	AutoDownload bool
 
 	// Labels lists the open-set entity labels to score at inference.

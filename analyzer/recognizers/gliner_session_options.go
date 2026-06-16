@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // gliner_session_options.go centralises the construction of an
 // *ort.SessionOptions from environment variables. Both ner_gliner.go

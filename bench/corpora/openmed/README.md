@@ -33,14 +33,11 @@ report.
 ## Knobs
 
 ```bash
-# enable hugot NER (downloads multilingual ONNX model ~280 MB on first run)
-make -C bench/corpora/openmed all ANONDE_BACKEND=hugot
-
 # production stack: patterns + GLiNER PII (knowledgator/gliner-pii-base-v1.0)
 make -C bench/corpora/openmed all ANONDE_BACKEND=gliner
 
-# add the Ollama final-audit-pass (one LLM call per doc)
-make -C bench/corpora/openmed all AUDITOR=ollama AUDITOR_MODEL=llama3.1:8b
+# flat-decoder GLiNER (knowledgator/gliner-pii-large-v1.0 and other 4-input BIO exports)
+make -C bench/corpora/openmed all ANONDE_BACKEND=gliner-flat
 
 # re-score without re-running anonde
 rm bench/corpora/openmed/REPORT.md && make -C bench/corpora/openmed report

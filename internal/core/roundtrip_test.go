@@ -127,7 +127,7 @@ func TestIngestReveal_Logs_MixedTextAndJSONWithANSI(t *testing.T) {
 
 // TestIngest_DisableNER_SkipsModelBackedRecognizers verifies that DisableNER
 // gates off only the model-backed NER recognizers (suffix "NERRecognizer",
-// HugotNERRecognizer, OllamaNERRecognizer). Pattern-based PERSON detectors
+// e.g. GLiNERRecognizer). Pattern-based PERSON detectors
 // (ENAnomalyRecognizer, DEAnomalyRecognizer) keep firing; that's intentional
 // and consistent across languages, and it's what makes patterns-only deploys
 // usable for person redaction. Other pattern entities like EMAIL_ADDRESS

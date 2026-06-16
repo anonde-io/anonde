@@ -31,7 +31,7 @@ type Heartbeat struct {
 	Version string `json:"version"`
 
 	// BuildTag is the optional Go build-tag label baked in at compile
-	// time. "default" for the patterns-only binary, "hugot" for the
+	// time. "default" for the patterns-only binary, "ner" for the
 	// NER variant.
 	BuildTag string `json:"build_tag"`
 
@@ -41,7 +41,7 @@ type Heartbeat struct {
 	Arch string `json:"arch"`
 
 	// Backend is the active analyzer backend
-	// (patterns|hugot|gliner|gliner-flat|gliner-stack|gliner-ensemble|ollama).
+	// (patterns|gliner|gliner-flat|gliner-stack|gliner-ensemble).
 	// Set once at boot; informs which deployment shape the post-launch
 	// roadmap should harden first.
 	Backend string `json:"backend"`

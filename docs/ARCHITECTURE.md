@@ -25,11 +25,9 @@ anonde/
 ├── analyzer/                  # recognizer registry + parallel dispatch
 │   ├── analyzer.go            # AnalyzerEngine.Analyze: filter → dispatch → conflict resolve
 │   ├── result.go              # RecognizerResult + RemoveConflicts (NER-preference rule)
-│   └── recognizers/           # 52 pattern + 3 NER recognizers
+│   └── recognizers/           # 70 pattern + GLiNER NER recognizers
 │       ├── *Recognizer.go     # per-region pattern recognizers
-│       ├── ner_hugot.go       # `-tags hugot`: in-process ONNX TokenClassification
-│       ├── ner_gliner.go      # `-tags hugot`: GLiNER (open-set NER) via yalue/onnxruntime_go
-│       └── ner_ollama.go      # Ollama HTTP client
+│       └── ner_gliner.go      # `-tags ner`: GLiNER (open-set NER) via yalue/onnxruntime_go
 ├── anonymizer/                # apply operators to detected spans
 │   ├── anonymizer.go          # mergeAdjacentSameType + dispatch to operators
 │   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize

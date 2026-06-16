@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // gliner_flat_pool.go is an OPTIONAL, opt-in wrapper that lets a caller
 // run up to N flat-decoder GLiNER inferences in parallel. Direct mirror

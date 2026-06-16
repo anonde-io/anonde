@@ -65,8 +65,8 @@ build: ## go build ./...
 	go build ./...
 
 .PHONY: build-ner
-build-ner: ## Build with -tags hugot (GLiNER + libonnxruntime required)
-	go build -tags hugot ./...
+build-ner: ## Build with -tags ner (GLiNER + libonnxruntime required)
+	go build -tags ner ./...
 
 .PHONY: test
 test: ## Run the whole test suite
@@ -104,14 +104,14 @@ run: ## Run the anonde server on :$(PORT) (patterns backend, no NER)
 
 .PHONY: run-ner
 run-ner: ## Run the anonde server on :$(PORT) with GLiNER NER (needs libonnxruntime)
-	ANALYZER_BACKEND=gliner ANONDE_ADDR=:$(PORT) go run -tags hugot ./cmd/anonde/
+	ANALYZER_BACKEND=gliner ANONDE_ADDR=:$(PORT) go run -tags ner ./cmd/anonde/
 
 .PHONY: run-ner-pdf
 run-ner-pdf: ## Run NER server on :$(PORT) with PDF redaction + Prometheus on :9090 (host needs pdftoppm + tesseract)
 	ANALYZER_BACKEND=gliner ANONDE_ADDR=:$(PORT) \
 		ANONDE_PDF_ENABLED=1 \
 		METRICS_BIND=127.0.0.1:9090 \
-		go run -tags hugot ./cmd/anonde/
+		go run -tags ner ./cmd/anonde/
 
 ##@ Docker
 

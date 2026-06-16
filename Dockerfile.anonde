@@ -13,10 +13,10 @@ RUN go version -m /out/anonde | grep -qE '^\s+build\s+vcs\.revision=[0-9a-f]' ||
 
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/anonde /anonde
-# Patterns-only by default — distroless has no writable cache and we don't
-# want a ~250 MB model download at boot. Override with
-#   docker run -e ANALYZER_BACKEND=hugot -v <models>:/cache <image>
-# to enable in-process ONNX NER.
+# Patterns-only image — this static build has no CGO and no bundled
+# libonnxruntime, so it cannot run in-process NER regardless of
+# ANALYZER_BACKEND. For GLiNER NER, use the Dockerfile.anonde-ner image
+# (ANALYZER_BACKEND=gliner, model + libonnxruntime baked in).
 ENV ANALYZER_BACKEND=patterns \
     ANONDE_DATA_DIR=/var/lib/anonde
 

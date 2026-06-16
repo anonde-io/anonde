@@ -38,7 +38,7 @@ func main() {
 
 	// One-shot bootstrap used by Dockerfile.anonde-ner: initialise the
 	// active analyzer, run one trivial inference call to force the NER
-	// backend to download / cache its model into HUGOT_MODELS_DIR, then
+	// backend to download / cache its model into GLINER_MODELS_DIR, then
 	// exit cleanly. The runtime image then ships with the model on disk
 	// and never needs network access at startup.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("DOWNLOAD_MODELS_ONLY")), "1") {
@@ -326,7 +326,7 @@ func startMetricsListener(bind string, reg *prometheus.Registry) {
 // buildTagsLabel reports which optional build tag set the binary was
 // compiled with. Stamped onto anonde_build_info so dashboards can
 // distinguish a patterns-only image (default build) from an NER
-// image (-tags hugot). Set by build_tags_*.go.
+// image (-tags ner). Set by build_tags_*.go.
 var buildTagsLabel = func() string { return "default" }
 
 // boolFromEnv parses a yes/no/true/false/1/0-style env var with a
@@ -365,7 +365,7 @@ func buildSHA() string {
 
 // verifyNERBackendOrFail is the boot-time fail-closed guard for the
 // silent-fallback bug class: when an NER backend was explicitly selected
-// (ANALYZER_BACKEND=gliner|gliner-flat|gliner-stack|hugot|ollama) but the model
+// (ANALYZER_BACKEND=gliner|gliner-flat|gliner-stack) but the model
 // can't load, we exit non-zero rather than serve patterns-only while reporting
 // backend=gliner and leaking PERSON/ORG/LOCATION with no error surfaced. No-op
 // for the patterns backend, so that path and per-request disable_ner are
@@ -377,10 +377,10 @@ func verifyNERBackendOrFail(engine *analyzer.AnalyzerEngine, backendName string)
 		return
 	}
 	if !analyzer.HasNERRecognizer(engine) {
-		// Usual cause: a default-build binary (no -tags hugot) running with
+		// Usual cause: a default-build binary (no -tags ner) running with
 		// ANALYZER_BACKEND=gliner.
 		msg := fmt.Sprintf("ANALYZER_BACKEND=%s requested but no NER recognizer is registered "+
-			"(is this binary built with -tags hugot?); refusing to serve patterns-only under a NER backend label", backendName)
+			"(is this binary built with -tags ner?); refusing to serve patterns-only under a NER backend label", backendName)
 		if boolFromEnv("ANONDE_ALLOW_NER_FALLBACK", false) {
 			log.Printf("ERROR: %s; ANONDE_ALLOW_NER_FALLBACK=1 set, degrading to patterns-only", msg)
 			return
@@ -409,7 +409,7 @@ func verifyNERBackendOrFail(engine *analyzer.AnalyzerEngine, backendName string)
 }
 
 // warmupAnalyzer forces the analyzer engine's lazy initialisation paths
-// (notably the Hugot ONNX session under sync.Once) to run before the HTTP
+// (notably the GLiNER ONNX session under sync.Once) to run before the HTTP
 // server starts listening. On failure the process exits with the analyzer
 // error, surfacing under-provisioning (OOM) at boot rather than as a hung
 // first user request.
@@ -594,17 +594,14 @@ func listenAddr() string {
 //
 // Opt-ins:
 //
-//   - ANALYZER_BACKEND=hugot; in-process ONNX transformer via hugot (XLM-R
-//     PII multilingual by default). Requires the binary to be built with
-//     `-tags hugot`; default builds fall back to a fatal-error stub.
 //   - ANALYZER_BACKEND=gliner; in-process GLiNER PII via yalue/onnxruntime_go.
-//     Open-set NER, substantially better German clinical recall than hugot
-//     (see bench/corpora/openmed/REPORT_FINAL.md). Requires `-tags hugot` AND
+//     Open-set NER with strong German clinical recall
+//     (see bench/corpora/openmed/REPORT_FINAL.md). Requires `-tags ner` AND
 //     CGO_ENABLED=1 AND libonnxruntime.so reachable at runtime.
 //   - ANALYZER_BACKEND=gliner-flat; single GLiNER recognizer with the
 //     flat / token decoder (knowledgator/gliner-pii-large-v1.0 and other
 //     4-input BIO ONNX exports). Same build / CGO / libonnxruntime
-//     requirements as gliner. Same env knobs (GLINER_MODEL,
+//     requirements as gliner (`-tags ner`). Same env knobs (GLINER_MODEL,
 //     GLINER_THRESHOLD, GLINER_MODELS_DIR, ORT_SO_PATH).
 //   - ANALYZER_BACKEND=gliner-stack; registers BOTH the span-decoder
 //     base recognizer AND a flat-decoder recognizer in the same engine
@@ -616,8 +613,6 @@ func listenAddr() string {
 //     which bakes both ONNX exports at build time. This is the lowest-
 //     leak deployment shape (local bench Σ ALL ≈ 9.7% across 30 corpora
 //     vs ~12.9% for gliner alone).
-//   - ANALYZER_BACKEND=ollama; local Ollama daemon for users with an
-//     existing Ollama setup.
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
 // Presidio, see bench/corpora/ai4privacy_en/.
@@ -658,21 +653,6 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 	case "patterns", "patterns-only", "":
 		log.Printf("analyzer backend: patterns-only (no NER)")
 		return anonde.DefaultAnalyzerEngine(), "patterns", ""
-	case "ollama":
-		modelName := os.Getenv("OLLAMA_MODEL")
-		log.Printf("analyzer backend: ollama")
-		return anonde.DefaultAnalyzerEngineWithOllama(
-			os.Getenv("OLLAMA_ENDPOINT"),
-			modelName,
-		), "ollama", modelName
-	case "hugot":
-		modelName := getenvDefault("HUGOT_MODEL", "Isotonic/distilbert_finetuned_ai4privacy_v2")
-		log.Printf("analyzer backend: hugot (model=%s)", modelName)
-		return anonde.DefaultAnalyzerEngineWithHugot(
-			os.Getenv("HUGOT_MODELS_DIR"),
-			modelName,
-			true, // auto-download on first run
-		), "hugot", modelName
 	case "gliner":
 		modelName := getenvDefault("GLINER_MODEL", "onnx-community/gliner_multi_pii-v1")
 		onnxPath := glinerOnnxFileFromEnv(modelName)
@@ -830,7 +810,7 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		}
 		return engine, "gliner-stack", baseModel + "+" + flatModel
 	default:
-		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, hugot, gliner, gliner-flat, gliner-stack, ollama)", backend)
+		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, gliner, gliner-flat, gliner-stack)", backend)
 		return nil, "", ""
 	}
 }

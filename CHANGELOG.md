@@ -9,7 +9,35 @@ each such change is called out under a **Changed** or **Removed** heading.
 
 ## [Unreleased]
 
-Nothing yet. Post-`v0.1.1` work-in-progress lands here.
+### Changed
+
+- **The NER build tag `hugot` is renamed to `ner`.** Self-hosters who
+  build the NER variant from source now use `go build -tags ner ./...`
+  (was `-tags hugot`); the published `anonde-ner` / `anonde-ner-stack`
+  images are unaffected. The old name was misleading once the hugot
+  transformer backend was removed (see below) — the tag only ever gated
+  GLiNER. The `anonde_build_info` metric label for NER builds is now
+  `ner` (was `hugot`).
+
+### Removed
+
+- **hugot / XLM-R transformer NER backend** (`ANALYZER_BACKEND=hugot`
+  and the `HUGOT_MODEL` / `HUGOT_MODELS_DIR` env vars). GLiNER strictly
+  outperformed it on every benched corpus and was the production default;
+  the hugot recognizer carried a second ONNX code path for no recall
+  benefit. The hugot *library* stays a dependency — GLiNER reuses its
+  model downloader and on-disk cache layout. The public library entry
+  points `anonde.DefaultAnalyzerEngineWithHugot` /
+  `...WithHugotConfig` and the `recognizers.HugotNERConfig` type are
+  removed; use the GLiNER constructors instead.
+- **Ollama NER backend** (`ANALYZER_BACKEND=ollama`) and the
+  `OLLAMA_ENDPOINT` / `OLLAMA_MODEL` env vars. The LLM-over-HTTP backend
+  was never shipped in either image, carried no leak-rate bench numbers,
+  and depended on an external daemon — off-brand for a deterministic
+  local-redaction tool and pure installation-surface clutter. The public
+  library entry point `anonde.DefaultAnalyzerEngineWithOllama` is removed.
+  Using anonde as a privacy proxy *in front of* a local Ollama
+  (`ANONDE_OPENAI_BASE_URL`) is unaffected — that is a separate feature.
 
 ## [0.1.1] - 2026-06-13
 

@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 package anonde
 
@@ -6,44 +6,6 @@ import (
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
 )
-
-// DefaultAnalyzerEngineWithHugot returns an engine that uses a pre-trained
-// ONNX transformer model (via hugot) for NER. Inference runs entirely
-// in-process with no CGO or external service.
-//
-// This file is the **real** implementation, compiled only with
-// `-tags hugot`. The default build uses hugot_off.go's stub, which
-// log.Fatalfs to fail fast on misconfiguration.
-//
-// modelsDir  ; local cache directory (defaults to ~/.cache/anonde/models).
-// modelName  ; HuggingFace model ID (recognizer-package default applies
-//
-//	when empty).
-//
-// autoDownload; fetch the model from HuggingFace Hub on first use.
-func DefaultAnalyzerEngineWithHugot(modelsDir, modelName string, autoDownload bool) *analyzer.AnalyzerEngine {
-	return DefaultAnalyzerEngineWithHugotConfig(recognizers.HugotNERConfig{
-		ModelsDir:    modelsDir,
-		ModelName:    modelName,
-		AutoDownload: autoDownload,
-	})
-}
-
-// DefaultAnalyzerEngineWithHugotConfig is the full-control variant of
-// DefaultAnalyzerEngineWithHugot. Use this when the model needs a non-default
-// OnnxFilePath (e.g. "onnx/model_quantized.onnx") or tuned chunking; the
-// short-form constructor exposes only ModelsDir/ModelName/AutoDownload and
-// silently misses these knobs.
-//
-// Typical bench use: probing alternative NER backends (GLiNER, ai4privacy
-// variants) where the upstream repo ships multiple ONNX files and the
-// default isn't the one you want.
-func DefaultAnalyzerEngineWithHugotConfig(cfg recognizers.HugotNERConfig) *analyzer.AnalyzerEngine {
-	registry := analyzer.NewRecognizerRegistry()
-	registry.Add(recognizers.NewHugotNERRecognizer(cfg))
-	registry.Add(patternRecognizers()...)
-	return analyzer.NewAnalyzerEngine(registry)
-}
 
 // DefaultAnalyzerEngineWithGLiNERConfig wires a Go-native GLiNER
 // recognizer into the standard pattern-recognizer registry. GLiNER is
@@ -53,7 +15,7 @@ func DefaultAnalyzerEngineWithHugotConfig(cfg recognizers.HugotNERConfig) *analy
 // the Python sidecar; same prompt format, same canonical-entity
 // mapping; but entirely in-process.
 //
-// Real implementation only; hugot_off.go's stub log.Fatalfs.
+// Real implementation only; ner_off.go's stub log.Fatalfs.
 //
 // Typical config: zero-value GLiNERConfig selects
 // knowledgator/gliner-pii-base-v1.0 with the default PII label set.
@@ -74,7 +36,7 @@ func DefaultAnalyzerEngineWithGLiNERConfig(cfg recognizers.GLiNERConfig) *analyz
 // knowledgator/gliner-pii-large-v1.0). The span-decoder recognizer used
 // by DefaultAnalyzerEngineWithGLiNERConfig cannot load these exports.
 //
-// Real implementation only; hugot_off.go's stub log.Fatalfs.
+// Real implementation only; ner_off.go's stub log.Fatalfs.
 func DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg recognizers.GLiNERConfig) *analyzer.AnalyzerEngine {
 	registry := analyzer.NewRecognizerRegistry()
 	registry.Add(recognizers.NewGLiNERFlatRecognizer(cfg))
@@ -90,7 +52,7 @@ func DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg recognizers.GLiNERConfig) *an
 // lives in the ensemble file, and this is only the analyzer-engine
 // glue.
 //
-// Real implementation only; hugot_off.go's stub log.Fatalfs.
+// Real implementation only; ner_off.go's stub log.Fatalfs.
 func DefaultAnalyzerEngineWithGLiNEREnsemble(ens *recognizers.EnsembleGLiNERRecognizer) *analyzer.AnalyzerEngine {
 	registry := analyzer.NewRecognizerRegistry()
 	registry.Add(ens)
@@ -109,7 +71,7 @@ func DefaultAnalyzerEngineWithGLiNEREnsemble(ens *recognizers.EnsembleGLiNERReco
 // NER-preferred entity rule applies to pool findings exactly as it
 // does to bare GLiNERRecognizer findings.
 //
-// Real implementation only; hugot_off.go's stub log.Fatalfs.
+// Real implementation only; ner_off.go's stub log.Fatalfs.
 func DefaultAnalyzerEngineWithGLiNERPool(pool *recognizers.GLiNERPool) *analyzer.AnalyzerEngine {
 	registry := analyzer.NewRecognizerRegistry()
 	registry.Add(pool)
@@ -129,7 +91,7 @@ func DefaultAnalyzerEngineWithGLiNERPool(pool *recognizers.GLiNERPool) *analyzer
 // NER-preferred entity rule applies to pool findings exactly as it
 // does to bare GLiNERFlatRecognizer findings.
 //
-// Real implementation only; hugot_off.go's stub log.Fatalfs.
+// Real implementation only; ner_off.go's stub log.Fatalfs.
 func DefaultAnalyzerEngineWithGLiNERFlatPool(pool *recognizers.GLiNERFlatPool) *analyzer.AnalyzerEngine {
 	registry := analyzer.NewRecognizerRegistry()
 	registry.Add(pool)

@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/anonde-io/anonde/internal/metrics"
 )
@@ -95,7 +94,7 @@ type AnalysisConfig struct {
 	// RemoveConflicts removes overlapping spans, keeping the best one.
 	RemoveConflicts bool
 	// DisableNER skips model-backed NER recognizers (recognizers whose name
-	// ends in "NERRecognizer", i.e. HugotNERRecognizer / OllamaNERRecognizer).
+	// ends in "NERRecognizer", e.g. GLiNERRecognizer).
 	// Use when you want maximum throughput and don't need a neural model
 	// loaded or called.
 	//
@@ -160,33 +159,12 @@ func (e *AnalyzerEngine) recorder() metrics.Recorder {
 // findings produced by a model-backed recognizer, "pattern" for
 // everything else (regex, checksum, vocabulary). Keeps the conflict
 // metric's cardinality at 2×2; the alternative of labelling by
-// recognizer name would explode to 52×52.
+// recognizer name would explode to 70×70.
 func conflictKind(r RecognizerResult) string {
 	if isNERRecognizer(r) {
 		return "ner"
 	}
 	return "pattern"
-}
-
-// hasCapitalisedWords returns true if the text contains at least one word that
-// starts with an uppercase letter; a necessary (not sufficient) condition for
-// NER entities to be present. We deliberately accept a leading-position capital:
-// short inputs like a single CSV cell ("John Smith"), a log line ("Smith called
-// support"), or any sentence where the only entity is the first token would
-// otherwise be silently skipped by NER and produce zero PERSON findings.
-func hasCapitalisedWords(text string) bool {
-	inWord := false
-	for _, r := range text {
-		if unicode.IsLetter(r) {
-			if !inWord && unicode.IsUpper(r) {
-				return true
-			}
-			inWord = true
-		} else {
-			inWord = false
-		}
-	}
-	return false
 }
 
 // isNERBasedRecognizer returns true for recognizers that depend on a
@@ -203,16 +181,6 @@ func isNERBasedRecognizer(rec EntityRecognizer) bool {
 	return strings.HasSuffix(rec.Name(), "NERRecognizer")
 }
 
-// usesCapitalisedTextHeuristic returns true for recognizers that rely heavily on
-// case cues and can be safely skipped when no interior capitalized words exist.
-//
-// "NERRecognizer" historically named both the (now-removed) prose recognizer
-// and the Ollama recognizer; Ollama still reports that name and benefits from
-// the heuristic.
-func usesCapitalisedTextHeuristic(rec EntityRecognizer) bool {
-	return rec.Name() == "NERRecognizer" || rec.Name() == "HugotNERRecognizer"
-}
-
 // NewAnalyzerEngine returns an engine backed by the given registry.
 func NewAnalyzerEngine(registry *RecognizerRegistry) *AnalyzerEngine {
 	return &AnalyzerEngine{Registry: registry}
@@ -222,7 +190,7 @@ func NewAnalyzerEngine(registry *RecognizerRegistry) *AnalyzerEngine {
 //
 // Pipeline order (matching Presidio's AnalyzerEngine):
 //  1. Filter recognizers by language and (optional) requested entity set.
-//  2. Skip NER recognizers when DisableNER is set or no capitalised words exist.
+//  2. Skip NER recognizers when DisableNER is set.
 //  3. Dispatch surviving recognizers concurrently.
 //  4. Merge results.
 //  5. Apply context-keyword score boost (so a weak pattern hit can clear a
@@ -247,15 +215,10 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 
 	candidates := e.Registry.GetByLanguage(cfg.Language)
 
-	hasCaps := hasCapitalisedWords(text)
-
-	if cfg.DisableNER || !hasCaps {
+	if cfg.DisableNER {
 		filtered := candidates[:0:0]
 		for _, rec := range candidates {
-			if cfg.DisableNER && isNERBasedRecognizer(rec) {
-				continue
-			}
-			if !cfg.DisableNER && !hasCaps && usesCapitalisedTextHeuristic(rec) {
+			if isNERBasedRecognizer(rec) {
 				continue
 			}
 			filtered = append(filtered, rec)
@@ -311,7 +274,7 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	// would rather have something than nothing).
 	//
 	// Recognizers SHOULD honour ctx in their inner loops (GLiNER chunk
-	// loop, Ollama HTTP, etc.); the select-on-ctx here is the bounded
+	// loop, etc.); the select-on-ctx here is the bounded
 	// guard against the ones that don't; a single hung recognizer
 	// would otherwise stall the whole pipeline forever.
 	//

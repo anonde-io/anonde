@@ -83,7 +83,7 @@ type RedactPDFOptions struct {
 	// VisualDetector, when non-nil, runs in addition to the heuristic
 	// and produces bounding boxes from a real vision model
 	// (e.g. tech4humans/yolov8s-signature-detector via
-	// yalue/onnxruntime_go). Built only with -tags hugot.
+	// yalue/onnxruntime_go). Built only with -tags ner.
 	VisualDetector VisualDetector
 	// OCRLangs overrides ANONDE_OCR_LANGS for this request. Empty
 	// falls back to the env default (or "eng+deu" as the final fallback).

@@ -8,7 +8,7 @@
 // only raises precision, never lowers real-PII recall.
 //
 // Not build-tagged on purpose — pure data, so it is unit-tested and benched in
-// the default no-CGO build and reused by every GLiNER variant under -tags hugot.
+// the default no-CGO build and reused by every GLiNER variant under -tags ner.
 
 package recognizers
 

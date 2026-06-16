@@ -1096,7 +1096,7 @@ type GetVersionResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// analyzer_backend = patterns | hugot | gliner | ollama.
+	// analyzer_backend = patterns | gliner | gliner-flat | gliner-stack.
 	AnalyzerBackend string `protobuf:"bytes,1,opt,name=analyzer_backend,json=analyzerBackend,proto3" json:"analyzer_backend,omitempty"`
 	// model name reported by the backend, empty for patterns.
 	Model string `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`

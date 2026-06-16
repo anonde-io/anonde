@@ -46,10 +46,10 @@ Observed response / log output:
 | | |
 |---|---|
 | anonde version / commit | e.g. `v0.1.0` or `git rev-parse HEAD` |
-| Build variant | patterns-only / `-tags hugot` / Docker image tag |
+| Build variant | patterns-only / `-tags ner` / Docker image tag |
 | OS + arch | e.g. macOS 14.5 arm64, Ubuntu 22.04 amd64 |
 | Go version (if building from source) | `go version` output |
-| Analyzer backend | `ANALYZER_BACKEND` value (patterns / gliner / hugot / ollama) |
+| Analyzer backend | `ANALYZER_BACKEND` value (patterns / gliner / gliner-flat / gliner-stack) |
 | Language sent | `de`, `en`, multilingual, … |
 
 ## Additional context

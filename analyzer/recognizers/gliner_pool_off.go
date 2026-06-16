@@ -1,7 +1,7 @@
-//go:build !hugot
+//go:build !ner
 
 // gliner_pool_off.go is the fail-fast stub for GLiNERPool, used when
-// the binary is built WITHOUT the `hugot` tag. The real
+// the binary is built WITHOUT the `ner` tag. The real
 // implementation lives in gliner_pool.go and requires CGO +
 // onnxruntime + tokenizers; this stub keeps the public surface stable
 // so cmd/anonde/main.go can reference the pool symbols regardless of
@@ -23,13 +23,13 @@ import (
 )
 
 // errPoolDisabled is returned by NewGLiNERPool / Analyze when the
-// binary lacks `-tags hugot`. Same shape as errGLiNERDisabled
+// binary lacks `-tags ner`. Same shape as errGLiNERDisabled
 // (sentinel + errors.Is friendly).
 var errPoolDisabled = errors.New("gliner pool: backend not available: " +
-	"this binary was built without -tags hugot. " +
-	"Rebuild with `go build -tags hugot ./...` to enable the GLiNER pool.")
+	"this binary was built without -tags ner. " +
+	"Rebuild with `go build -tags ner ./...` to enable the GLiNER pool.")
 
-// GLiNERPool is the no-op fallback used in non-hugot builds. Stores
+// GLiNERPool is the no-op fallback used in non-ner builds. Stores
 // the requested size purely for diagnostics; every method errors or
 // returns an empty result.
 type GLiNERPool struct {

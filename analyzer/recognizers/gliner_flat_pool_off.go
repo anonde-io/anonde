@@ -1,7 +1,7 @@
-//go:build !hugot
+//go:build !ner
 
 // gliner_flat_pool_off.go is the fail-fast stub for GLiNERFlatPool,
-// used when the binary is built WITHOUT the `hugot` tag. Mirror of
+// used when the binary is built WITHOUT the `ner` tag. Mirror of
 // gliner_pool_off.go for the flat / token decoder pool. Same
 // rationale; keep the public surface stable so cmd/anonde/main.go
 // compiles regardless of build tag, and fail loudly at boot rather
@@ -17,12 +17,12 @@ import (
 )
 
 // errFlatPoolDisabled is returned by NewGLiNERFlatPool / Analyze when
-// the binary lacks `-tags hugot`. Sentinel + errors.Is friendly.
+// the binary lacks `-tags ner`. Sentinel + errors.Is friendly.
 var errFlatPoolDisabled = errors.New("gliner flat pool: backend not available: " +
-	"this binary was built without -tags hugot. " +
-	"Rebuild with `go build -tags hugot ./...` to enable the GLiNER flat pool.")
+	"this binary was built without -tags ner. " +
+	"Rebuild with `go build -tags ner ./...` to enable the GLiNER flat pool.")
 
-// GLiNERFlatPool is the no-op fallback used in non-hugot builds.
+// GLiNERFlatPool is the no-op fallback used in non-ner builds.
 // Stores the requested size purely for diagnostics; every method
 // errors or returns an empty result.
 type GLiNERFlatPool struct {

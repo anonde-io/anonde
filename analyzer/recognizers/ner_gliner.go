@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // ner_gliner.go runs a GLiNER ONNX export end-to-end inside the Go process.
 // Tokenisation is pure Go (gomlx/go-huggingface/tokenizers/hftokenizer);
@@ -9,7 +9,7 @@
 //
 // CGO contract
 // ------------
-// This file is only compiled with `-tags hugot` AND CGO_ENABLED=1. yalue's
+// This file is only compiled with `-tags ner` AND CGO_ENABLED=1. yalue's
 // source has `//go:build cgo` constraints baked in; without CGO every Go
 // file in the package is excluded and the linker fails with
 // "undefined: ort.*". The default (no-tag) build picks up ner_gliner_off.go
@@ -223,7 +223,7 @@ func initOrtEnvironment(libPath string) error {
 // arbitrary entity types without retraining.
 //
 // Naming: ends in "NERRecognizer" so the analyzer engine's DisableNER
-// flag silences it alongside HugotNERRecognizer.
+// flag silences it.
 type GLiNERRecognizer struct {
 	cfg GLiNERConfig
 
@@ -356,9 +356,9 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 		}
 
 		// --- model files ------------------------------------------
-		// Reuse hugot's on-disk layout (replaces "/" with "_") so the
-		// HugotNERRecognizer and GLiNERRecognizer share a cache when
-		// the same repo backs both.
+		// Reuse the hugot library's on-disk layout (replaces "/" with
+		// "_") so GLiNER variants share a cache when the same repo backs
+		// more than one.
 		log.Printf("gliner: init starting model=%s onnx_file=%s models_dir=%s labels=%d threshold=%.2f auto_download=%v",
 			r.cfg.ModelName, r.cfg.OnnxFilePath, r.cfg.ModelsDir,
 			len(r.labels), r.threshold, r.cfg.AutoDownload)
@@ -598,8 +598,8 @@ func (r *GLiNERRecognizer) Destroy() error {
 }
 
 // Analyze runs the GLiNER model on text and returns canonical PII
-// entities. Mirrors HugotNERRecognizer's panic-recover discipline so
-// one bad document fails the doc, not the whole batch.
+// entities. Uses panic-recover discipline so one bad document fails
+// the doc, not the whole batch.
 func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []string, _ string) (results []analyzer.RecognizerResult, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -654,7 +654,7 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 		chunks = chunks[:maxChunks]
 	}
 
-	cands := make([]hugotCand, 0, len(chunks)*8)
+	cands := make([]nerCand, 0, len(chunks)*8)
 	for _, chunk := range chunks {
 		spans, runErr := r.runChunk(chunk.Text)
 		if runErr != nil {
@@ -688,7 +688,7 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 					continue
 				}
 			}
-			cands = append(cands, hugotCand{
+			cands = append(cands, nerCand{
 				start: absStart,
 				end:   absEnd,
 				score: s.score,
@@ -711,12 +711,11 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 		return nil, nil
 	}
 
-	// Type-grouped overlap dedup, identical strategy to
-	// HugotNERRecognizer: sliding-window chunks pick the same entity
-	// twice at slightly different boundaries; keep the higher-scoring
+	// Type-grouped overlap dedup: sliding-window chunks pick the same
+	// entity twice at slightly different boundaries; keep the higher-scoring
 	// span per type, let inter-type overlap go to the analyzer's
 	// conflict resolver.
-	byType := map[string][]hugotCand{}
+	byType := map[string][]nerCand{}
 	for _, c := range cands {
 		byType[c.typ] = append(byType[c.typ], c)
 	}

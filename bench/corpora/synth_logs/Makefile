@@ -28,20 +28,15 @@ ANONDE_BACKEND   ?= patterns-only
 LANGUAGE         ?= en
 PER_LOGTYPE      ?= 30
 SEED             ?= 20260512
-RECONCILER       ?= none
-AUDITOR          ?= none
-OLLAMA_MODEL     ?= llama3.2:3b
-AUDITOR_MODEL    ?= llama3.1:8b
 PYTHON           ?= python3
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
-NER_SCORE_FLOOR  ?= 0
 # GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
 # the runner via --label-set. This corpus self-declares its domain
 # (general corpus; chat is the global default); ignored on the patterns-only backend.
 LABEL_SET        ?= chat
 
-GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
+GO_TAGS := $(if $(filter gliner,$(ANONDE_BACKEND)),-tags ner)
 
 .PHONY: all data anonde report clean
 
@@ -60,9 +55,7 @@ anonde: $(CORPUS)
 		--in $(CORPUS) --out $(ANONDE_OUT) \
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
-		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--label-set $(LABEL_SET) \
-		--ollama-model $(OLLAMA_MODEL)
+		--label-set $(LABEL_SET)
 
 # Re-uses compare.py + label_map.yaml from bench/scoring. The generator
 # emits canonical label_map types directly (EMAIL, PERSON, URL, PHONE,

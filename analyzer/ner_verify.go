@@ -56,7 +56,7 @@ func VerifyNERBackend(ctx context.Context, e *AnalyzerEngine) error {
 // HasNERRecognizer reports whether the engine has any model-backed NER
 // recognizer. Lets callers tell VerifyNERBackend's "verified" silence apart
 // from "nothing to verify" — e.g. the bench runner must fail if it asked for a
-// gliner backend but got zero NER recognizers (a non-hugot binary mislabelled
+// gliner backend but got zero NER recognizers (a non-ner binary mislabelled
 // as a gliner cell).
 func HasNERRecognizer(e *AnalyzerEngine) bool {
 	if e == nil || e.Registry == nil {

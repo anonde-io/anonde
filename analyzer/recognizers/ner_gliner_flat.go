@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // ner_gliner_flat.go runs the flat (token / sequence-tag) decoder GLiNER
 // variants in-process. Companion to ner_gliner.go (the uni-encoder SPAN
@@ -15,7 +15,7 @@
 //
 // Everything else (tokenizer setup, per-piece prompt encode, chunking,
 // max-chunk cap, recover discipline, per-class threshold table) is
-// identical to ner_gliner.go. Compiled only under `-tags hugot` AND
+// identical to ner_gliner.go. Compiled only under `-tags ner` AND
 // CGO_ENABLED=1; the no-tag build uses ner_gliner_flat_off.go.
 
 package recognizers
@@ -45,8 +45,8 @@ import (
 // at inference time via the prompt, same as GLiNERRecognizer.
 //
 // Naming: ends in "NERRecognizer" so the analyzer engine's DisableNER
-// flag silences it alongside HugotNERRecognizer and GLiNERRecognizer.
-// "Flat" distinguishes from the span variant.
+// flag silences it alongside GLiNERRecognizer. "Flat" distinguishes
+// from the span variant.
 type GLiNERFlatRecognizer struct {
 	cfg GLiNERConfig
 
@@ -397,7 +397,7 @@ func (r *GLiNERFlatRecognizer) Analyze(ctx context.Context, text string, entitie
 		chunks = chunks[:maxChunks]
 	}
 
-	cands := make([]hugotCand, 0, len(chunks)*8)
+	cands := make([]nerCand, 0, len(chunks)*8)
 	for _, chunk := range chunks {
 		spans, runErr := r.runChunk(chunk.Text)
 		if runErr != nil {
@@ -431,7 +431,7 @@ func (r *GLiNERFlatRecognizer) Analyze(ctx context.Context, text string, entitie
 					continue
 				}
 			}
-			cands = append(cands, hugotCand{
+			cands = append(cands, nerCand{
 				start: absStart,
 				end:   absEnd,
 				score: s.score,
@@ -450,7 +450,7 @@ func (r *GLiNERFlatRecognizer) Analyze(ctx context.Context, text string, entitie
 	}
 
 	// Type-grouped overlap dedup, identical strategy to GLiNERRecognizer.
-	byType := map[string][]hugotCand{}
+	byType := map[string][]nerCand{}
 	for _, c := range cands {
 		byType[c.typ] = append(byType[c.typ], c)
 	}

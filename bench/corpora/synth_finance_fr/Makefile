@@ -22,20 +22,15 @@ ANONDE_BACKEND   ?= patterns-only
 LANGUAGE         ?= fr
 PER_DOCTYPE      ?= 30
 SEED             ?= 20260512
-RECONCILER       ?= none
-AUDITOR          ?= none
-OLLAMA_MODEL     ?= llama3.2:3b
-AUDITOR_MODEL    ?= llama3.1:8b
 PYTHON           ?= python3
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
-NER_SCORE_FLOOR  ?= 0
 # GLiNER label set for NER runs: chat|clinical|finance|legal. Threaded to
 # the runner via --label-set. Default finance (this is a financial corpus);
 # ignored on the patterns-only backend.
 LABEL_SET        ?= finance
 
-GO_TAGS := $(if $(filter hugot gliner,$(ANONDE_BACKEND)),-tags hugot)
+GO_TAGS := $(if $(filter gliner,$(ANONDE_BACKEND)),-tags ner)
 
 .PHONY: all data anonde report clean
 
@@ -54,9 +49,7 @@ anonde: $(CORPUS)
 		--in $(CORPUS) --out $(ANONDE_OUT) \
 		--backend $(ANONDE_BACKEND) --language $(LANGUAGE) \
 		--model "$(ANONDE_MODEL)" --onnx-file "$(ANONDE_ONNX_FILE)" \
-		--ner-score-floor $(NER_SCORE_FLOOR) \
-		--label-set $(LABEL_SET) \
-		--ollama-model $(OLLAMA_MODEL)
+		--label-set $(LABEL_SET)
 
 .PHONY: report
 report:

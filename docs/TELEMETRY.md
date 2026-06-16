@@ -16,7 +16,7 @@ Fields sent:
 |---|---|
 | `install_id` | `8a17c…b3` |
 | `version` | `f684298` |
-| `build_tag` | `default` or `hugot` |
+| `build_tag` | `default` or `ner` |
 | `os` / `arch` | `linux` / `amd64` |
 | `backend` | `patterns`, `gliner`, … |
 | `uptime_seconds` | `86400` |

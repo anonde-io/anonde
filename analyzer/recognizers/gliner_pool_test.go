@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // gliner_pool_test.go covers only the construction-time behaviour of
 // `GLiNERPool`; argument validation, Name, and Destroy on a pool that

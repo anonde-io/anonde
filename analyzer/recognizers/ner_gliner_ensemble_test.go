@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // ner_gliner_ensemble_test.go covers the pure-logic parts of the
 // ensemble recognizer: mergeOverlapping (the OR-merge) and

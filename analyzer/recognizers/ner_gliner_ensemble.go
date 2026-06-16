@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 // ner_gliner_ensemble.go implements multi-model GLiNER stacking: run
 // several GLiNER members in-process and OR-merge their spans so each
@@ -6,7 +6,7 @@
 // EntityRecognizer (RecognizerName "GLiNEREnsembleNERRecognizer") so the
 // rest of the pipeline sees a normal NER recognizer.
 //
-// `-tags hugot` because every member is a real GLiNERRecognizer. Each
+// `-tags ner` because every member is a real GLiNERRecognizer. Each
 // member's Analyze() is internally serialised by its own mutex; members
 // run sequentially by default to bound steady-state memory (each holds an
 // ONNX session resident). Opt into parallel dispatch via
@@ -133,8 +133,8 @@ func EnsembleFromEnv(threshold float64, ortLib string, spanFilter ...SpanFilterC
 }
 
 // Name returns the recognizer name. MUST end in "NERRecognizer" so the
-// analyzer engine's DisableNER suffix-check fires (mirrors
-// GLiNERRecognizer / HugotNERRecognizer naming convention).
+// analyzer engine's DisableNER suffix-check fires (mirrors the
+// GLiNERRecognizer naming convention).
 func (e *EnsembleGLiNERRecognizer) Name() string {
 	return "GLiNEREnsembleNERRecognizer"
 }

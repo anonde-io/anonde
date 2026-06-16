@@ -669,7 +669,7 @@
       "properties": {
         "analyzerBackend": {
           "type": "string",
-          "description": "analyzer_backend = patterns | hugot | gliner | ollama."
+          "description": "analyzer_backend = patterns | gliner | gliner-flat | gliner-stack."
         },
         "model": {
           "type": "string",

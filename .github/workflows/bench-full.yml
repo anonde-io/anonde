@@ -300,7 +300,7 @@ jobs:
       # keys. actions/cache NEVER re-saves a key that already exists, so a
       # key once seeded with an empty/partial model dir (a run where the
       # GLiNER download failed/raced) is frozen empty forever: every later
-      # run restores the ~0-byte stub, hugot's "dir exists → skip" fast path
+      # run restores the ~0-byte stub, the hugot library's "dir exists → skip" fast path
       # no-ops the real download, and the recognizer silently falls back to
       # patterns-only. That poisoned-cache loop is what reddened bench-full
       # (run 64ad360 canary: meddocan_es/synth_finance_es at 0 NER findings;
@@ -362,9 +362,9 @@ jobs:
           # changed — force fresh across the matrix.
           key: corpus-${{ matrix.corpus }}-${{ hashFiles(format('bench/corpora/{0}/loader.py', matrix.corpus), format('bench/corpora/{0}/generate.py', matrix.corpus), format('bench/corpora/{0}/Makefile', matrix.corpus), 'analyzer/recognizers/*.go', 'analyzer/recognizers/gliner_config.go', 'bench/runners/anonde.go', 'bench/Makefile', '.github/workflows/bench-full.yml') }}-maxdocs${{ env.MAX_DOCS }}-rv5
 
-      - name: Verify hugot build (the bench needs it)
+      - name: Verify NER build (the bench needs it)
         run: |
-          CGO_ENABLED=1 go build -tags hugot ./...
+          CGO_ENABLED=1 go build -tags ner ./...
 
       # Fail LOUD if onnxruntime isn't actually on disk. The cache +
       # download steps above are best-effort; without the .so the gliner
@@ -413,7 +413,7 @@ jobs:
         run: |
           set -euo pipefail
           CGO_ENABLED=1 ORT_SO_PATH="$ORT_LIB" \
-            go run -tags hugot ./bench/tools/prefetch \
+            go run -tags ner ./bench/tools/prefetch \
               -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx \
               -model knowledgator/gliner-pii-large-v1.0 -onnx onnx/model.onnx
 

@@ -1,4 +1,4 @@
-//go:build hugot
+//go:build ner
 
 package recognizers
 
