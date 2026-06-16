@@ -70,7 +70,7 @@ func TestConnect_CreateAnonymization_MintsIDWhenEmpty(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := client.CreateAnonymization(ctx, connect.NewRequest(&anondev1.CreateAnonymizationRequest{
-		TenantId:      "acme",
+		TenantId: "acme",
 		// Id deliberately omitted.
 		ContentFormat: "text",
 		Content:       "Email alice@example.com",
@@ -104,6 +104,29 @@ func TestConnect_CreateAnonymization_MintsIDWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestConnect_CreateRejectsExplicitZeroScoreThreshold(t *testing.T) {
+	client, _ := newConnectTestEnv(t)
+
+	_, err := client.CreateAnonymization(context.Background(), connect.NewRequest(&anondev1.CreateAnonymizationRequest{
+		TenantId: "acme",
+		Id:       "zero-threshold",
+		Content:  "Email alice@example.com",
+		Options: &anondev1.AnalyzerOptions{
+			ScoreThreshold:    0,
+			ScoreThresholdSet: true,
+		},
+	}))
+	if err == nil {
+		t.Fatal("expected explicit zero score_threshold to fail")
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err=%v)", connect.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "score_threshold must be > 0") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestConnect_IngestRevealDelete_RoundTrip exercises the full
 // ingest → reveal → delete cycle through the generated client. The
 // goal isn't to re-test the analyzer (already covered) but to verify
@@ -115,7 +138,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 
 	ing, err := client.CreateAnonymization(ctx, connect.NewRequest(&anondev1.CreateAnonymizationRequest{
 		TenantId:      "acme",
-		Id:         "letter-001",
+		Id:            "letter-001",
 		ContentFormat: "text",
 		Content:       "Email alice@example.com about the case",
 	}))
@@ -131,7 +154,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 
 	rev, err := client.RevealContent(ctx, connect.NewRequest(&anondev1.RevealContentRequest{
 		TenantId:      "acme",
-		Id:         "letter-001",
+		Id:            "letter-001",
 		Actor:         "test",
 		Purpose:       "verify",
 		ContentFormat: "text",
@@ -146,7 +169,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 
 	del, err := client.DeleteAnonymization(ctx, connect.NewRequest(&anondev1.DeleteAnonymizationRequest{
 		TenantId: "acme",
-		Id:    "letter-001",
+		Id:       "letter-001",
 	}))
 	if err != nil {
 		t.Fatalf("DeleteDocument: %v", err)
@@ -164,7 +187,7 @@ func TestConnect_IngestRevealDelete_RoundTrip(t *testing.T) {
 	// the error string keeps the test stable across that future mapping.
 	_, err = client.RevealContent(ctx, connect.NewRequest(&anondev1.RevealContentRequest{
 		TenantId:      "acme",
-		Id:         "letter-001",
+		Id:            "letter-001",
 		Actor:         "test",
 		Purpose:       "verify",
 		ContentFormat: "text",
@@ -185,7 +208,7 @@ func TestConnect_DeleteDocument_IdempotentForMissingDoc(t *testing.T) {
 	client, _ := newConnectTestEnv(t)
 	resp, err := client.DeleteAnonymization(context.Background(), connect.NewRequest(&anondev1.DeleteAnonymizationRequest{
 		TenantId: "acme",
-		Id:    "never-existed",
+		Id:       "never-existed",
 	}))
 	if err != nil {
 		t.Fatalf("DeleteDocument: %v", err)

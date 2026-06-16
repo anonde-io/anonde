@@ -33,7 +33,7 @@ func TestReveal_NoTokensReturnsInputContent(t *testing.T) {
 
 	if err := svc.store.Put(context.Background(), StoreRecord{
 		TenantID:          tenantID,
-		ID:             docID,
+		ID:                docID,
 		AnonymizedContent: content,
 		Tokens:            nil,
 	}); err != nil {
@@ -42,7 +42,7 @@ func TestReveal_NoTokensReturnsInputContent(t *testing.T) {
 
 	out, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID: tenantID,
-		ID:    docID,
+		ID:       docID,
 		Actor:    "tester",
 		Purpose:  "debug",
 		Content:  content,
@@ -70,7 +70,7 @@ func TestIngestReveal_JSONContent(t *testing.T) {
 
 	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "tenant-json",
-		ID:         "doc-json-1",
+		ID:            "doc-json-1",
 		ContentFormat: "json",
 		Content:       `{"user":"John Doe","email":"john@example.com","nested":{"note":"call +1-800-555-0199"}}`,
 	})
@@ -83,7 +83,7 @@ func TestIngestReveal_JSONContent(t *testing.T) {
 
 	revealResp, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "tenant-json",
-		ID:         "doc-json-1",
+		ID:            "doc-json-1",
 		Actor:         "tester",
 		Purpose:       "verification",
 		ContentFormat: "json",
@@ -115,7 +115,7 @@ func TestIngestReveal_JSONFixtureRoundTrip(t *testing.T) {
 
 	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "doc-json-fixture-1",
+		ID:            "doc-json-fixture-1",
 		ContentFormat: "json",
 		Content:       original,
 	})
@@ -131,7 +131,7 @@ func TestIngestReveal_JSONFixtureRoundTrip(t *testing.T) {
 
 	revealResp, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "acme",
-		ID:         "doc-json-fixture-1",
+		ID:            "doc-json-fixture-1",
 		Actor:         "tester",
 		Purpose:       "roundtrip-check",
 		ContentFormat: "json",
@@ -167,7 +167,7 @@ func TestIngest_AutoDetectsJSON(t *testing.T) {
 	in := `{"email":"john@example.com","note":"SSN 123-45-6789"}`
 	out, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "doc-auto-json",
+		ID:            "doc-auto-json",
 		ContentFormat: "auto",
 		Content:       in,
 	})
@@ -195,7 +195,7 @@ func TestIngest_AutoDetectsText(t *testing.T) {
 	in := "Contact john@example.com"
 	out, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "doc-auto-text",
+		ID:            "doc-auto-text",
 		ContentFormat: "auto",
 		Content:       in,
 	})
@@ -228,7 +228,7 @@ func TestIngestReveal_AutoWithMixedTextAndJSONSnippet(t *testing.T) {
 
 	ingestResp, err := svc.Ingest(context.Background(), IngestRequest{
 		TenantID:      "acme",
-		ID:         "doc-auto-mixed",
+		ID:            "doc-auto-mixed",
 		ContentFormat: "auto",
 		Content:       input,
 	})
@@ -247,7 +247,7 @@ func TestIngestReveal_AutoWithMixedTextAndJSONSnippet(t *testing.T) {
 
 	revealResp, err := svc.Reveal(context.Background(), RevealRequest{
 		TenantID:      "acme",
-		ID:         "doc-auto-mixed",
+		ID:            "doc-auto-mixed",
 		Actor:         "tester",
 		Purpose:       "roundtrip-check",
 		ContentFormat: "auto",

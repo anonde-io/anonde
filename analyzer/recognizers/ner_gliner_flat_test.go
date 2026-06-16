@@ -32,7 +32,9 @@ func TestGLiNERFlatRecognizer_Metadata(t *testing.T) {
 	for _, e := range got {
 		gotSet[e] = true
 	}
-	for _, want := range []string{"PERSON", "LOCATION", "STREET_ADDRESS", "PHONE_NUMBER", "DATE_TIME"} {
+	// The empty config resolves to DefaultLabelToEntity (= chat). DATE_TIME
+	// is clinical-only now; callers that need it pass ClinicalPIILabels.
+	for _, want := range []string{"PERSON", "LOCATION", "STREET_ADDRESS", "PHONE_NUMBER", "EMAIL_ADDRESS"} {
 		if !gotSet[want] {
 			t.Errorf("SupportedEntities missing %q (got %v)", want, got)
 		}

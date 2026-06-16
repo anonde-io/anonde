@@ -71,6 +71,7 @@ func (v *MemoryVault) Delete(_ context.Context, tenantID, token string) error {
 func (v *MemoryVault) Stats() core.VaultStats {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.sweepExpiredLocked(time.Now())
 	var bytes int64
 	for _, e := range v.m {
 		bytes += int64(len(e.Value.Token) + len(e.Value.Cleartext) + len(e.Value.EntityType))
@@ -146,6 +147,7 @@ func (s *MemoryStore) Delete(_ context.Context, tenantID, id string) (bool, erro
 func (s *MemoryStore) Stats() core.StoreStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweepExpiredLocked(time.Now())
 	var bytes int64
 	for _, e := range s.m {
 		bytes += int64(len(e.Value.AnonymizedContent))
@@ -171,6 +173,10 @@ func (v *MemoryVault) sweepExpiredIfDueLocked() {
 		return
 	}
 	v.lastSweep = now
+	v.sweepExpiredLocked(now)
+}
+
+func (v *MemoryVault) sweepExpiredLocked(now time.Time) {
 	for key, entry := range v.m {
 		if entry.expiredAt(now) {
 			delete(v.m, key)
@@ -196,6 +202,10 @@ func (s *MemoryStore) sweepExpiredIfDueLocked() {
 		return
 	}
 	s.lastSweep = now
+	s.sweepExpiredLocked(now)
+}
+
+func (s *MemoryStore) sweepExpiredLocked(now time.Time) {
 	for key, entry := range s.m {
 		if entry.expiredAt(now) {
 			delete(s.m, key)
@@ -219,4 +229,3 @@ func computeSweepInterval(ttl time.Duration) time.Duration {
 	}
 	return ttl / 2
 }
-

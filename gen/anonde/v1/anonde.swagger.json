@@ -89,7 +89,7 @@
           },
           {
             "name": "scoreThreshold",
-            "description": "Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;\nhoisted to top-level fields because grpc-gateway can't bind nested\nmessage fields from URL query parameters cleanly). Zero values\nfall back to the server-side defaults baked at boot time.",
+            "description": "Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;\nhoisted to top-level fields because grpc-gateway can't bind nested\nmessage fields from URL query parameters cleanly). Unset fields fall\nback to the server-side defaults baked at boot time. When\nscore_threshold_set is true the value must be > 0 — an explicit 0\n(or negative) is rejected with InvalidArgument.",
             "in": "query",
             "required": false,
             "type": "number",
@@ -509,7 +509,7 @@
         "scoreThreshold": {
           "type": "number",
           "format": "double",
-          "description": "Minimum confidence score. Use score_threshold_set to distinguish\n\"field present and 0\" (include everything) from \"field absent\"\n(apply service default)."
+          "description": "Minimum confidence score. Set score_threshold_set to apply an\nexplicit threshold; otherwise the service default is used. When\nscore_threshold_set is true the value must be > 0 — an explicit 0\n(or negative) is rejected with InvalidArgument rather than silently\ndisabling the score filter."
         },
         "scoreThresholdSet": {
           "type": "boolean"

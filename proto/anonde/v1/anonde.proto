@@ -186,9 +186,11 @@ message AnalyzerOptions {
   string language = 1;
   // Allow-list of entity types. Empty = every recognizer fires.
   repeated string entities = 2;
-  // Minimum confidence score. Use score_threshold_set to distinguish
-  // "field present and 0" (include everything) from "field absent"
-  // (apply service default).
+  // Minimum confidence score. Set score_threshold_set to apply an
+  // explicit threshold; otherwise the service default is used. When
+  // score_threshold_set is true the value must be > 0 — an explicit 0
+  // (or negative) is rejected with InvalidArgument rather than silently
+  // disabling the score filter.
   double score_threshold = 3;
   bool score_threshold_set = 4;
   // disable_ner = true → skip NER recognizers (pattern-only path).
@@ -315,8 +317,10 @@ message AnonymizePDFRequest {
 
   // Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;
   // hoisted to top-level fields because grpc-gateway can't bind nested
-  // message fields from URL query parameters cleanly). Zero values
-  // fall back to the server-side defaults baked at boot time.
+  // message fields from URL query parameters cleanly). Unset fields fall
+  // back to the server-side defaults baked at boot time. When
+  // score_threshold_set is true the value must be > 0 — an explicit 0
+  // (or negative) is rejected with InvalidArgument.
   double score_threshold = 3;
   bool score_threshold_set = 4;
   repeated string entities = 5;

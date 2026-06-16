@@ -11,6 +11,15 @@ each such change is called out under a **Changed** or **Removed** heading.
 
 ### Changed
 
+- **An explicit `score_threshold` of `0` is now rejected.** When a request
+  sets `score_threshold_set = true`, `score_threshold` must be `> 0`;
+  an explicit `0` (or negative) returns `InvalidArgument` instead of
+  silently falling through to the service default. Previously the field
+  was documented as "`0` = include everything" but the service treated
+  it as "use default", so an explicit `0` was silently ignored. Clients
+  that want the server default should leave `score_threshold_set` unset
+  (or `false`) rather than sending `0`. Affects the REST, Connect, and
+  gRPC transports for create/anonymize, synthesize, and PDF redaction.
 - **The NER build tag `hugot` is renamed to `ner`.** Self-hosters who
   build the NER variant from source now use `go build -tags ner ./...`
   (was `-tags hugot`); the published `anonde-ner` / `anonde-ner-stack`

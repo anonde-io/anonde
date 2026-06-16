@@ -252,9 +252,11 @@ type AnalyzerOptions struct {
 	Language string `protobuf:"bytes,1,opt,name=language,proto3" json:"language,omitempty"`
 	// Allow-list of entity types. Empty = every recognizer fires.
 	Entities []string `protobuf:"bytes,2,rep,name=entities,proto3" json:"entities,omitempty"`
-	// Minimum confidence score. Use score_threshold_set to distinguish
-	// "field present and 0" (include everything) from "field absent"
-	// (apply service default).
+	// Minimum confidence score. Set score_threshold_set to apply an
+	// explicit threshold; otherwise the service default is used. When
+	// score_threshold_set is true the value must be > 0 — an explicit 0
+	// (or negative) is rejected with InvalidArgument rather than silently
+	// disabling the score filter.
 	ScoreThreshold    float64 `protobuf:"fixed64,3,opt,name=score_threshold,json=scoreThreshold,proto3" json:"score_threshold,omitempty"`
 	ScoreThresholdSet bool    `protobuf:"varint,4,opt,name=score_threshold_set,json=scoreThresholdSet,proto3" json:"score_threshold_set,omitempty"`
 	// disable_ner = true → skip NER recognizers (pattern-only path).
@@ -1272,8 +1274,10 @@ type AnonymizePDFRequest struct {
 	PdfContent []byte `protobuf:"bytes,2,opt,name=pdf_content,json=pdfContent,proto3" json:"pdf_content,omitempty"`
 	// Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;
 	// hoisted to top-level fields because grpc-gateway can't bind nested
-	// message fields from URL query parameters cleanly). Zero values
-	// fall back to the server-side defaults baked at boot time.
+	// message fields from URL query parameters cleanly). Unset fields fall
+	// back to the server-side defaults baked at boot time. When
+	// score_threshold_set is true the value must be > 0 — an explicit 0
+	// (or negative) is rejected with InvalidArgument.
 	ScoreThreshold    float64  `protobuf:"fixed64,3,opt,name=score_threshold,json=scoreThreshold,proto3" json:"score_threshold,omitempty"`
 	ScoreThresholdSet bool     `protobuf:"varint,4,opt,name=score_threshold_set,json=scoreThresholdSet,proto3" json:"score_threshold_set,omitempty"`
 	Entities          []string `protobuf:"bytes,5,rep,name=entities,proto3" json:"entities,omitempty"`

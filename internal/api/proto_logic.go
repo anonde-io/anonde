@@ -2,10 +2,11 @@ package api
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/anonde-io/anonde/analyzer"
-	"github.com/anonde-io/anonde/internal/core"
 	anondev1 "github.com/anonde-io/anonde/gen/anonde/v1"
+	"github.com/anonde-io/anonde/internal/core"
 )
 
 // proto_logic.go centralises the proto↔internal conversion used by
@@ -24,7 +25,9 @@ func executeCreate(ctx context.Context, svc *core.Service, msg *anondev1.CreateA
 		Content:       msg.GetContent(),
 		ContentFormat: msg.GetContentFormat(),
 	}
-	applyAnalyzerOptions(&req.Language, &req.Entities, &req.ScoreThreshold, &req.DisableNER, msg.GetOptions())
+	if err := applyAnalyzerOptions(&req.Language, &req.Entities, &req.ScoreThreshold, &req.DisableNER, msg.GetOptions()); err != nil {
+		return nil, err
+	}
 
 	resp, err := svc.Ingest(ctx, req)
 	if err != nil {
@@ -85,7 +88,9 @@ func executeSynthesize(ctx context.Context, svc *core.Service, msg *anondev1.Syn
 		Consistent:    msg.GetConsistent(),
 		DocScoped:     msg.GetDocScoped(),
 	}
-	applyAnalyzerOptions(&req.Language, &req.Entities, &req.ScoreThreshold, &req.DisableNER, msg.GetOptions())
+	if err := applyAnalyzerOptions(&req.Language, &req.Entities, &req.ScoreThreshold, &req.DisableNER, msg.GetOptions()); err != nil {
+		return nil, err
+	}
 
 	resp, err := svc.Synthesize(ctx, req)
 	if err != nil {
@@ -194,28 +199,29 @@ func intMapToInt32Map(in map[string]int) map[string]int32 {
 // the existing internal-request fields. The internal types are reused
 // verbatim so the Service layer stays unchanged.
 //
-// score_threshold_set is the explicit "field present" signal. Without
-// it, score_threshold=0 is ambiguous between "include everything" and
-// "use service default". The internal type's float64 zero is currently
-// treated as "default" downstream — threading score_threshold_set into
-// AnalysisConfig (or switching ScoreThreshold to *float64) is the way
-// to honor an explicit 0 as "no filter".
+// score_threshold_set is the explicit "field present" signal. The service
+// treats zero as "use default", so the public API rejects explicit
+// score_threshold=0 instead of silently accepting every recognizer result.
 func applyAnalyzerOptions(
 	language *string,
 	entities *[]string,
 	scoreThreshold *float64,
 	disableNER *bool,
 	opts *anondev1.AnalyzerOptions,
-) {
+) error {
 	if opts == nil {
-		return
+		return nil
 	}
 	*language = opts.GetLanguage()
 	*entities = opts.GetEntities()
 	*disableNER = opts.GetDisableNer()
 	if opts.GetScoreThresholdSet() {
+		if opts.GetScoreThreshold() <= 0 {
+			return fmt.Errorf("score_threshold must be > 0 when score_threshold_set is true")
+		}
 		*scoreThreshold = opts.GetScoreThreshold()
 	}
+	return nil
 }
 
 func findingsToProto(in []analyzer.RecognizerResult) []*anondev1.Finding {
