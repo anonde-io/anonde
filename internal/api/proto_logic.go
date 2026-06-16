@@ -142,6 +142,12 @@ func executeAnonymizePDF(ctx context.Context, svc *core.Service, msg *anondev1.A
 		// fallback is REST-only.
 		tenantID = tenantFromIncomingMD(ctx)
 	}
+	// Same explicit-zero rejection as applyAnalyzerOptions: the service
+	// treats a zero threshold as "use default", so reject an explicit 0
+	// instead of silently accepting every recognizer result.
+	if msg.GetScoreThresholdSet() && msg.GetScoreThreshold() <= 0 {
+		return nil, fmt.Errorf("score_threshold must be > 0 when score_threshold_set is true")
+	}
 	opts := core.RedactOptions{
 		Mode:                   msg.GetMode(),
 		Operator:               msg.GetOperator(),

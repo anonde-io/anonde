@@ -127,6 +127,29 @@ func TestConnect_CreateRejectsExplicitZeroScoreThreshold(t *testing.T) {
 	}
 }
 
+// The PDF endpoint plumbs score_threshold through a separate path
+// (executeAnonymizePDF, not applyAnalyzerOptions), so it gets its own
+// guard against the same silent-zero footgun.
+func TestConnect_AnonymizePDFRejectsExplicitZeroScoreThreshold(t *testing.T) {
+	client, _ := newConnectTestEnv(t)
+
+	_, err := client.AnonymizePDF(context.Background(), connect.NewRequest(&anondev1.AnonymizePDFRequest{
+		TenantId:          "acme",
+		PdfContent:        []byte("%PDF-1.4\nfake"),
+		ScoreThreshold:    0,
+		ScoreThresholdSet: true,
+	}))
+	if err == nil {
+		t.Fatal("expected explicit zero score_threshold to fail")
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err=%v)", connect.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "score_threshold must be > 0") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestConnect_IngestRevealDelete_RoundTrip exercises the full
 // ingest → reveal → delete cycle through the generated client. The
 // goal isn't to re-test the analyzer (already covered) but to verify
