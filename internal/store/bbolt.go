@@ -266,17 +266,36 @@ func (v *BoltVault) deleteRaw(tenantID, token string) error {
 // look at the file size on disk, which bbolt grows in page-sized
 // increments and is a strictly better metric than the JSON-payload
 // sum we could compute here.
-func (v *BoltVault) Stats() core.VaultStats {
-	var entries int64
-	_ = v.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketVault))
+// countLiveEntries counts the bucket's entries whose envelope has not
+// expired, matching what Get would actually return. bolt's KeyN would
+// over-count rows the background sweeper hasn't reclaimed yet, so we
+// decode just the (plaintext, key-independent) expiry field per row.
+// Read-only by design: unlike the memory backend's sweep-on-Stats, this
+// does not mutate — disk reclamation stays the background sweeper's job.
+func countLiveEntries(db *bolt.DB, bucket []byte) int64 {
+	var n int64
+	_ = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
 		if b == nil {
 			return nil
 		}
-		entries = int64(b.Stats().KeyN)
-		return nil
+		return b.ForEach(func(_, val []byte) error {
+			var meta struct {
+				ExpiresAt time.Time `json:"exp"`
+			}
+			// Undecodable rows are counted (they exist on disk and the
+			// sweeper leaves them too); only cleanly-expired rows drop.
+			if err := json.Unmarshal(val, &meta); err != nil || !expired(meta.ExpiresAt) {
+				n++
+			}
+			return nil
+		})
 	})
-	return core.VaultStats{Entries: entries, Bytes: -1}
+	return n
+}
+
+func (v *BoltVault) Stats() core.VaultStats {
+	return core.VaultStats{Entries: countLiveEntries(v.db, []byte(bucketVault)), Bytes: -1}
 }
 
 // ─── BoltStore implements core.Store ───────────────────────────────
@@ -353,16 +372,7 @@ func (s *BoltStore) deleteRaw(tenantID, id string) error {
 
 // Stats; see BoltVault.Stats for the rationale on Bytes=-1.
 func (s *BoltStore) Stats() core.StoreStats {
-	var entries int64
-	_ = s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketStore))
-		if b == nil {
-			return nil
-		}
-		entries = int64(b.Stats().KeyN)
-		return nil
-	})
-	return core.StoreStats{Entries: entries, Bytes: -1}
+	return core.StoreStats{Entries: countLiveEntries(s.db, []byte(bucketStore)), Bytes: -1}
 }
 
 // ─── Sweeper ───────────────────────────────────────────────────────

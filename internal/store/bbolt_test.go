@@ -131,6 +131,42 @@ func TestBoltVault_TTLExpiry(t *testing.T) {
 	}
 }
 
+// Stats() must exclude expired-but-unswept rows: bolt's KeyN counts every
+// key on disk, including ones the background sweeper hasn't reclaimed yet.
+// We stop the sweeper (Close leaves the db open) so the expired row
+// physically lingers, isolating Stats()'s own expiry filter.
+func TestBoltVault_StatsDropsExpiredEntries(t *testing.T) {
+	v, _ := newTestBoltVault(t, 20*time.Millisecond)
+	_ = v.Close()
+	ctx := context.Background()
+	if err := v.Put(ctx, "demo", core.VaultEntry{Token: "T", EntityType: "EMAIL_ADDRESS", Cleartext: "john@example.com"}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if got := v.Stats().Entries; got != 1 {
+		t.Fatalf("pre-expiry entries = %d, want 1", got)
+	}
+	time.Sleep(35 * time.Millisecond)
+	if got := v.Stats().Entries; got != 0 {
+		t.Fatalf("post-expiry entries = %d, want 0 (KeyN would still report 1)", got)
+	}
+}
+
+func TestBoltStore_StatsDropsExpiredEntries(t *testing.T) {
+	s, _ := newTestBoltStore(t, 20*time.Millisecond)
+	_ = s.Close()
+	ctx := context.Background()
+	if err := s.Put(ctx, core.StoreRecord{TenantID: "demo", ID: "doc-1", AnonymizedContent: "<EMAIL_1>"}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if got := s.Stats().Entries; got != 1 {
+		t.Fatalf("pre-expiry entries = %d, want 1", got)
+	}
+	time.Sleep(35 * time.Millisecond)
+	if got := s.Stats().Entries; got != 0 {
+		t.Fatalf("post-expiry entries = %d, want 0 (KeyN would still report 1)", got)
+	}
+}
+
 // ─── Cross-restart durability ──────────────────────────────────────
 
 // TestBoltVault_SurvivesRestart verifies the whole point of persistence:
