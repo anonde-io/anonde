@@ -679,8 +679,8 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 			absStart := chunk.ByteStart + s.byteStart
 			absEnd := chunk.ByteStart + s.byteEnd
 			// Structural-shape post-filter: drop fuzzy-type spans whose
-			// surface is structurally non-PII. No-op unless Enabled.
-			if r.cfg.SpanFilter.Enabled && absStart >= 0 && absEnd <= len(text) && absStart < absEnd {
+			// surface is structurally non-PII. No-op unless Active.
+			if r.cfg.SpanFilter.Active() && absStart >= 0 && absEnd <= len(text) && absStart < absEnd {
 				if r.cfg.SpanFilter.rejectSpanSurface(canonical, text[absStart:absEnd]) {
 					if GLiNERDebug {
 						debugLog("Analyze: shape-filter dropped %s %q\n", canonical, text[absStart:absEnd])

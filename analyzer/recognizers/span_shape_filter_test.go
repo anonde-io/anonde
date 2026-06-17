@@ -124,3 +124,113 @@ func TestSpanFilterStoplist(t *testing.T) {
 		t.Error("stoplist wrongly rejected ordinary name Madison")
 	}
 }
+
+// TestMoneyGuardUniversal asserts the currency-amount guard on ID/POSTAL_CODE
+// fires for EVERY profile that has it on (the default money-only NER profile
+// AND the opt-in shape profiles), not just legal — this is what makes finance
+// / clinical / chat benefit.
+func TestMoneyGuardUniversal(t *testing.T) {
+	t.Parallel()
+	for _, f := range []SpanFilterConfig{MoneyGuardFilter(), NewSpanFilter(), StrictSpanFilter(), LegalSpanFilter()} {
+		for _, c := range []struct{ typ, s string }{
+			{"ID", "8.750 EUR"}, {"ID", "2.300,00 EUR"}, {"ID", "150.000 EUR"},
+			{"ID", "€42"}, {"ID", "USD 1,200"}, {"POSTAL_CODE", "8.750 EUR"},
+		} {
+			if !f.rejectSpanSurface(c.typ, c.s) {
+				t.Errorf("money guard FAILED to reject %s %q (universal, any label set)", c.typ, c.s)
+			}
+		}
+		// Bare digit runs (real account / case-number fragments) must survive.
+		for _, c := range []struct{ typ, s string }{
+			{"ID", "4496957"}, {"ID", "77"}, {"POSTAL_CODE", "10115"},
+		} {
+			if f.rejectSpanSurface(c.typ, c.s) {
+				t.Errorf("money guard WRONGLY rejected bare %s %q (leak risk)", c.typ, c.s)
+			}
+		}
+	}
+}
+
+// TestMoneyGuardOnlyLeavesShapesAlone asserts the default money-only profile
+// does NOT run the opt-in shape rules: a model-slug PERSON survives (the bench
+// proved those shapes overlap gold on PII-dense corpora).
+func TestMoneyGuardOnlyLeavesShapesAlone(t *testing.T) {
+	t.Parallel()
+	f := MoneyGuardFilter()
+	for _, c := range []struct{ typ, s string }{
+		{"PERSON", "gpt-4o"}, {"PERSON", "lenoci65"}, {"LOCATION", "52159"},
+		{"LOCATION", "49.8036"}, {"ID", "§ 29 ZPO"},
+	} {
+		if f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("money-only profile wrongly rejected %s %q (shape rules must be opt-in)", c.typ, c.s)
+		}
+	}
+}
+
+// TestSpanFilterDisabled asserts the escape hatch: the zero value rejects
+// nothing, including the money guard.
+func TestSpanFilterDisabled(t *testing.T) {
+	t.Parallel()
+	var f SpanFilterConfig // Enabled=false, MoneyGuard=false
+	if f.Active() {
+		t.Error("zero-value config must be inactive")
+	}
+	for _, c := range []struct{ typ, s string }{
+		{"ID", "8.750 EUR"}, {"PERSON", "gpt-4o"}, {"ID", "§ 29 ZPO"},
+	} {
+		if f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("disabled filter wrongly rejected %s %q", c.typ, c.s)
+		}
+	}
+}
+
+// TestLegalSpanFilterRejectsLegalNoise confirms the legal layer adds the
+// statute / exhibit ID/POSTAL_CODE rejection and the German party-role
+// stoplist on top of the universal filter.
+func TestLegalSpanFilterRejectsLegalNoise(t *testing.T) {
+	t.Parallel()
+	f := LegalSpanFilter()
+
+	// Statute / exhibit on ID or POSTAL_CODE → rejected (legal-only).
+	for _, c := range []struct{ typ, s string }{
+		{"ID", "§ 779 BGB"}, {"ID", "§§ 330 ff. ZPO"}, {"ID", "§ 29 ZPO"},
+		{"ID", "K3"}, {"ID", "Anlage K1"}, {"POSTAL_CODE", "§ 29 ZPO"},
+		{"POSTAL_CODE", "K1"}, {"ID", "ZPO"},
+	} {
+		if !f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("legal filter FAILED to reject %s %q", c.typ, c.s)
+		}
+	}
+
+	// German party-role words on PERSON/ORG → rejected.
+	for _, c := range []struct{ typ, s string }{
+		{"PERSON", "Kläger"}, {"PERSON", "Beklagte"}, {"PERSON", "Klägervertreter"},
+		{"PERSON", "Bevollmächtigte"}, {"ORGANIZATION", "Partei"},
+		{"ORGANIZATION", "Kaufvertrag"}, {"PERSON", "Beklagten"},
+	} {
+		if !f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("legal filter FAILED to reject role %s %q", c.typ, c.s)
+		}
+	}
+
+	// LEAK-SAFETY: real legal IDs and names MUST survive.
+	for _, c := range []struct{ typ, s string }{
+		{"ID", "25 VIII 24/22"}, {"ID", "4496957"}, {"ID", "77"},
+		{"ID", "5912115"}, {"POSTAL_CODE", "10115"},
+		{"PERSON", "Beate Roth"}, {"ORGANIZATION", "Amtsgericht Bremen"},
+	} {
+		if f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("legal filter WRONGLY rejected real-PII %s %q (leak risk)", c.typ, c.s)
+		}
+	}
+}
+
+// TestLegalNoiseScopedToIDTypes confirms the statute/exhibit path is
+// ID/POSTAL_CODE-scoped: an exhibit-shaped PERSON is not dropped by it.
+func TestLegalNoiseScopedToIDTypes(t *testing.T) {
+	t.Parallel()
+	f := LegalSpanFilter()
+	if f.rejectSpanSurface("PERSON", "K3") {
+		t.Error("legal-noise path wrongly rejected PERSON K3 (must be ID/POSTAL_CODE-scoped)")
+	}
+}

@@ -896,15 +896,14 @@ func glinerClassThresholdsFromEnv() map[string]float64 {
 	return out
 }
 
-// glinerSpanFilterFromEnv builds the span-shape filter config from env.
-// GLINER_STRICT=1 or GLINER_SPAN_FILTER=1 enables it with the default
-// stoplist; GLINER_STOPLIST=a,b,c appends extra lower-cased denylist terms.
-// Returns a zero (disabled) config when neither switch is set, so the
-// default deploy is byte-for-byte unchanged.
+// glinerSpanFilterFromEnv builds the GLiNER post-filter. The money guard
+// (currency amounts are never a PII ID) is always on for the NER path.
+// GLINER_LABEL_SET=legal applies the legal precision profile (role stoplist
+// + statute/exhibit suppressor + shapes) by default — leak-safe on the legal
+// corpora. For other label sets the broader structural shape filter is
+// opt-in (GLINER_SPAN_FILTER / GLINER_STRICT), since it overlaps gold on
+// PII-dense corpora. GLINER_STOPLIST appends extra denylist terms.
 func glinerSpanFilterFromEnv() recognizers.SpanFilterConfig {
-	if !boolFromEnv("GLINER_STRICT", false) && !boolFromEnv("GLINER_SPAN_FILTER", false) {
-		return recognizers.SpanFilterConfig{}
-	}
 	var extra []string
 	if raw := strings.TrimSpace(os.Getenv("GLINER_STOPLIST")); raw != "" {
 		for _, t := range strings.Split(raw, ",") {
@@ -913,9 +912,13 @@ func glinerSpanFilterFromEnv() recognizers.SpanFilterConfig {
 			}
 		}
 	}
-	sf := recognizers.StrictSpanFilter(extra...)
-	log.Printf("gliner: STRICT span-shape filter enabled (stoplist=%d terms; rejects UUID/locale/semver/model-slug/hex/base64/SCREAMING_SNAKE on fuzzy types)", len(sf.Stoplist))
-	return sf
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("GLINER_LABEL_SET")), "legal") {
+		return recognizers.LegalSpanFilter(extra...)
+	}
+	if boolFromEnv("GLINER_SPAN_FILTER", false) || boolFromEnv("GLINER_STRICT", false) {
+		return recognizers.StrictSpanFilter(extra...)
+	}
+	return recognizers.MoneyGuardFilter()
 }
 
 // glinerLabelSetFromEnv selects the GLiNER label list + its label→entity map
