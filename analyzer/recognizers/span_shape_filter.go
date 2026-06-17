@@ -1,11 +1,19 @@
-// Structural-shape post-validator for decoded NER spans. GLiNER is open-set
-// and tags name-shaped surfaces (model slugs, UUIDs, locale codes, semver) as
-// PERSON/ORGANIZATION/LOCATION, flooding false positives on metadata-heavy
-// traffic. A decoded span is rejected only when its surface matches a known
-// structural shape AND its type is fuzzy/name-like; structured types
-// (EMAIL/IBAN/CARD/...) are never touched, since a UUID the model called an
-// "id number" is plausibly real PII. Every rule is conservative: the filter
-// only raises precision, never lowers real-PII recall.
+// Post-validator for decoded NER spans, in two layers:
+//
+//   - MoneyGuard (default ON for NER): drops ID/POSTAL_CODE spans shaped like
+//     a currency amount ("8.750 EUR"). An amount is never PII whatever the
+//     label set; the matrix proves zero gold-span overlap. This is what fixes
+//     the finance/legal/clinical money→ID over-redaction by default.
+//   - Structural shape filter (Enabled, OPT-IN via GLINER_SPAN_FILTER): drops
+//     fuzzy-type (PERSON/ORG/LOCATION/...) spans whose surface is a UUID /
+//     locale / semver / model-slug / hex / base64 / SCREAMING_SNAKE / dotted
+//     path, plus a stoplist. A precision tool that trades recall: on PII-dense
+//     synthetic corpora (ai4privacy, synth_logs) these shapes overlap gold
+//     usernames / ZIPs / coordinates, so it stays opt-in — see the bench
+//     matrix in the span-filter scope-back.
+//
+// LegalNoise layers statute/exhibit ID rejection for GLINER_LABEL_SET=legal.
+// Structured types (EMAIL/IBAN/CARD/...) are never touched by the shape rules.
 //
 // Not build-tagged on purpose — pure data, so it is unit-tested and benched in
 // the default no-CGO build and reused by every GLiNER variant under -tags ner.
@@ -67,19 +75,49 @@ var (
 	// Dotted identifiers / hostnames / package paths. >=2 dots so "Dr.
 	// Smith" and single-initial names are not caught.
 	reDottedPath = regexp.MustCompile(`^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){2,}$`)
+
+	// Monetary amount: "8.750 EUR", "2.300,00 EUR", "€42". A currency
+	// marker is REQUIRED so bare digit runs (real account / case-number
+	// fragments) still match no shape and stay redacted. Universal — an
+	// amount is never PII whatever the label set; applied to ID/POSTAL_CODE.
+	reMoney = regexp.MustCompile(`^\s*(?:(?:EUR|USD|GBP|CHF|€|\$|£)\s*\d[\d.,]*|\d[\d.,]*\s*(?:EUR|USD|GBP|CHF|€|\$|£))\s*$`)
+
+	// Statute / code reference: "§ 29 ZPO", "§§ 330 ff. ZPO". A section sign
+	// anywhere, or a bare German-code abbreviation. Legal-only.
+	reLegalStatute  = regexp.MustCompile(`§`)
+	reLegalCodeAbbr = regexp.MustCompile(`\b(?:ZPO|BGB|StGB|StPO|HGB|GG|InsO|FamFG|GVG|AktG|GmbHG|EGBGB|RVG|GKG|VwGO|SGB|AO)\b`)
+
+	// Exhibit / attachment label: "K1", "Anlage K3". Legal-only.
+	reLegalExhibit = regexp.MustCompile(`^(?:Anlage\s+)?[A-Z]\d{1,3}$`)
 )
 
 // SpanFilterConfig configures the structural-shape post-filter. The zero
 // value is a no-op (Enabled=false). Wire it onto GLiNERConfig.SpanFilter;
 // the span/flat/pool/ensemble recognizers all consult the same field.
 type SpanFilterConfig struct {
+	// Enabled turns on the OPT-IN structural shape filter + stoplist for
+	// fuzzy types. Independent of MoneyGuard.
 	Enabled bool
+
+	// MoneyGuard turns on the universal currency-amount rejection for
+	// ID/POSTAL_CODE. Default ON for the NER path; applies even when the
+	// shape filter (Enabled) is off.
+	MoneyGuard bool
 
 	// Stoplist is a set of lower-cased surfaces dropped for the fuzzy
 	// types regardless of shape. Seeded via NewSpanFilter/StrictSpanFilter;
 	// keys MUST be lower-case (lookups lower-case the surface first).
+	// Consulted only when Enabled.
 	Stoplist map[string]bool
+
+	// LegalNoise additionally rejects ID/POSTAL_CODE spans shaped like a
+	// statute ref ("§ 29 ZPO") or exhibit label ("K1", "Anlage K3").
+	// Legal-only — set by LegalSpanFilter; consulted only when Enabled.
+	LegalNoise bool
 }
+
+// Active reports whether the config rejects anything (either layer on).
+func (f SpanFilterConfig) Active() bool { return f.Enabled || f.MoneyGuard }
 
 // defaultSpanFilterStoplist is the seed denylist of recurring non-PII
 // surfaces GLiNER mislabels as PERSON/ORG/LOCATION on LLM-proxy and log
@@ -106,9 +144,16 @@ func defaultSpanFilterStoplist() map[string]bool {
 	return m
 }
 
-// NewSpanFilter returns an enabled SpanFilterConfig seeded with the
-// default stoplist plus any extra lower-cased terms. Prefer this over
-// constructing the struct by hand so the default denylist is present.
+// MoneyGuardFilter is the universal default-on NER profile: the currency
+// guard on ID/POSTAL_CODE, and nothing else. Leak-safe across the whole bench
+// matrix (zero gold-span overlap); the opt-in shape rules are NOT included.
+func MoneyGuardFilter() SpanFilterConfig {
+	return SpanFilterConfig{MoneyGuard: true}
+}
+
+// NewSpanFilter returns the OPT-IN shape filter: stoplist + structural shape
+// rules + the money guard, seeded with the default stoplist plus any extra
+// lower-cased terms. Prefer this over constructing the struct by hand.
 func NewSpanFilter(extra ...string) SpanFilterConfig {
 	sl := defaultSpanFilterStoplist()
 	for _, t := range extra {
@@ -117,15 +162,50 @@ func NewSpanFilter(extra ...string) SpanFilterConfig {
 			sl[t] = true
 		}
 	}
-	return SpanFilterConfig{Enabled: true, Stoplist: sl}
+	return SpanFilterConfig{Enabled: true, MoneyGuard: true, Stoplist: sl}
 }
 
-// StrictSpanFilter is the named precision profile the STRICT deploy and
-// docs refer to: shape rejection plus the default stoplist. Identical to
-// NewSpanFilter() today; exists as a stable name so the two can diverge
-// later without churning call sites.
+// StrictSpanFilter is the same span-shape filter as the default; STRICT's
+// extra is raised per-class thresholds (set by the caller), not extra shape
+// rules. Kept as a stable name so the two can diverge without churning call
+// sites.
 func StrictSpanFilter(extra ...string) SpanFilterConfig {
 	return NewSpanFilter(extra...)
+}
+
+// legalRoleStoplist is the German legal party-role / boilerplate denylist
+// (Kläger, Beklagte, Partei, ...) GLiNER's legal label set mislabels as
+// PERSON / ORGANIZATION. Role titles, not named individuals. Lower-cased.
+func legalRoleStoplist() []string {
+	return []string{
+		// Plaintiff / defendant (+ gender/case inflections).
+		"kläger", "klägers", "klägerin", "klägern",
+		"beklagte", "beklagter", "beklagten", "beklagtin",
+		// Applicant / respondent (Beschluss / einstweilige Verfügung).
+		"antragsteller", "antragstellerin", "antragsgegner", "antragsgegnerin",
+		// Counsel / representative.
+		"klägervertreter", "beklagtenvertreter",
+		"bevollmächtigte", "bevollmächtigter", "bevollmächtigten",
+		"unseres mandanten", "mandant", "mandantin",
+		"mandantschaft", "mandantschaften",
+		"unterzeichner", "unterzeichners",
+		"vollmachtgeber",
+		// Court structure / party-collective / boilerplate nouns.
+		"partei", "parteien", "klagepartei", "beide parteien",
+		"zivilkammer", "kammer", "kammerbezirk", "geschäftsstelle",
+		"damen und herren", "säumnis", "streitwert", "klage",
+		// Contract / object common nouns GLiNER tags as ORGANIZATION.
+		"kaufvertrag", "maschinenteilen",
+	}
+}
+
+// LegalSpanFilter layers the legal profile on the universal filter: the
+// legal-role stoplist + the LegalNoise statute/exhibit ID/POSTAL_CODE
+// suppressor. Wired when GLINER_LABEL_SET=legal. Extra terms lower-cased.
+func LegalSpanFilter(extra ...string) SpanFilterConfig {
+	sf := NewSpanFilter(append(legalRoleStoplist(), extra...)...)
+	sf.LegalNoise = true
+	return sf
 }
 
 // Reject is the exported form of rejectSpanSurface for out-of-package
@@ -139,14 +219,35 @@ func (f SpanFilterConfig) Reject(entityType, surface string) bool {
 // dropped. Pure function of (config, type, surface) — the single decision
 // point every recognizer and the tests share.
 func (f SpanFilterConfig) rejectSpanSurface(entityType, surface string) bool {
+	s := strings.TrimSpace(surface)
+
+	// ID/POSTAL_CODE noise, checked before the fuzzy-type gate (these are
+	// structured types the shape rules never touch). Money guard is universal
+	// (an amount is never PII, whatever the label set) and gated on MoneyGuard
+	// so it runs even with the shape filter off; statute/exhibit refs are
+	// legal-only and require Enabled+LegalNoise. A currency marker is required
+	// for money, so bare digit runs (real account / case-number fragments)
+	// match nothing and stay redacted.
+	if (entityType == "ID" || entityType == "POSTAL_CODE") && s != "" {
+		if f.MoneyGuard && reMoney.MatchString(s) {
+			return true
+		}
+		if f.Enabled && f.LegalNoise && (reLegalStatute.MatchString(s) ||
+			reLegalCodeAbbr.MatchString(s) ||
+			reLegalExhibit.MatchString(s)) {
+			return true
+		}
+	}
+
+	// The shape rules + stoplist below are the opt-in layer.
 	if !f.Enabled {
 		return false
 	}
+
 	if !spanFilterFuzzyTypes[entityType] {
 		return false
 	}
 
-	s := strings.TrimSpace(surface)
 	if s == "" {
 		return true
 	}

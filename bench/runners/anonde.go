@@ -90,10 +90,10 @@ func main() {
 		// domain-appropriate. Flag wins over $GLINER_LABEL_SET; see resolveLabelSet.
 		labelSet = flag.String("label-set", "", "GLiNER label set: chat|clinical|finance|legal (empty = $GLINER_LABEL_SET, then chat)")
 
-		// STRICT precision profile: span-shape filter + raised per-class
-		// floors for the noisy fuzzy types. Off by default.
-		strictNER     = flag.Bool("strict-ner", false, "enable the STRICT precision profile: span-shape filter + raised PERSON/ORG/LOCATION/NRP floors")
-		spanFilter    = flag.Bool("span-filter", false, "enable the structural-shape span filter only (no threshold changes)")
+		// Money guard is always on (mirrors the server). The opt-in
+		// structural shape filter is added by --span-filter / --strict-ner.
+		strictNER     = flag.Bool("strict-ner", false, "STRICT precision profile: shape filter + raised PERSON/ORG/LOCATION/NRP floors")
+		spanFilter    = flag.Bool("span-filter", false, "enable the opt-in structural-shape span filter (shapes + stoplist) on top of the money guard")
 		stoplistExtra = flag.String("stoplist", "", "comma-separated extra lower-cased stoplist terms appended to the default")
 		personThr     = flag.Float64("person-threshold", 0, "override PERSON class threshold (0 = leave default/STRICT)")
 		orgThr        = flag.Float64("org-threshold", 0, "override ORGANIZATION class threshold (0 = leave default/STRICT)")
@@ -113,6 +113,12 @@ func main() {
 	}
 
 	nerLabels, nerLabelToEntity := resolveLabelSet(*labelSet)
+
+	// Legal label set applies its precision profile (role stoplist +
+	// statute/exhibit suppressor + shapes) by default, mirroring main.go.
+	if resolveLabelSetName(*labelSet) == "legal" {
+		nerSpanFilter = upgradeToLegalSpanFilter(nerSpanFilter)
+	}
 
 	var (
 		engine      *analyzer.AnalyzerEngine
@@ -294,14 +300,15 @@ func main() {
 // resolveStrictProfile turns the precision-profile flags into a
 // SpanFilterConfig + per-class threshold map. Mirrors main.go's
 // glinerSpanFilterFromEnv + glinerClassThresholdsFromEnv so the bench
-// measures what the STRICT deploy runs. strictNER enables the span filter
-// and raises PERSON 0.50 / ORG,LOC,NRP 0.55; spanFilter enables the filter
-// only; per-class flags override the STRICT floor for that class.
+// measures what the deploy runs. The money guard is always on; the opt-in
+// shape filter is added by --span-filter / --strict-ner; --strict-ner
+// additionally raises PERSON 0.50 / ORG,LOC,NRP 0.55; per-class flags
+// override the STRICT floor for that class.
 func resolveStrictProfile(strictNER, spanFilter bool, stoplist string,
 	personThr, orgThr, locThr, nrpThr float64,
 ) (recognizers.SpanFilterConfig, map[string]float64) {
 	var sf recognizers.SpanFilterConfig
-	if strictNER || spanFilter {
+	if spanFilter || strictNER {
 		var extra []string
 		for _, t := range strings.Split(stoplist, ",") {
 			if t = strings.TrimSpace(t); t != "" {
@@ -309,6 +316,8 @@ func resolveStrictProfile(strictNER, spanFilter bool, stoplist string,
 			}
 		}
 		sf = recognizers.StrictSpanFilter(extra...)
+	} else {
+		sf = recognizers.MoneyGuardFilter()
 	}
 
 	thresholds := map[string]float64{}
@@ -335,9 +344,9 @@ func resolveStrictProfile(strictNER, spanFilter bool, stoplist string,
 	if len(thresholds) == 0 {
 		thresholds = nil
 	}
-	if sf.Enabled || thresholds != nil {
-		log.Printf("strict-profile: span_filter=%v stoplist=%d thresholds=%v",
-			sf.Enabled, len(sf.Stoplist), thresholds)
+	if sf.Active() || thresholds != nil {
+		log.Printf("strict-profile: money_guard=%v shape_filter=%v stoplist=%d thresholds=%v",
+			sf.MoneyGuard, sf.Enabled, len(sf.Stoplist), thresholds)
 	}
 	return sf, thresholds
 }
@@ -376,6 +385,38 @@ func resolveLabelSet(flagVal string) ([]string, map[string]string) {
 		log.Printf("label set %q not recognised (valid: chat, clinical, finance, legal); defaulting to chat", set)
 		return recognizers.DefaultPIILabels, recognizers.DefaultLabelToEntity
 	}
+}
+
+// resolveLabelSetName resolves the active label-set name (flag, then
+// $GLINER_LABEL_SET, then "chat") WITHOUT loading the label slices — used to
+// decide whether the legal precision profile applies. Keep the resolution
+// order in lock-step with resolveLabelSet.
+func resolveLabelSetName(flagVal string) string {
+	set := strings.ToLower(strings.TrimSpace(flagVal))
+	if set == "" {
+		set = strings.ToLower(strings.TrimSpace(os.Getenv("GLINER_LABEL_SET")))
+	}
+	switch set {
+	case "clinical", "finance", "legal":
+		return set
+	default:
+		return "chat"
+	}
+}
+
+// upgradeToLegalSpanFilter folds the legal profile into an already-enabled
+// span filter: sets LegalNoise and merges the legal-role stoplist on top of
+// the existing one (preserving operator --stoplist extras).
+func upgradeToLegalSpanFilter(sf recognizers.SpanFilterConfig) recognizers.SpanFilterConfig {
+	legal := recognizers.LegalSpanFilter()
+	if !sf.Enabled {
+		return legal
+	}
+	for k := range legal.Stoplist {
+		sf.Stoplist[k] = true
+	}
+	sf.LegalNoise = true
+	return sf
 }
 
 // foldForParity normalises anonde's address-bucket entity types to LOCATION

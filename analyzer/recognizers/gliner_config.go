@@ -63,10 +63,11 @@ type GLiNERConfig struct {
 	// consult this map.
 	ClassThresholds map[string]float64
 
-	// SpanFilter, when Enabled, runs the structural-shape post-validator on
-	// every decoded NER span (see span_shape_filter.go). Zero value is a
-	// no-op; select the STRICT profile via StrictSpanFilter() or the
-	// GLINER_STRICT env knob. Consulted by every GLiNER variant.
+	// SpanFilter post-validates every decoded NER span (see
+	// span_shape_filter.go): a universal money guard (MoneyGuard) plus the
+	// opt-in structural shape filter (Enabled). MoneyGuardFilter() is the
+	// default NER profile; StrictSpanFilter() / LegalSpanFilter() add the
+	// shape layer. Zero value is a no-op. Consulted by every GLiNER variant.
 	SpanFilter SpanFilterConfig
 
 	// MaxWidth caps span width in WORDS (not subword tokens). Defaults to
