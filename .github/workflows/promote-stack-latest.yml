@@ -1,0 +1,49 @@
+# Promote an already-built, already-guarded anonde-ner-stack image tag to :latest.
+#
+# This does NOT rebuild. It copies the multi-arch manifest of an existing
+# immutable tag (e.g. sha-<short>) onto the floating :latest tag via
+# `docker buildx imagetools create`. Used to republish the ANO-9-corrected
+# stack image (LARGE gliner-pii ONNX present) without cutting a full release.
+name: promote-stack-latest
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "Immutable source tag to promote (e.g. sha-21c0202)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/anonde-ner-stack
+
+jobs:
+  promote:
+    name: promote anonde-ner-stack:${{ inputs.source_tag }} -> :latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source tag exists
+        run: docker buildx imagetools inspect "${IMAGE}:${{ inputs.source_tag }}"
+
+      - name: Promote source tag to :latest
+        run: |
+          docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${{ inputs.source_tag }}"
+
+      - name: Print new :latest digest
+        run: docker buildx imagetools inspect "${IMAGE}:latest" | head -4
