@@ -97,7 +97,9 @@ func NewGLiNERFlatRecognizer(cfg GLiNERConfig) *GLiNERFlatRecognizer {
 	if cfg.ModelName == "" {
 		cfg.ModelName = "knowledgator/gliner-pii-large-v1.0"
 		if cfg.OnnxFilePath == "" {
-			cfg.OnnxFilePath = "model.onnx"
+			// gliner-pii-large-v1.0 ships its FP32 ONNX at onnx/model.onnx
+			// (no repo-root model.onnx) — see ANO-9.
+			cfg.OnnxFilePath = "onnx/model.onnx"
 		}
 	}
 	return &GLiNERFlatRecognizer{cfg: cfg}

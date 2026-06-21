@@ -22,8 +22,8 @@
 # Image-size budget (~2.65 GB total at default SIGNATURE_QUANT=fp32):
 #   - BASE FP32 ONNX  (knowledgator/gliner-pii-base-v1.0/onnx/model.onnx)
 #                     ~370 MB
-#   - LARGE FP32 ONNX (knowledgator/gliner-pii-large-v1.0/model.onnx)
-#                     ~1.4 GB
+#   - LARGE FP32 ONNX (knowledgator/gliner-pii-large-v1.0/onnx/model.onnx)
+#                     ~1.76 GB (HF x-linked-size 1,763,443,637 bytes)
 #   - YOLOS signature FP32 ONNX                  ~487 MB
 #                     (--build-arg SIGNATURE_QUANT=int8 → ~236 MB)
 #   - Tokenizers + configs                       ~50 MB total
@@ -102,7 +102,7 @@ ENV GLINER_MODELS_DIR=/models \
     GLINER_MODEL=knowledgator/gliner-pii-base-v1.0 \
     GLINER_ONNX_FILE=onnx/model.onnx \
     ANONDE_GLINER_FLAT_MODEL=knowledgator/gliner-pii-large-v1.0 \
-    ANONDE_GLINER_FLAT_ONNX_FILE=model.onnx \
+    ANONDE_GLINER_FLAT_ONNX_FILE=onnx/model.onnx \
     ANALYZER_BACKEND=gliner-stack \
     ORT_SO_PATH=/out/lib/libonnxruntime.so.1 \
     DOWNLOAD_MODELS_ONLY=1
@@ -121,7 +121,7 @@ RUN /out/anonde
 # This hermetic check runs per-arch INSIDE the build, before the runtime
 # stage copies /models, and aborts the build if either configured ONNX is
 # missing or the LARGE export is suspiciously small (a partial download or
-# a quantized/base file slipped in where the ~1.4 GB FP32 belongs). Paths
+# a quantized/base file slipped in where the ~1.76 GB FP32 belongs). Paths
 # are derived from the same env vars the binary uses (model name "/" -> "_"
 # matches analyzer/recognizers sanitizeModelName), so the guard and the
 # bake can never drift.
@@ -138,7 +138,7 @@ RUN set -eux; \
     flat_bytes=$(stat -c '%s' "$flat_onnx"); \
     min_bytes=1000000000; \
     if [ "$flat_bytes" -lt "$min_bytes" ]; then \
-        echo "ANO-9 guard FAILED: LARGE ONNX $flat_onnx is ${flat_bytes} bytes (< ${min_bytes}); expected ~1.4 GB FP32 — partial or wrong-precision model baked" >&2; \
+        echo "ANO-9 guard FAILED: LARGE ONNX $flat_onnx is ${flat_bytes} bytes (< ${min_bytes}); expected ~1.76 GB FP32 — partial or wrong-precision model baked" >&2; \
         exit 1; \
     fi; \
     echo "ANO-9 guard OK: base=$(stat -c '%s' "$base_onnx") bytes, flat=${flat_bytes} bytes"
@@ -238,7 +238,7 @@ ENV ANALYZER_BACKEND=gliner-stack \
     GLINER_ONNX_FILE=onnx/model.onnx \
     GLINER_THRESHOLD=0.40 \
     ANONDE_GLINER_FLAT_MODEL=knowledgator/gliner-pii-large-v1.0 \
-    ANONDE_GLINER_FLAT_ONNX_FILE=model.onnx \
+    ANONDE_GLINER_FLAT_ONNX_FILE=onnx/model.onnx \
     ORT_SO_PATH=/lib/libonnxruntime.so.1 \
     ANONDE_PDF_ENABLED=1 \
     SIGNATURE_QUANT=${SIGNATURE_QUANT} \
