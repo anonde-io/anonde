@@ -234,7 +234,7 @@ Three Dockerfiles ship with the repo, pick per workload:
 |---|---|---|---|---|
 | `anonde-smoke:patterns` | `make docker-build` | ~41 MB | patterns-only | German clinical text, structured English fields, no narrative names |
 | `anonde-smoke:ner` | `make docker-build-ner` | ~2.66 GB | GLiNER base + patterns + OCR + YOLOS sig | production default; Σ ALL ≈ 12.9% leak across 30 corpora; PDF endpoint enabled |
-| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | largest (base + LARGE model) | GLiNER base + LARGE + patterns + YOLOS sig | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
+| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | ~3.2 GB | GLiNER base + LARGE + patterns + YOLOS sig | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
 
 **Which `:latest` is which.** The published tags map to these tiers:
 
@@ -243,9 +243,13 @@ Three Dockerfiles ship with the repo, pick per workload:
   base, **2.66 GB**). This is what the README quickstart and the site hero
   pull. It is *not* the stack tier.
 - `ghcr.io/anonde-io/anonde-ner-stack:latest` — the lowest-leak stack tier
-  (base + LARGE). Opt in explicitly when you need the 8.4% leak rate.
+  (base + LARGE, **~3.2 GB on-disk / 2.82 GB compressed pull**). Opt in
+  explicitly when you need the 8.4% leak rate.
 
-Sizes were last verified 2026-06-21 on arm64 by re-pulling each tag.
+Sizes were last verified 2026-06-21 by re-pulling each tag. The stack tier was
+measured on amd64 from the ANO-9-corrected image (`sha-21c0202`): 3.22 GB
+on-disk (the `/models` layer alone is 2.96 GB — base GLiNER ONNX 664.76 MB +
+LARGE FP32 ONNX 1.76 GB + YOLOS signature model), 2.82 GB compressed pull.
 
 `make docker-run` and `make docker-run-ner` build the image (if needed)
 and start the container. The NER container exposes
