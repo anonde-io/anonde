@@ -21,7 +21,7 @@
   <a href="https://github.com/anonde-io/anonde/actions/workflows/bench.yml"><img src="https://github.com/anonde-io/anonde/actions/workflows/bench.yml/badge.svg" alt="Bench"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8.svg" alt="Go 1.26">
-  <img src="https://img.shields.io/badge/image-12MB%20(patterns)%20%7C%20~770MB%20(NER)-2496ED.svg" alt="Image size">
+  <img src="https://img.shields.io/badge/image-41MB%20(patterns)%20%7C%202.66GB%20(NER)-2496ED.svg" alt="Image size">
 </p>
 
 ---
@@ -61,9 +61,10 @@ Two ways to run anonde — pick the one that matches how you ship.
 
 ### Docker (HTTP server, fastest)
 
-One command, no Go toolchain needed. The patterns-only image is ~12 MB
-and cold-starts in <1s; the NER image (~770 MB) bakes in GLiNER +
-libonnxruntime for PERSON / ORG / LOC detection.
+One command, no Go toolchain needed. The patterns-only image is ~41 MB
+and cold-starts in <0.3s; the NER image (2.66 GB) bakes in GLiNER base +
+libonnxruntime for PERSON / ORG / LOC detection (~2 min pull, ready ~1s,
+first inference ~3s while the ONNX session loads, then ~1.5s warm).
 
 ```bash
 # Patterns-only (no model download, no CGO)
@@ -187,7 +188,7 @@ photo-to-PDF), both surfaces transparently rasterise each page and OCR it
 before running the analyzer — no caller change. The `anonde-ner` /
 `anonde-ner-stack` images bundle `poppler-utils` + `tesseract-ocr`
 (`eng+deu+fra+spa+ita+ron`), so OCR and the YOLOS signature redactor are on
-by default there; the patterns-only image stays ~12 MB and skips them.
+by default there; the patterns-only image stays ~41 MB and skips them.
 
 Per-request knobs (mode, operator, entities, score-threshold, ocr-langs, …)
 bind from URL query params. Full flows, the field table, and OCR env vars are

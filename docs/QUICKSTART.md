@@ -14,6 +14,20 @@ For PDFs / scanned images and Prometheus metrics, see
 
 ## 1. Start the server
 
+Fastest path — Docker, one command, no Go toolchain. The patterns-only
+image is ~41 MB and cold-starts in <0.3s:
+
+```bash
+docker run --rm -p 8081:8080 ghcr.io/anonde-io/anonde:latest
+```
+
+Every curl below targets `:8081`. For the GLiNER NER pass, swap in
+`ghcr.io/anonde-io/anonde-ner:latest` (2.66 GB, ~2 min pull); see the
+[Docker image variants](#docker-image-variants) table.
+
+Prefer running from source? Use the Makefile instead (needs the Go
+toolchain):
+
 ```bash
 make run            # ANALYZER_BACKEND=patterns ANONDE_ADDR=:8081 go run ./cmd/anonde/
 ```
@@ -216,11 +230,22 @@ flow.
 
 Three Dockerfiles ship with the repo, pick per workload:
 
-| Image | Built via | Size | Backend | Use when |
+| Image | Built via | Size (on-disk) | Backend | Use when |
 |---|---|---|---|---|
-| `anonde-smoke:patterns` | `make docker-build` | ~12 MB | patterns-only | German clinical text, structured English fields, no narrative names |
-| `anonde-smoke:ner` | `make docker-build-ner` | ~1.13 GB | GLiNER base + patterns + OCR + YOLOS sig | production default; Σ ALL ≈ 12.9% leak across 30 corpora; PDF endpoint enabled |
-| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | ~2.65 GB | GLiNER base + LARGE + patterns + YOLOS sig | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
+| `anonde-smoke:patterns` | `make docker-build` | ~41 MB | patterns-only | German clinical text, structured English fields, no narrative names |
+| `anonde-smoke:ner` | `make docker-build-ner` | ~2.66 GB | GLiNER base + patterns + OCR + YOLOS sig | production default; Σ ALL ≈ 12.9% leak across 30 corpora; PDF endpoint enabled |
+| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | largest (base + LARGE model) | GLiNER base + LARGE + patterns + YOLOS sig | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
+
+**Which `:latest` is which.** The published tags map to these tiers:
+
+- `ghcr.io/anonde-io/anonde:latest` — patterns image, **~41 MB**.
+- `ghcr.io/anonde-io/anonde-ner:latest` — the **base `ner` tier** (GLiNER
+  base, **2.66 GB**). This is what the README quickstart and the site hero
+  pull. It is *not* the stack tier.
+- `ghcr.io/anonde-io/anonde-ner-stack:latest` — the lowest-leak stack tier
+  (base + LARGE). Opt in explicitly when you need the 8.4% leak rate.
+
+Sizes were last verified 2026-06-21 on arm64 by re-pulling each tag.
 
 `make docker-run` and `make docker-run-ner` build the image (if needed)
 and start the container. The NER container exposes
@@ -231,9 +256,10 @@ and Prometheus on `:9090`.
 The NER image runs offline once built; the ONNX model is baked into
 `/models` during build. No HuggingFace Hub calls at runtime.
 
-First request after a cold NER container is slow (5–30 s) because the
-ONNX session loads into memory on first inference. Subsequent calls are
-~10–100 ms each.
+First request after a cold NER container is slower (~3 s on the base
+`ner` image, ~6 s on `ner-stack`) because the ONNX session loads into
+memory on first inference. Warm calls then run ~1.5 s (base) / ~3 s
+(stack) each.
 
 In-memory vault and store are cleared on each restart, so a token
 issued under one variant cannot be revealed after switching to the
