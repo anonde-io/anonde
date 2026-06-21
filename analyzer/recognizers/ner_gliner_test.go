@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/analyzer/recognizers"
 	"github.com/anonde-io/anonde/anonymizer"
 )
@@ -269,6 +271,63 @@ func TestGLiNER_PersonBreadth(t *testing.T) {
 	}
 }
 
+// TestGLiNER_NonNameGuardEndToEnd exercises the always-on universal non-name
+// surface guard through the SPAN decoder's full Analyze() path under the
+// DEFAULT NER profile (SpanFilter: MoneyGuardFilter(), Enabled=false), the same
+// profile the shipped anonde-ner image + bench cell run. A known never-a-name
+// token mislabelled PERSON must be dropped (precision gain) while a real name in
+// the same sentence survives (recall guard). The shared rejectSpanSurface
+// decision is unit-tested deterministically in span_shape_filter_test.go; this
+// confirms the decoder actually consults it under the default profile.
+func TestGLiNER_NonNameGuardEndToEnd(t *testing.T) {
+	t.Parallel()
+	modelsDir, onnxRel, libPath, ok := glinerBaseModelOrSkip(t)
+	if !ok {
+		return
+	}
+
+	rec := recognizers.NewGLiNERRecognizer(recognizers.GLiNERConfig{
+		ModelsDir:         modelsDir,
+		ModelName:         "knowledgator/gliner-pii-base-v1.0",
+		OnnxFilePath:      onnxRel,
+		AutoDownload:      false,
+		SharedLibraryPath: libPath,
+		SpanFilter:        recognizers.MoneyGuardFilter(),
+	})
+	defer func() { _ = rec.Destroy() }()
+
+	// "Please" is a recurring GLiNER PERSON false positive (267x on
+	// ai4privacy_en); "Maria Lopez" is a real name that must survive.
+	const text = "Please contact Maria Lopez today."
+	results, ok := analyzeOrSkipOnOrtWedge(t, rec, text, "en")
+	if !ok {
+		return
+	}
+
+	pleaseStart := strings.Index(text, "Please")
+	nameStart := strings.Index(text, "Maria Lopez")
+	nameEnd := nameStart + len("Maria Lopez")
+	nameCovered := false
+	for _, r := range results {
+		if r.EntityType != "PERSON" {
+			continue
+		}
+		// Precision: no PERSON span may be EXACTLY the standalone "Please".
+		if r.Start == pleaseStart && r.End == pleaseStart+len("Please") {
+			t.Errorf("non-name guard did not drop standalone PERSON %q (precision FP); results=%+v",
+				"Please", results)
+		}
+		if r.Start < nameEnd && r.End > nameStart {
+			nameCovered = true
+		}
+	}
+	// Recall guard: the real name must still be detected.
+	if !nameCovered {
+		t.Errorf("real name %q not covered by any PERSON span (recall regression); results=%+v",
+			"Maria Lopez", results)
+	}
+}
+
 // endsWith is a tiny local helper so the test file doesn't import strings
 // just for one HasSuffix call.
 func endsWith(s, suffix string) bool {
@@ -276,4 +335,113 @@ func endsWith(s, suffix string) bool {
 		return false
 	}
 	return s[len(s)-len(suffix):] == suffix
+}
+
+// glinerBaseModelOrSkip resolves the cached gliner-pii-base model + a usable
+// onnxruntime shared library, or Skips. It returns the models dir, the ONNX
+// file RELATIVE to the model dir (whichever of the FP32 / INT8 variants is
+// actually present — the default deploy ships FP32 at onnx/model.onnx, but a
+// dev box may only have the INT8 model_quint8.onnx cached), and the resolved
+// lib path. The previous version stat'd only the model DIRECTORY and then drove
+// a load of an ABSENT onnx/model.onnx, which wedged onnxruntime dlopen and
+// timed out the whole package — so we stat the actual ONNX file here and Skip
+// before any CGO load when it is missing.
+func glinerBaseModelOrSkip(t *testing.T) (modelsDir, onnxRel, libPath string, ok bool) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("home dir: %v", err)
+		return "", "", "", false
+	}
+	modelsDir = filepath.Join(home, ".cache", "anonde", "models")
+	modelPath := filepath.Join(modelsDir, "knowledgator_gliner-pii-base-v1.0")
+	if _, statErr := os.Stat(modelPath); os.IsNotExist(statErr) {
+		t.Skipf("gliner model not cached at %s; skipping guard test", modelPath)
+		return "", "", "", false
+	}
+	// Prefer the default-deploy FP32 ONNX; fall back to the INT8 dev-cache
+	// variant. Stat the actual file so a missing ONNX Skips instead of
+	// wedging the loader.
+	for _, rel := range []string{"onnx/model.onnx", "model_quint8.onnx", "onnx/model_quint8.onnx"} {
+		if _, statErr := os.Stat(filepath.Join(modelPath, rel)); statErr == nil {
+			onnxRel = rel
+			break
+		}
+	}
+	if onnxRel == "" {
+		t.Skipf("no usable gliner ONNX file under %s; skipping guard test", modelPath)
+		return "", "", "", false
+	}
+
+	libPath = os.Getenv("ORT_LIBRARY_PATH")
+	if libPath == "" {
+		wd, _ := os.Getwd()
+		repo := filepath.Clean(filepath.Join(wd, "..", ".."))
+		for _, candidate := range []string{
+			filepath.Join(repo, ".tokenlib", "libonnxruntime.dylib"),
+			filepath.Join(repo, ".venv-bench", "lib", "python3.12", "site-packages", "onnxruntime", "capi", "libonnxruntime.1.26.0.dylib"),
+			"/opt/homebrew/lib/libonnxruntime.dylib",
+		} {
+			if _, err := os.Stat(candidate); err == nil {
+				libPath = candidate
+				break
+			}
+		}
+	}
+	if libPath == "" {
+		t.Skip("no onnxruntime shared library found; skipping guard test")
+		return "", "", "", false
+	}
+	return modelsDir, onnxRel, libPath, true
+}
+
+// glinerAnalyzer is the minimal surface the guard tests need from either the
+// span or flat GLiNER recognizer.
+type glinerAnalyzer interface {
+	Analyze(ctx context.Context, text string, entities []string, lang string) ([]analyzer.RecognizerResult, error)
+}
+
+// analyzeOrSkipOnOrtWedge runs Analyze with a bounded timeout. The first call
+// triggers a one-time onnxruntime InitializeEnvironment via a sync.Once and a
+// blocking CGO dlopen that ignores context cancellation; on a host whose
+// onnxruntime dylib cannot be loaded (quarantined / adhoc-signed without the
+// hardened-runtime entitlement) that call can wedge and never return. Rather
+// than let the wedge hang the package until the 600s test timeout, we run the
+// analyze in a goroutine and convert a no-return within the budget into a Skip.
+// A returned shared-library / init error is also converted to a Skip. The
+// abandoned goroutine is harmless: it holds no test state and the process exits
+// when the suite finishes.
+func analyzeOrSkipOnOrtWedge(t *testing.T, rec glinerAnalyzer, text, lang string) ([]analyzer.RecognizerResult, bool) {
+	t.Helper()
+	type out struct {
+		res []analyzer.RecognizerResult
+		err error
+	}
+	done := make(chan out, 1)
+	var once sync.Once
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		res, err := rec.Analyze(ctx, text, nil, lang)
+		once.Do(func() { done <- out{res, err} })
+	}()
+	select {
+	case o := <-done:
+		if o.err != nil {
+			if strings.Contains(o.err.Error(), "Platform-specific initialization failed") ||
+				strings.Contains(o.err.Error(), "shared library") ||
+				strings.Contains(o.err.Error(), "onnxruntime") {
+				t.Skipf("onnxruntime not usable on this host: %v", o.err)
+				return nil, false
+			}
+			t.Fatalf("Analyze: %v", o.err)
+			return nil, false
+		}
+		return o.res, true
+	case <-time.After(90 * time.Second):
+		t.Skip("onnxruntime InitializeEnvironment wedged (dlopen did not return); " +
+			"skipping guard test on this host — the deterministic guard decision is " +
+			"covered in span_shape_filter_test.go")
+		return nil, false
+	}
 }

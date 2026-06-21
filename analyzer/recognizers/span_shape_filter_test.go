@@ -50,7 +50,7 @@ func TestSpanFilterRejectsStructuralOnFuzzyTypes(t *testing.T) {
 }
 
 // TestSpanFilterKeepsRealPII is the recall-safety claim: real PII surfaces
-// must NEVER be rejected. A single false reject here is a leak.
+// must never be rejected. A single false reject here is a leak.
 func TestSpanFilterKeepsRealPII(t *testing.T) {
 	t.Parallel()
 	f := StrictSpanFilter()
@@ -221,6 +221,93 @@ func TestLegalSpanFilterRejectsLegalNoise(t *testing.T) {
 	} {
 		if f.rejectSpanSurface(c.typ, c.s) {
 			t.Errorf("legal filter WRONGLY rejected real-PII %s %q (leak risk)", c.typ, c.s)
+		}
+	}
+}
+
+// TestUniversalNonNameGuardFiresUnderMoneyGuard is the precision claim for the
+// always-on non-name surface guard: under the DEFAULT NER profile
+// (MoneyGuardFilter, Enabled=false) a fuzzy-type span whose WHOLE surface is a
+// known never-a-name token is dropped. These are the recurring GLiNER PERSON /
+// ORGANIZATION false positives that the bench FP audit on openmed /
+// synth_clinical / ai4privacy_en proved are pure FPs (zero gold overlap).
+func TestUniversalNonNameGuardFiresUnderMoneyGuard(t *testing.T) {
+	t.Parallel()
+	f := MoneyGuardFilter() // Enabled=false; only the always-on tiers run.
+	cases := []struct{ typ, s string }{
+		// Pronouns / discourse leads mislabelled PERSON.
+		{"PERSON", "Please"}, {"PERSON", "I"}, {"PERSON", "you"}, {"PERSON", "we"},
+		{"PERSON", "Kindly"}, {"PERSON", "Hello"},
+		// Role / relation common nouns (EN + DE). NB: clinical "patient" /
+		// "Patientin" are deliberately NOT here — they are excluded from the
+		// set (see TestUniversalNonNameGuardLeakSafety) to keep the openmed
+		// AGE-adjacency leak floor.
+		{"PERSON", "Kollege"}, {"PERSON", "Frau Kollegin"}, {"PERSON", "Großmutter"},
+		{"PERSON", "student"}, {"PERSON", "child"}, {"PERSON", "client"},
+		// Demographic tokens.
+		{"PERSON", "Male"}, {"PERSON", "Female"},
+		// Browser / user-agent tokens mislabelled PERSON or ORG.
+		{"PERSON", "Mozilla"}, {"PERSON", "Gecko"}, {"PERSON", "Windows NT"},
+		{"ORGANIZATION", "KHTML"}, {"ORGANIZATION", "Trident"}, {"ORGANIZATION", "AppleWebKit"},
+		// Synthetic account-type phrases mislabelled ORG/PERSON.
+		{"ORGANIZATION", "Savings Account"}, {"PERSON", "Investment Account"},
+		// Card-brand slugs mislabelled ORG.
+		{"ORGANIZATION", "diners_club"}, {"ORGANIZATION", "american_express"},
+		{"ORGANIZATION", "mastercard"},
+		// Case-insensitivity.
+		{"PERSON", "PLEASE"}, {"ORGANIZATION", "Mozilla"},
+	}
+	for _, c := range cases {
+		if !f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("non-name guard FAILED to reject %s %q under MoneyGuardFilter (precision FP)", c.typ, c.s)
+		}
+	}
+}
+
+// TestUniversalNonNameGuardLeakSafety is the recall-safety claim: the always-on
+// guard must never drop a real name / org / place, must never fire on a
+// multi-token span that merely contains a stoplisted word, and must never touch
+// structured types. A single false reject here is a leak.
+func TestUniversalNonNameGuardLeakSafety(t *testing.T) {
+	t.Parallel()
+	f := MoneyGuardFilter()
+	keep := []struct{ typ, s string }{
+		// Real names containing a stoplisted token as a substring/word.
+		{"PERSON", "Patient Müller"}, {"PERSON", "Mr Patient"},
+		{"PERSON", "Maria Lopez"}, {"PERSON", "John Doe"},
+		// Real names that are ordinary English words but NOT in the set.
+		{"PERSON", "Mark"}, {"PERSON", "Bill"}, {"PERSON", "Will"}, {"PERSON", "Madison"},
+		// Deliberately-excluded role/title words that anchor gold org/job spans.
+		{"PERSON", "Administrator"}, {"ORGANIZATION", "Central Tactics Administrator"},
+		{"PERSON", "employee"}, {"PROFESSION", "manager"}, {"PROFESSION", "engineer"},
+		// Clinical patient-role nouns deliberately excluded (openmed AGE
+		// adjacency leak floor): they must survive the guard.
+		{"PERSON", "patient"}, {"PERSON", "Patientin"}, {"PERSON", "Patienten"},
+		// Real orgs / places.
+		{"ORGANIZATION", "Deutsche Bank AG"}, {"ORGANIZATION", "Acme Corp"},
+		{"LOCATION", "New York"}, {"LOCATION", "München"},
+		// Structured types must be immune even on a stoplisted surface.
+		{"ID", "patient"}, {"EMAIL_ADDRESS", "mozilla"}, {"URL", "discover"},
+		{"DATE_TIME", "male"},
+	}
+	for _, c := range keep {
+		if f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("non-name guard WRONGLY rejected %s %q (LEAK risk)", c.typ, c.s)
+		}
+	}
+}
+
+// TestUniversalNonNameGuardNeedsMoneyGuard confirms the guard is gated on the
+// MoneyGuard tier: a fully-disabled (zero value) config never fires it, so the
+// escape hatch still disables ALL filtering.
+func TestUniversalNonNameGuardNeedsMoneyGuard(t *testing.T) {
+	t.Parallel()
+	var f SpanFilterConfig // MoneyGuard=false, Enabled=false
+	for _, c := range []struct{ typ, s string }{
+		{"PERSON", "patient"}, {"ORGANIZATION", "mozilla"}, {"PERSON", "Please"},
+	} {
+		if f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("disabled config wrongly rejected %s %q via non-name guard", c.typ, c.s)
 		}
 	}
 }
