@@ -736,9 +736,12 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		baseOnnx := glinerOnnxFileFromEnv(baseModel)
 		baseThreshold := glinerThresholdFromEnv()
 		flatModel := getenvDefault("ANONDE_GLINER_FLAT_MODEL", "knowledgator/gliner-pii-large-v1.0")
-		// LARGE export ships model.onnx at the repo root, not under onnx/.
-		// ANONDE_GLINER_FLAT_ONNX_FILE overrides for other flat exports.
-		flatOnnx := getenvDefault("ANONDE_GLINER_FLAT_ONNX_FILE", "model.onnx")
+		// LARGE export ships its FP32 ONNX at onnx/model.onnx (verified on HF:
+		// knowledgator/gliner-pii-large-v1.0 has no repo-root model.onnx — the
+		// old "model.onnx" default 404'd at download time, silently shipping a
+		// base-only stack image; see ANO-9). ANONDE_GLINER_FLAT_ONNX_FILE
+		// overrides for other flat exports that lay out their ONNX differently.
+		flatOnnx := getenvDefault("ANONDE_GLINER_FLAT_ONNX_FILE", "onnx/model.onnx")
 		flatThreshold := baseThreshold
 		if raw := strings.TrimSpace(os.Getenv("ANONDE_GLINER_FLAT_THRESHOLD")); raw != "" {
 			if v, err := strconv.ParseFloat(raw, 64); err == nil {
