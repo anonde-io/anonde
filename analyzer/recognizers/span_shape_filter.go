@@ -55,6 +55,15 @@ var (
 	// and case-sensitive so it does not eat "Côte-d'Or".
 	reModelSlug = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*-?\d+[a-z0-9.]*$`)
 
+	// Loose model/version slug: a lowercase hyphenated token where a digit-group
+	// can sit in the MIDDLE ("gpt-4o-mini", "gpt-3.5-turbo", "claude-3-opus",
+	// "text-embedding-3-small"). reModelSlug only anchors a trailing digit-group;
+	// this generalises to interior ones. The caller ALSO requires a digit
+	// (reHasDigit) so a digitless lowercase hyphenated surname ("jean-pierre")
+	// is never matched — leak-safe.
+	reModelSlugLoose = regexp.MustCompile(`^[a-z][a-z0-9.]*(-[a-z0-9.]+)+$`)
+	reHasDigit       = regexp.MustCompile(`[0-9]`)
+
 	// Pure hex run of >=16 chars (SHAs, hashes, keys). Length-gated since
 	// shorter hex can be a real token.
 	reHexBlob = regexp.MustCompile(`^[0-9a-fA-F]{16,}$`)
@@ -76,6 +85,21 @@ var (
 	// Smith" and single-initial names are not caught.
 	reDottedPath = regexp.MustCompile(`^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+){2,}$`)
 
+	// snake_case / SCREAMING_SNAKE / mixed identifiers carrying an
+	// underscore (conversation_id, max_retries, user_uuid, API_KEY). An
+	// underscore inside a single token is a machine identifier, never a human
+	// name as written in prose. LEAK-SAFE CARVE-OUT: the ai4privacy gold uses
+	// "First_Last(digits)" usernames (Roma_Altenwerth, Joe_Schuster53) as real
+	// PERSON spans, so reSnakeName below recognises the Capitalised_Capitalised
+	// username shape and isStructuralSurface explicitly EXEMPTS it. Everything
+	// else with an underscore is structural.
+	reSnakeUnderscore = regexp.MustCompile(`^[A-Za-z0-9]+(_[A-Za-z0-9]+)+$`)
+
+	// Capitalised_Capitalised(_...)(digits) username/name shape — the
+	// reversible First_Last gold form. NOT structural: exempted so the GLiNER
+	// span filter and the pattern guard both keep these real names.
+	reSnakeName = regexp.MustCompile(`^[A-Z][a-z]+(_[A-Z][a-z]+)+\d{0,4}$`)
+
 	// Monetary amount: "8.750 EUR", "2.300,00 EUR", "€42". A currency
 	// marker is REQUIRED so bare digit runs (real account / case-number
 	// fragments) still match no shape and stay redacted. Universal — an
@@ -90,6 +114,57 @@ var (
 	// Exhibit / attachment label: "K1", "Anlage K3". Legal-only.
 	reLegalExhibit = regexp.MustCompile(`^(?:Anlage\s+)?[A-Z]\d{1,3}$`)
 )
+
+// isStructuralSurface reports whether the WHOLE trimmed surface is a
+// machine-shaped token that is NEVER a human name, organisation, or place:
+// a UUID, long hex blob, base64/base64url blob, snake_case / SCREAMING_SNAKE
+// identifier, dotted path / hostname / package path, model slug, BCP-47
+// locale tag, or semver. It is the single shared definition consumed by BOTH
+// the GLiNER span-shape filter (rejectSpanSurface, opt-in tier) and the
+// heuristic PERSON/ORG pattern recognizers (de_anomaly / en_anomaly /
+// en_person, always-on at emit time).
+//
+// Leak-safety: every shape is anchored (^...$) so it classifies the entire
+// surface, never a substring — "Maria UUID" or a real name that merely
+// contains a hex run is not structural. The base64 rule additionally requires
+// a digit/symbol so a long all-letter surname is never caught. These shapes
+// are structurally disjoint from names as written in prose; the same
+// "structural-shapes-are-never-names" discipline as universalNonNameSurfaces.
+//
+// Deliberately EXCLUDED from this helper (vs the opt-in span filter):
+//   - reDigitsPunct (pure digit/punct): a bare digit run can be a real ID/ZIP
+//     fragment; the anomaly recognizers never emit those anyway (they require
+//     a capitalised letter lead) so it adds no precision and only risk.
+//   - reMoney / legal statute / exhibit: ID/POSTAL_CODE-scoped, not name shapes.
+func isStructuralSurface(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	switch {
+	case reUUID.MatchString(s):
+		return true
+	case reHexBlob.MatchString(s):
+		return true
+	case reBase64Alphabet.MatchString(s) && reBase64HasDigit.MatchString(s):
+		return true
+	case reAllCapsUnderscore.MatchString(s):
+		return true
+	case reSnakeUnderscore.MatchString(s) && !reSnakeName.MatchString(s):
+		return true
+	case reDottedPath.MatchString(s):
+		return true
+	case reModelSlug.MatchString(s):
+		return true
+	case reModelSlugLoose.MatchString(s) && reHasDigit.MatchString(s):
+		return true
+	case reLocale.MatchString(s):
+		return true
+	case reVersion.MatchString(s):
+		return true
+	}
+	return false
+}
 
 // SpanFilterConfig configures the structural-shape post-filter. The zero
 // value is a no-op (Enabled=false). Wire it onto GLiNERConfig.SpanFilter;
@@ -325,28 +400,17 @@ func (f SpanFilterConfig) rejectSpanSurface(entityType, surface string) bool {
 		return true
 	}
 
-	// AGE is numeric ("42", "42 years"), so the digit/punct rule must NOT
-	// apply to it; every other shape rule is still safe for AGE.
-	isAge := entityType == "AGE"
+	// Shared structural shapes (UUID / hex / base64 / snake_case /
+	// SCREAMING_SNAKE / dotted-path / model-slug / locale / semver) — the
+	// single definition reused by the pattern recognizers.
+	if isStructuralSurface(s) {
+		return true
+	}
 
-	switch {
-	case reUUID.MatchString(s):
-		return true
-	case reLocale.MatchString(s):
-		return true
-	case reVersion.MatchString(s):
-		return true
-	case reModelSlug.MatchString(s):
-		return true
-	case reHexBlob.MatchString(s):
-		return true
-	case reAllCapsUnderscore.MatchString(s):
-		return true
-	case reDottedPath.MatchString(s):
-		return true
-	case reBase64Alphabet.MatchString(s) && reBase64HasDigit.MatchString(s):
-		return true
-	case !isAge && reDigitsPunct.MatchString(s):
+	// AGE is numeric ("42", "42 years"), so the digit/punct rule must NOT
+	// apply to it. This rule is opt-in-only (not in isStructuralSurface)
+	// because a bare digit run can be a real ID/ZIP fragment.
+	if entityType != "AGE" && reDigitsPunct.MatchString(s) {
 		return true
 	}
 	return false

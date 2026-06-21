@@ -246,6 +246,17 @@ func (r *ENAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 	bestByKey := map[[2]int]float64{}
 
 	emit := func(start, end int, score float64) {
+		// Structural-shape guard: a heuristic PERSON candidate whose WHOLE
+		// surface is a machine token (UUID / hex / base64 / snake_case /
+		// SCREAMING_SNAKE / dotted-path / model-slug / locale / semver) is
+		// never a real name — drop before it becomes a finding. This is the
+		// #1 false-positive source on JSON / RPC traffic (UUIDs, field-key
+		// tokens, model slugs, IDs). Leak-safe by construction: these shapes
+		// are disjoint from names as written in prose (shared definition with
+		// the GLiNER span filter, isStructuralSurface).
+		if isStructuralSurface(text[start:end]) {
+			return
+		}
 		key := [2]int{start, end}
 		if cur, ok := bestByKey[key]; ok && cur >= score {
 			return
@@ -300,4 +311,3 @@ func (r *ENAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 	}
 	return out, nil
 }
-

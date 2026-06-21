@@ -289,7 +289,7 @@ var deAnomalyClosedClassPrefixes = map[string]struct{}{
 	"jene": {}, "jener": {}, "jenes": {}, "jenem": {}, "jenen": {},
 	"jede": {}, "jeder": {}, "jedes": {}, "jedem": {}, "jeden": {},
 	"manche": {}, "mancher": {}, "manches": {},
-	"alle": {}, "alles": {}, "allen": {}, "allem":  {}, "aller": {},
+	"alle": {}, "alles": {}, "allen": {}, "allem": {}, "aller": {},
 	"einige": {}, "einiger": {}, "einigen": {},
 	// Possessives
 	"mein": {}, "meine": {}, "meiner": {}, "meinem": {}, "meinen": {}, "meines": {},
@@ -392,6 +392,15 @@ func (r *DEAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 	emit := func(start, end int, score float64) {
 		key := [2]int{start, end}
 		if _, dup := emitted[key]; dup {
+			return
+		}
+		// Structural-shape guard: a heuristic PERSON candidate whose WHOLE
+		// surface is a machine token (UUID / hex / base64 / snake_case /
+		// SCREAMING_SNAKE / dotted-path / model-slug / locale / semver) is
+		// never a real name — drop before it becomes a finding. Leak-safe by
+		// construction: these shapes are disjoint from names as written in
+		// prose (shared definition with the GLiNER span filter).
+		if isStructuralSurface(text[start:end]) {
 			return
 		}
 		emitted[key] = struct{}{}

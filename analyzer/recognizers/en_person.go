@@ -1,6 +1,11 @@
 package recognizers
 
-import "regexp"
+import (
+	"context"
+	"regexp"
+
+	"github.com/anonde-io/anonde/analyzer"
+)
 
 // English-language PERSON patterns. Complements the NER backend for
 // surfaces it consistently misses on the ai4privacy_en synthetic gold:
@@ -51,8 +56,15 @@ var (
 
 // NewENPersonRecognizer detects English-language PERSON surfaces the
 // NER backend tends to miss: honorifics and underscored usernames.
-func NewENPersonRecognizer() *PatternRecognizer {
-	return NewPatternRecognizerWithContext(
+//
+// Wrapped in structuralGuardRecognizer so a candidate whose WHOLE surface is
+// a machine token (UUID / hex / base64 / snake_case / dotted-path / model-slug
+// / locale / semver) is dropped at emit time. The reversible First_Last(digits)
+// username shape (enUnderscoredNameRE) is EXEMPT — reSnakeName keeps it out of
+// isStructuralSurface — so this guard removes only structural FPs, never a real
+// name. Leak-safe by construction.
+func NewENPersonRecognizer() analyzer.EntityRecognizer {
+	inner := NewPatternRecognizerWithContext(
 		"ENPersonRecognizer",
 		[]string{"PERSON"},
 		[]string{"en"},
@@ -66,4 +78,44 @@ func NewENPersonRecognizer() *PatternRecognizer {
 			"contact", "user", "username", "account",
 		},
 	)
+	return structuralGuardRecognizer{inner: inner}
+}
+
+// structuralGuardRecognizer decorates an EntityRecognizer, dropping any
+// emitted result whose surface is a structural machine token. Used by the
+// heuristic PERSON/ORG pattern recognizers so the one isStructuralSurface
+// definition governs every name-shaped emitter. ContextProvider is forwarded
+// so context-keyword score enhancement is preserved.
+type structuralGuardRecognizer struct {
+	inner analyzer.EntityRecognizer
+}
+
+func (g structuralGuardRecognizer) Name() string                 { return g.inner.Name() }
+func (g structuralGuardRecognizer) SupportedEntities() []string  { return g.inner.SupportedEntities() }
+func (g structuralGuardRecognizer) SupportedLanguages() []string { return g.inner.SupportedLanguages() }
+
+// ContextKeywords forwards the inner recognizer's context keywords when it
+// provides any, so the analyzer's score enhancer still fires.
+func (g structuralGuardRecognizer) ContextKeywords() map[string][]string {
+	if cp, ok := g.inner.(interface {
+		ContextKeywords() map[string][]string
+	}); ok {
+		return cp.ContextKeywords()
+	}
+	return nil
+}
+
+func (g structuralGuardRecognizer) Analyze(ctx context.Context, text string, langs []string, lang string) ([]analyzer.RecognizerResult, error) {
+	res, err := g.inner.Analyze(ctx, text, langs, lang)
+	if err != nil || len(res) == 0 {
+		return res, err
+	}
+	out := res[:0]
+	for _, r := range res {
+		if r.Start >= 0 && r.End <= len(text) && r.Start < r.End && isStructuralSurface(text[r.Start:r.End]) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
