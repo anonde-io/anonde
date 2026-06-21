@@ -123,11 +123,14 @@ RUN /out/anonde
 # missing or the LARGE export is suspiciously small (a partial download or
 # a quantized/base file slipped in where the ~1.76 GB FP32 belongs). Paths
 # are derived from the same env vars the binary uses (model name "/" -> "_"
-# matches analyzer/recognizers sanitizeModelName), so the guard and the
-# bake can never drift.
+# matches analyzer/recognizers sanitizeModelName). hugot.DownloadModel
+# flattens each ONNX to its basename under the model dir
+# (/models/<model>/model.onnx, not /models/<model>/onnx/model.onnx), so the
+# guard takes basename of the *_ONNX_FILE env vars to match where the bake
+# actually wrote the files.
 RUN set -eux; \
-    base_onnx="${GLINER_MODELS_DIR}/$(printf '%s' "$GLINER_MODEL" | tr '/' '_')/${GLINER_ONNX_FILE}"; \
-    flat_onnx="${GLINER_MODELS_DIR}/$(printf '%s' "$ANONDE_GLINER_FLAT_MODEL" | tr '/' '_')/${ANONDE_GLINER_FLAT_ONNX_FILE}"; \
+    base_onnx="${GLINER_MODELS_DIR}/$(printf '%s' "$GLINER_MODEL" | tr '/' '_')/$(basename "${GLINER_ONNX_FILE}")"; \
+    flat_onnx="${GLINER_MODELS_DIR}/$(printf '%s' "$ANONDE_GLINER_FLAT_MODEL" | tr '/' '_')/$(basename "${ANONDE_GLINER_FLAT_ONNX_FILE}")"; \
     for f in "$base_onnx" "$flat_onnx"; do \
         if [ ! -f "$f" ]; then \
             echo "ANO-9 guard FAILED: configured GLiNER ONNX missing from image: $f" >&2; \
