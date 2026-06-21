@@ -151,6 +151,65 @@ func MoneyGuardFilter() SpanFilterConfig {
 	return SpanFilterConfig{MoneyGuard: true}
 }
 
+// universalNonNameSurfaces is an always-on denylist of WHOLE-surface strings
+// GLiNER recurrently mislabels as a fuzzy PII type (PERSON / ORGANIZATION /
+// LOCATION / NRP / PROFESSION / AGE) but which are never a named individual,
+// org, or place. It lives in the MoneyGuard tier (always-on) rather than the
+// opt-in Enabled stoplist because the default NER deploy runs MoneyGuardFilter()
+// with Enabled=false, so an Enabled-gated stoplist would be a no-op in
+// production. Every entry is verified leak-safe on the gold corpora (drops only
+// pure FPs, zero gold overlap) and is matched only against the full trimmed
+// surface, so a multi-token name like "Patient Müller" is untouched.
+//
+// Discipline: no first name, surname, real place, or job-title fragment that
+// appears in any gold span (notably absent: administrator/employee/manager/
+// engineer, and clinical patient-role nouns — see the inline notes). Extend
+// only with a surface re-verified leak-safe on the gold matrix.
+var universalNonNameSurfaces = buildNonNameSurfaceSet([]string{
+	// Pronouns (EN + DE).
+	"i", "you", "we", "he", "she", "it", "they",
+	"sie", "wir", "er", "es",
+	// Polite / imperative / discourse leads.
+	"please", "kindly", "hello", "hi", "thanks", "thank you", "regards",
+	"dear", "use", "check", "contact", "note", "attention", "all",
+	"let's", "we've",
+	// Generic role/relation nouns (EN). "administrator"/"employee" are excluded
+	// (they appear inside gold org/title spans on ai4privacy); so are clinical
+	// patient-role nouns (dropping them perturbs the adjacent AGE-span merge and
+	// trips the openmed leak floor).
+	"child", "children", "student", "students",
+	"parent", "parents", "client", "clients", "customer", "customers",
+	"user", "users", "member", "members", "caller", "applicant",
+	"guest", "tenant", "subscriber", "vendor",
+	// DE relation common nouns (clinical patient-role nouns excluded above).
+	"kollege", "kollegin", "frau kollegin", "herr kollege",
+	"großmutter", "grossmutter", "mutter", "vater", "eltern",
+	"mädchen", "freundin", "freund",
+	// Demographic tokens.
+	"male", "female",
+	// Browser / user-agent tokens.
+	"mozilla", "gecko", "khtml", "trident", "applewebkit", "webkit",
+	"firefox", "opera", "presto", "macintosh", "windows nt",
+	"intel mac os", "linux", "x11", "chrome", "safari", "edge",
+	// Synthetic finance account-type phrases.
+	"savings account", "investment account", "checking account",
+	"credit card account", "auto loan account", "personal loan account",
+	"home loan account", "money market account", "brokerage account",
+	// Card-brand slugs (lower-case underscore forms GLiNER tags as ORG).
+	"diners_club", "american_express", "discover", "maestro",
+	"mastercard", "visa", "jcb",
+	// Misc non-PII tech tokens.
+	"ethereum", "bitcoin", "iban",
+})
+
+func buildNonNameSurfaceSet(terms []string) map[string]bool {
+	m := make(map[string]bool, len(terms))
+	for _, t := range terms {
+		m[strings.ToLower(t)] = true
+	}
+	return m
+}
+
 // NewSpanFilter returns the OPT-IN shape filter: stoplist + structural shape
 // rules + the money guard, seeded with the default stoplist plus any extra
 // lower-cased terms. Prefer this over constructing the struct by hand.
@@ -235,6 +294,16 @@ func (f SpanFilterConfig) rejectSpanSurface(entityType, surface string) bool {
 		if f.Enabled && f.LegalNoise && (reLegalStatute.MatchString(s) ||
 			reLegalCodeAbbr.MatchString(s) ||
 			reLegalExhibit.MatchString(s)) {
+			return true
+		}
+	}
+
+	// Universal non-name surface guard (MoneyGuard tier, always-on for the
+	// default NER profile). Drops a fuzzy-type span whose whole trimmed surface
+	// is a known never-a-name token. Matched on the full surface only, so it
+	// never trims inside a real multi-token name.
+	if f.MoneyGuard && spanFilterFuzzyTypes[entityType] && s != "" {
+		if universalNonNameSurfaces[strings.ToLower(s)] {
 			return true
 		}
 	}

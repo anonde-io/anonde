@@ -668,6 +668,94 @@ def _fmt_rate(r: float | None, best: bool = False) -> str:
     return f"**{txt}** 🥇" if best else txt
 
 
+# ---- partial-precision helpers (false-positive scorecard) --------------
+# Precision in the *partial* (overlap-based) view: of every span an engine
+# redacted, what fraction overlapped at least one gold PII span. The
+# inverse (1 − precision) is the over-redaction / false-positive rate.
+# We deliberately pool from the SAME `partial` tally the scorer already
+# computed (`rows[(c,e)]["partial"]` = {type: [tp, fp, fn]}) — no new
+# scoring math, just a different roll-up of the existing tp/fp. Strict
+# (byte-exact) precision is misleading as a headline (a one-char offset
+# reads as a full FP), so partial is the headline; strict is offered only
+# as a trivial secondary column in the detail grid.
+
+
+def _partial_pred_tally(cell: dict | None) -> tuple[int, int]:
+    """(tp, fp) summed across all entity types in a cell's partial view.
+
+    tp + fp = total predicted spans the engine emitted (in the partial
+    view a predicted span is exactly one of tp/fp). Returns (0, 0) for a
+    missing cell so callers can pool unconditionally.
+    """
+    if cell is None:
+        return 0, 0
+    tp = sum(v[0] for v in cell["partial"].values())
+    fp = sum(v[1] for v in cell["partial"].values())
+    return tp, fp
+
+
+def _cell_partial_precision(rows: dict, corpus: str,
+                            engine: str) -> tuple[float | None, int, int]:
+    """Partial precision for one (corpus, engine) cell.
+
+    Returns (precision, tp, fp); precision is None when the engine emitted
+    no spans at all (tp + fp == 0) — nothing redacted, so the
+    "fraction of redactions that were real" question is undefined.
+    """
+    tp, fp = _partial_pred_tally(rows.get((corpus, engine)))
+    if tp + fp == 0:
+        return None, tp, fp
+    return tp / (tp + fp), tp, fp
+
+
+def _group_partial_precision(rows: dict, corpora: list[str],
+                             engine: str) -> tuple[float | None, int, int]:
+    """Pooled (micro-averaged) partial precision over a set of corpora —
+    Σtp / Σ(tp+fp) across the group, the same doc/count-weighting style
+    `_group_leak` uses for leak rate (larger corpora count proportionally).
+
+    Returns (precision, total_tp, total_fp); precision is None when no
+    engine span was emitted anywhere in the group.
+    """
+    tp_sum = fp_sum = 0
+    for c in corpora:
+        tp, fp = _partial_pred_tally(rows.get((c, engine)))
+        tp_sum += tp
+        fp_sum += fp
+    if tp_sum + fp_sum == 0:
+        return None, tp_sum, fp_sum
+    return tp_sum / (tp_sum + fp_sum), tp_sum, fp_sum
+
+
+def _cell_strict_precision(rows: dict, corpus: str,
+                           engine: str) -> float | None:
+    """Strict (byte-exact span+type) precision for one cell — secondary
+    column only. None when the engine emitted no spans.
+    """
+    cell = rows.get((corpus, engine))
+    if cell is None:
+        return None
+    tp = sum(v[0] for v in cell["strict"].values())
+    fp = sum(v[1] for v in cell["strict"].values())
+    if tp + fp == 0:
+        return None
+    return tp / (tp + fp)
+
+
+def _fmt_precision(p: float | None, best: bool = False,
+                   fp: int | None = None) -> str:
+    """Format a partial-precision cell. Higher is better, so 🥇 marks the
+    winner. Optionally annotate the raw FP count (load-bearing: precision
+    can read fine while absolute over-redaction volume is high).
+    """
+    if p is None:
+        return "–"
+    txt = f"{p:.1%}"
+    if fp is not None:
+        txt += f" ({fp} fp)"
+    return f"**{txt}** 🥇" if best else txt
+
+
 def _anchor_verdict(anchor: float | None, others: list[float | None]) -> str:
     """One-glyph verdict for the anonde anchor vs the field of baselines.
 
@@ -843,6 +931,182 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         "Detailed breakdown below for which baseline wins where. (The "
         "TL;DR's win count is per-corpus, a finer split than these "
         "per-cell rows.)\n")
+
+
+def _precision_scorecard(out: list[str], rows: dict, groups: list,
+                         engines: list[str],
+                         domain_name, language_name) -> None:
+    """Append the false-positive / precision scorecard — roll-ups only.
+
+    Mirrors `_scorecard` exactly in structure (Σ ALL + per-domain Σ +
+    per-language Σ, same column ordering with the anonde variants pinned
+    front via SCORECARD_FRONT, anchor first), but the cell is **partial
+    precision** instead of leak rate. Partial precision = fraction of
+    redacted spans that overlap a real PII span; higher is better, so the
+    winner glyph (🥇) marks the HIGHEST-precision engine in the row —
+    the inverse of the leak scorecard, where lowest leak wins.
+
+    This table answers the over-redaction question: "does engine X
+    over-redact more than engine Y?" — input to the anonde-ner vs
+    anonde-ner-stack default decision. There is no win/verdict tally here;
+    the verdict stays keyed on leak in the leak scorecard. Each cell also
+    annotates the pooled raw FP count, because precision can read fine while
+    absolute over-redaction volume is high.
+    """
+    anchor = SCORECARD_ANCHOR
+    front = [e for e in SCORECARD_FRONT if e in engines]
+    others = [e for e in engines if e not in front]
+    col_engines = front + others
+
+    by_domain: dict[str, list[str]] = defaultdict(list)
+    by_language: dict[str, list[str]] = defaultdict(list)
+    all_corpora: list[str] = []
+    domain_seq: list[str] = []
+    lang_seq: list[str] = []
+    for domain, language, corpora in groups:
+        if domain not in domain_seq:
+            domain_seq.append(domain)
+        if language not in lang_seq:
+            lang_seq.append(language)
+        by_domain[domain].extend(corpora)
+        by_language[language].extend(corpora)
+        all_corpora.extend(corpora)
+
+    out.append("## 🎯 Precision scorecard · false-positive rate roll-ups\n")
+    out.append(
+        "Partial precision = fraction of redacted spans that overlap a "
+        "real PII span; the inverse (**1 − precision**) is the "
+        "over-redaction / false-positive rate. **Higher is better.** This "
+        "is the overlap-based *partial* view (a predicted span counts as a "
+        "true positive if it overlaps **any** gold span), NOT the strict "
+        "byte-exact view — strict punishes a one-char offset as a full "
+        "false positive and reads misleadingly low (~0.1–0.3) for every "
+        "engine including the baselines, so it is the wrong headline for a "
+        "redactor. The leak-rate scorecard above answers recall (\"did we "
+        "miss real PII?\"); this one answers the inverse cost — "
+        "over-redaction. Same structure as the leak "
+        "scorecard: roll-up rows only (per domain · per language · "
+        f"overall), `{anchor}` anchored first, `anonde-ner-stack` beside "
+        "it when present. 🥇 marks the highest-precision engine in the "
+        "row. Each cell pools tp/(tp+fp) across the group (micro-average, "
+        "doc-weighted) and annotates the pooled raw FP count — precision "
+        "can look fine while absolute false-positive volume is high.\n")
+
+    # ---- header --------------------------------------------------------
+    header = "| Slice | Scope |"
+    for e in col_engines:
+        if e == anchor:
+            tag = " ⬅︎ anonde (default NER)"
+        elif e == "anonde-ner-stack":
+            tag = " · anonde (NER stack, premium)"
+        else:
+            tag = ""
+        header += f" `{e}`{tag} |"
+    out.append(header)
+    out.append("|---|---|" + "---:|" * len(col_engines))
+
+    def _emit_row(label_left: str, label_right: str, corpora: list[str],
+                  bold_row: bool = False) -> None:
+        precs: list[tuple[float | None, int, int]] = [
+            _group_partial_precision(rows, corpora, e) for e in col_engines]
+        scorable = [p for (p, _tp, _fp) in precs if p is not None]
+        if not scorable:
+            return
+        best = max(scorable)
+        row = f"| {label_left} | {label_right} |"
+        for (p, _tp, fp) in precs:
+            if p is None:
+                row += " – |"
+                continue
+            is_best = abs(p - best) < 1e-9
+            if bold_row:
+                # The Σ ALL row reads bold without double-starring the
+                # winner into literal `****`.
+                cell = _fmt_precision(p, is_best, fp)
+                row += f" {cell if is_best else '**' + cell + '**'} |"
+            else:
+                row += f" {_fmt_precision(p, is_best, fp)} |"
+        out.append(row)
+
+    # ---- Σ ALL (overall) ----------------------------------------------
+    _emit_row("**Σ ALL**", "**all**", all_corpora, bold_row=True)
+    out.append("|" + " |" * (len(col_engines) + 2))
+
+    # ---- per-domain Σ -------------------------------------------------
+    for domain in domain_seq:
+        _emit_row(f"_Σ {domain_name(domain)}_", "_all langs_", by_domain[domain])
+
+    out.append("|" + " |" * (len(col_engines) + 2))
+
+    # ---- per-language Σ -----------------------------------------------
+    for language in lang_seq:
+        _emit_row("_Σ all domains_", f"_{language_name(language)}_",
+                  by_language[language])
+
+    out.append("")
+    out.append(
+        "> **Reading this table** — a cell of `92.0% (40 fp)` means 92% of "
+        "the spans that engine redacted overlapped real PII; the remaining "
+        "8% (40 absolute spans) were over-redaction. For the "
+        "`anonde-ner` vs `anonde-ner-stack` default decision, compare "
+        "their two columns on **Σ ALL** and on the domain/language slices "
+        "you care about: the stack should only become the default if it "
+        "does not materially raise the false-positive rate over the base. "
+        "Recall (leak rate) is in the scorecard above; this is the other "
+        "half of the trade-off.\n")
+
+
+def _precision_detail_grid(out: list[str], rows: dict, groups: list,
+                           engines: list[str],
+                           domain_name, language_name) -> None:
+    """Append a dense per-(domain × language) partial-precision grid — one
+    row per populated cell. The detail behind the precision scorecard
+    roll-ups, demoted into the Detailed breakdown exactly like
+    `_per_cell_leak_grid` is for leak rate.
+
+    Adds a trailing strict-precision column per engine pair is overkill;
+    instead this grid keeps the partial precision (headline) plus the raw
+    FP annotation, and the strict view stays in `results_matrix.csv`.
+    """
+    anchor = SCORECARD_ANCHOR
+    front = [e for e in SCORECARD_FRONT if e in engines]
+    others = [e for e in engines if e not in front]
+    col_engines = front + others
+
+    out.append("## Per-cell precision · domain × language\n")
+    out.append(
+        "Detail behind the precision scorecard: one row per populated "
+        "`(domain, language)` cell, partial precision pooled across the "
+        "cell's corpora (raw FP count annotated). Higher is better; 🥇 "
+        "marks the highest-precision engine in the row. Strict byte-exact "
+        "precision per entity type stays in `results_matrix.csv`.\n")
+
+    header = "| Domain | Language |"
+    for e in col_engines:
+        if e == anchor:
+            tag = " ⬅︎ anonde (default NER)"
+        elif e == "anonde-ner-stack":
+            tag = " · anonde (NER stack, premium)"
+        else:
+            tag = ""
+        header += f" `{e}`{tag} |"
+    out.append(header)
+    out.append("|---|---|" + "---:|" * len(col_engines))
+
+    for domain, language, corpora in groups:
+        precs = [_group_partial_precision(rows, corpora, e) for e in col_engines]
+        scorable = [p for (p, _tp, _fp) in precs if p is not None]
+        row = f"| **{domain_name(domain)}** | {language_name(language)} |"
+        if not scorable:
+            row += " – |" * len(col_engines)
+            out.append(row)
+            continue
+        best = max(scorable)
+        for (p, _tp, fp) in precs:
+            is_best = p is not None and abs(p - best) < 1e-9
+            row += f" {_fmt_precision(p, is_best, fp)} |"
+        out.append(row)
+    out.append("")
 
 
 def _per_cell_leak_grid(out: list[str], rows: dict, groups: list,
@@ -1068,7 +1332,12 @@ def _render(rows, label_map, corpora, engines, meta=None):
             f"image (`ghcr.io/anonde-io/anonde-ner-stack`) for deployments that can "
             f"spare the extra RAM. It is not counted as a competitor in the verdict. "
             f"Strict F1 trades exact-byte alignment for catching more PHI — the right "
-            f"trade-off for a redactor, not a benchmark gaming exercise.\n"
+            f"trade-off for a redactor, not a benchmark gaming exercise. "
+            f"The inverse cost — over-redaction / false positives — now has its own "
+            f"**Precision scorecard** directly below this leak-rate one (partial, "
+            f"overlap-based precision per engine, roll-up rows + a per-cell grid in "
+            f"the Detailed breakdown); read it to compare how much each engine "
+            f"over-redacts.\n"
         )
         out.append(tldr)
     else:
@@ -1082,6 +1351,15 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # per-language Σ), anonde-anchored on the default NER image. The per-cell
     # detail moves into the Detailed breakdown below.
     _scorecard(out, rows, groups, engines, _domain_name, _language_name)
+
+    # ---- Precision (false-positive) scorecard -----------------------
+    # Additive surfacing of the OTHER half of the trade-off: leak rate
+    # above is recall; this is precision (over-redaction). Same roll-up
+    # structure, partial-view precision, winner = highest precision. The
+    # verdict logic stays keyed on leak — this table is read, not scored
+    # against. Load-bearing for the anonde-ner vs anonde-ner-stack
+    # default decision.
+    _precision_scorecard(out, rows, groups, engines, _domain_name, _language_name)
 
     # ---- Engine profiles --------------------------------------------
     # The three anonde columns map 1:1 to the three shipping Docker
@@ -1174,6 +1452,10 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # off the scorecard. One single table covering every populated cell,
     # so a reader can scan "where does anonde lose?" in one place.
     _per_cell_leak_grid(out, rows, groups, engines, _domain_name, _language_name)
+
+    # Per-cell partial-precision grid — the (domain × language) detail
+    # demoted off the precision scorecard, mirroring the leak grid above.
+    _precision_detail_grid(out, rows, groups, engines, _domain_name, _language_name)
 
     sev = label_map.get("severity") or {}
     section_corpora_global: set[str] = set()

@@ -146,3 +146,84 @@ func TestGLiNERFlat_PersonBreadthSmoke(t *testing.T) {
 		t.Errorf("no PERSON span covered any char of %q in %q; results=%+v", "John Doe", text, results)
 	}
 }
+
+// TestGLiNERFlat_NonNameGuardEndToEnd is the FLAT-decoder twin of
+// TestGLiNER_NonNameGuardEndToEnd: it confirms the always-on universal non-name
+// surface guard fires through the FLAT decoder's Analyze() path too, so the span
+// and flat decoders do not silently diverge on the guard. Under the default NER
+// profile (SpanFilter: MoneyGuardFilter()) a standalone never-a-name PERSON
+// token is dropped while a real name in the same sentence survives.
+func TestGLiNERFlat_NonNameGuardEndToEnd(t *testing.T) {
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("home dir: %v", err)
+	}
+	modelsDir := filepath.Join(home, ".cache", "anonde", "models")
+	modelPath := filepath.Join(modelsDir, "knowledgator_gliner-pii-large-v1.0")
+	if _, statErr := os.Stat(modelPath); os.IsNotExist(statErr) {
+		t.Skipf("gliner-large model not cached at %s; skipping guard test", modelPath)
+	}
+	// Stat the actual ONNX file (not just the dir) so a missing model.onnx
+	// Skips before any CGO load instead of wedging onnxruntime dlopen.
+	onnxPath := filepath.Join(modelPath, "model.onnx")
+	if _, statErr := os.Stat(onnxPath); os.IsNotExist(statErr) {
+		t.Skipf("gliner-large model.onnx missing under %s; skipping guard test", modelPath)
+	}
+
+	libPath := os.Getenv("ORT_LIBRARY_PATH")
+	if libPath == "" {
+		wd, _ := os.Getwd()
+		repo := filepath.Clean(filepath.Join(wd, "..", ".."))
+		for _, candidate := range []string{
+			filepath.Join(repo, ".tokenlib", "libonnxruntime.dylib"),
+			filepath.Join(repo, ".venv-bench", "lib", "python3.12", "site-packages", "onnxruntime", "capi", "libonnxruntime.1.26.0.dylib"),
+			"/opt/homebrew/lib/libonnxruntime.dylib",
+		} {
+			if _, err := os.Stat(candidate); err == nil {
+				libPath = candidate
+				break
+			}
+		}
+	}
+	if libPath == "" {
+		t.Skip("no onnxruntime shared library found; skipping guard test")
+	}
+
+	rec := recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
+		ModelsDir:         modelsDir,
+		ModelName:         "knowledgator/gliner-pii-large-v1.0",
+		OnnxFilePath:      "model.onnx",
+		AutoDownload:      false,
+		SharedLibraryPath: libPath,
+		SpanFilter:        recognizers.MoneyGuardFilter(),
+	})
+	defer func() { _ = rec.Destroy() }()
+
+	const text = "Please contact Maria Lopez today."
+	results, ok := analyzeOrSkipOnOrtWedge(t, rec, text, "en")
+	if !ok {
+		return
+	}
+
+	pleaseStart := strings.Index(text, "Please")
+	nameStart := strings.Index(text, "Maria Lopez")
+	nameEnd := nameStart + len("Maria Lopez")
+	nameCovered := false
+	for _, r := range results {
+		if r.EntityType != "PERSON" {
+			continue
+		}
+		if r.Start == pleaseStart && r.End == pleaseStart+len("Please") {
+			t.Errorf("flat decoder did not drop standalone PERSON %q (precision FP); results=%+v",
+				"Please", results)
+		}
+		if r.Start < nameEnd && r.End > nameStart {
+			nameCovered = true
+		}
+	}
+	if !nameCovered {
+		t.Errorf("real name %q not covered by any PERSON span (recall regression); results=%+v",
+			"Maria Lopez", results)
+	}
+}

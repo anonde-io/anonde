@@ -44,9 +44,83 @@ var nerPreferredEntities = map[string]bool{
 	"NRP":          true,
 }
 
+// addressFamilyEntities are the structured pattern types whose span subsumes an
+// inner location: a POSTAL_CODE / STREET_ADDRESS / ADDRESS span ("43566 Bochum")
+// covers both the digits and the city. When an NER LOCATION span ("Bochum") sits
+// inside one of these, the NER-preference rule would let LOCATION win and shrink
+// the redaction to the city, leaking the postcode digits. The containment
+// carve-out in shouldReplace keeps the wider pattern span instead.
+var addressFamilyEntities = map[string]bool{
+	"POSTAL_CODE":    true,
+	"STREET_ADDRESS": true,
+	"ADDRESS":        true,
+}
+
+// validatedStructuredRecognizers lists recognizer Name() values whose finding
+// implies — via a checksum/validator that drops the candidate on failure — that
+// the surface really is that structured PII entity. When GLiNER mislabels such a
+// surface as a fuzzy NER type, shouldReplace's score path could otherwise let
+// the NER label win and steal the correct type (a precision loss); the carve-out
+// below prevents that.
+//
+// Membership rule: a recognizer qualifies only if it drops the finding when its
+// checksum/validator fails, so a finding proves the surface passed. Keys are
+// Name() values (e.g. "AUTFNRecognizer"), not entity types — an earlier revision
+// keyed on entity types, making 16/17 entries dead no-ops;
+// TestValidatedStructuredAllowlist_NamesMatchConstructors pins them to live
+// Name() values. Excluded: recognizers that emit even on validation failure or
+// have no checksum (CreditCard, IBAN, US SSN/ITIN, Crypto, BIC) — including them
+// would let a low-precision pattern steal a real NER span and raise leak.
+var validatedStructuredRecognizers = map[string]bool{
+	"AUTFNRecognizer":                  true,
+	"AUABNRecognizer":                  true,
+	"AUACNRecognizer":                  true,
+	"AUMedicareRecognizer":             true,
+	"INAadhaarRecognizer":              true,
+	"INPANRecognizer":                  true,
+	"ESNIFRecognizer":                  true,
+	"ESNIERecognizer":                  true,
+	"ITFiscalCodeRecognizer":           true,
+	"ITVATCodeRecognizer":              true,
+	"PLPESELRecognizer":                true,
+	"FIPersonalIdentityCodeRecognizer": true,
+	"KRRRNRecognizer":                  true,
+	"SGNRICRecognizer":                 true,
+	"UKNHSRecognizer":                  true,
+	"DESteuerIDRecognizer":             true,
+	"ISINRecognizer":                   true,
+}
+
+// isValidatedStructured reports whether r came from a checksum/validator-
+// backed structured recognizer that drops on validation failure (so its
+// presence implies the surface passed).
+func isValidatedStructured(r RecognizerResult) bool {
+	return validatedStructuredRecognizers[r.RecognizerName]
+}
+
+// IsValidatedStructuredName reports whether name (a recognizer Name()) is on the
+// validated-structured allowlist. Exported for the recognizers package's
+// constructor guard test (keys are Name() values, not entity types).
+func IsValidatedStructuredName(name string) bool {
+	return validatedStructuredRecognizers[name]
+}
+
+// ValidatedStructuredRecognizerCount returns the number of recognizers on the
+// validated-structured allowlist; used by the constructor guard test to assert
+// the allowlist has no stray keys beyond the constructed set.
+func ValidatedStructuredRecognizerCount() int {
+	return len(validatedStructuredRecognizers)
+}
+
 // isNERRecognizer reports whether r came from an NER recognizer.
 func isNERRecognizer(r RecognizerResult) bool {
 	return nerRecognizerNames[r.RecognizerName]
+}
+
+// isAddressFamilyPattern reports whether r is a pattern (non-NER) finding of an
+// address-family type whose span can subsume an inner NER location span.
+func isAddressFamilyPattern(r RecognizerResult) bool {
+	return !isNERRecognizer(r) && addressFamilyEntities[r.EntityType]
 }
 
 // prefersNERFor reports whether the entity type is one where we prefer
@@ -146,6 +220,44 @@ func RemoveConflictsWithCallback(results []RecognizerResult, cb func(winner, los
 // shouldReplace decides whether `candidate` should displace `kept` when
 // they overlap. Implements the NER-preference rule from RemoveConflicts.
 func shouldReplace(kept, candidate RecognizerResult) bool {
+	// Validated-structured carve-out. When a fuzzy NER span overlaps a finding
+	// from a checksum/validator-backed structured recognizer, the validated
+	// pattern wins regardless of score, in both overlap orderings (GLiNER
+	// mislabelling a checksum-valid surface as a fuzzy type is confident-but-
+	// wrong, and the score path below would otherwise resolve it in NER's
+	// favour — a precision loss).
+	//
+	// Leak-safety invariant: this only fires when the validated span fully covers
+	// the NER span. RemoveConflicts replaces the loser entirely, so dropping the
+	// NER span is leak-free only if the surviving validated span redacts every
+	// character it would have. On partial overlap the NER overhang would be lost
+	// and raise leak, so we fall through to the score path instead.
+	if isValidatedStructured(kept) && isNERRecognizer(candidate) && prefersNERFor(candidate.EntityType) {
+		if candidate.ContainedIn(kept) {
+			return false
+		}
+	}
+	if isNERRecognizer(kept) && prefersNERFor(kept.EntityType) && isValidatedStructured(candidate) {
+		if kept.ContainedIn(candidate) {
+			return true
+		}
+	}
+
+	// Address-family containment carve-out. An NER span (e.g. LOCATION "Bochum")
+	// contained within a wider address-family pattern span (POSTAL_CODE /
+	// STREET_ADDRESS / ADDRESS, e.g. "43566 Bochum") must not evict it: the
+	// NER-preference rule below would otherwise let LOCATION win and shrink the
+	// redaction to the city, dropping the postcode digits — a leak. The wider
+	// pattern span covers everything the NER span would plus the digits, so
+	// keeping it is leak-safe (over-redaction at worst, never under). Fires only
+	// on containment.
+	if isAddressFamilyPattern(kept) && isNERRecognizer(candidate) && candidate.ContainedIn(kept) {
+		return false
+	}
+	if isNERRecognizer(kept) && isAddressFamilyPattern(candidate) && kept.ContainedIn(candidate) {
+		return true
+	}
+
 	// Both findings target the same entity type AND it's a type where
 	// we prefer NER; NER wins over pattern, otherwise score decides.
 	if kept.EntityType == candidate.EntityType && prefersNERFor(kept.EntityType) {
