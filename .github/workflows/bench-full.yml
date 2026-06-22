@@ -199,7 +199,7 @@ jobs:
       ANONDE_TELEMETRY: "off"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Free disk on the ~14 GB runner before the cell pulls its heavy
       # assets. The cell stacks: openai/privacy-filter (~2.8 GB), the
@@ -471,7 +471,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v6
