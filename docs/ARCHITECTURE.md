@@ -30,7 +30,7 @@ anonde/
 │       └── ner_gliner.go      # `-tags ner`: GLiNER (open-set NER) via yalue/onnxruntime_go
 ├── anonymizer/                # apply operators to detected spans
 │   ├── anonymizer.go          # mergeAdjacentSameType + dispatch to operators
-│   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize
+│   └── operators/             # Replace, Redact, Mask, Hash, Encrypt, Synthesize, Keep
 ├── cmd/anonde/              # HTTP service
 ├── internal/api/              # transport (Connect + gRPC + REST gateway)
 └── bench/                     # single bench harness

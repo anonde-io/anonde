@@ -10,7 +10,6 @@ import (
 	"github.com/anonde-io/anonde/anonymizer/operators"
 )
 
-
 // corpus covers all major PII types including NER entities (PERSON, LOCATION, ORGANIZATION).
 var corpus = []string{
 	// Mixed: pattern PII + NER entities
@@ -55,9 +54,9 @@ var (
 		RemoveConflicts: true,
 		DisableNER:      true,
 	}
-	anonCfg = anonymizer.AnonymizerConfig{
+	anonCfg = anonymizer.Config(anonymizer.OperatorMap{
 		"*": &operators.Replace{},
-	}
+	})
 )
 
 func init() {

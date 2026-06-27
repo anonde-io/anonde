@@ -36,7 +36,7 @@ IBAN: GB29NWBK60161331926819`
 			r.Start, r.End, r.EntityType, r.Score, text[r.Start:r.End])
 	}
 
-	cfg := anonymizer.AnonymizerConfig{
+	cfg := anonymizer.AnonymizerConfig{Operators: anonymizer.OperatorMap{
 		"EMAIL_ADDRESS": &operators.Replace{NewValue: "<EMAIL>"},
 		"PHONE_NUMBER":  &operators.Mask{CharsToMask: 4, FromEnd: true},
 		"CREDIT_CARD":   &operators.Redact{},
@@ -45,7 +45,7 @@ IBAN: GB29NWBK60161331926819`
 		"IBAN_CODE":     &operators.Replace{},
 		"IP_ADDRESS":    &operators.Replace{},
 		"URL":           &operators.Replace{},
-	}
+	}}
 
 	out, err := anonymizerEngine.Anonymize(text, results, cfg)
 	if err != nil {

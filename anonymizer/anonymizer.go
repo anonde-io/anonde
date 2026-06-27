@@ -3,6 +3,7 @@ package anonymizer
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/anonde-io/anonde/analyzer"
 	"github.com/anonde-io/anonde/anonymizer/operators"
@@ -25,9 +26,51 @@ type AnonymizedItem struct {
 	Text         string // replacement text
 }
 
-// AnonymizerConfig maps entity types to operators.
-// Use "*" as the key for a default operator that applies to all unmatched entities.
-type AnonymizerConfig map[string]Operator
+// AnonymizerConfig selects the operator for each detected span and carries the
+// two surface/type-level pass-through policies (DetectOnlyTypes, AllowList).
+//
+// Operators maps entity types to operators; use "*" as the key for a default
+// operator that applies to all unmatched entities. Construct a config the same
+// way as before via the Config helper or a struct literal:
+//
+//	anonymizer.AnonymizerConfig{Operators: anonymizer.OperatorMap{"*": op}}
+//	anonymizer.Config(anonymizer.OperatorMap{"*": op})
+type AnonymizerConfig struct {
+	// Operators maps entity type -> operator. "*" is the catch-all default.
+	Operators OperatorMap
+
+	// DetectOnlyTypes names entity types that are DETECTED upstream but left
+	// VERBATIM by the anonymizer: no operator runs, no replacement is written,
+	// and NO AnonymizedItem is emitted (so the caller's reverse map never
+	// records them). This is the type-level mark-only policy — e.g. URL,
+	// DATE_TIME and the generic ID type are recorded on a leak list but never
+	// rewritten or vaulted. Keys are matched verbatim against EntityType.
+	//
+	// Equivalent to assigning operators.Keep per type, but expressed as a set
+	// so the caller can drive it from a single policy list. A span whose type
+	// is in this set short-circuits before any operator lookup.
+	DetectOnlyTypes map[string]bool
+
+	// AllowList names span SURFACES (lower-cased, trimmed) that are left
+	// VERBATIM regardless of their entity type: no operator, no replacement, no
+	// AnonymizedItem / reverse-map entry. This is the term-level allow policy —
+	// a detected span whose surface text matches a user allow-term passes
+	// through unchanged. The span is still DETECTED (it stays in the recognizer
+	// results the caller passed in), so the caller can record it as
+	// "seen-but-allowed"; the library only declines to rewrite it.
+	//
+	// Match is case-insensitive on the trimmed surface: the engine lower-cases
+	// and strings.TrimSpace-es the span's original bytes and looks the result
+	// up here. Populate keys already lower-cased and trimmed.
+	AllowList map[string]bool
+}
+
+// OperatorMap maps an entity type (or "*" for the default) to its operator.
+type OperatorMap map[string]Operator
+
+// Config is a convenience constructor that wraps an OperatorMap in an
+// AnonymizerConfig, easing migration from the old map-typed config.
+func Config(ops OperatorMap) AnonymizerConfig { return AnonymizerConfig{Operators: ops} }
 
 // AnonymizerEngine applies anonymization operators to analyzer results.
 type AnonymizerEngine struct{}
@@ -47,9 +90,6 @@ func NewAnonymizerEngine() *AnonymizerEngine { return &AnonymizerEngine{} }
 // because bench corpora often annotate name components as separate gold
 // spans; merging at the recognizer level would tank exact-match metrics.
 func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerResult, cfg AnonymizerConfig) (*AnonymizerResult, error) {
-	if cfg == nil {
-		cfg = AnonymizerConfig{}
-	}
 	originalBytes := []byte(text)
 
 	// Sort by start, deduplicate overlapping spans.
@@ -87,15 +127,43 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 			)
 		}
 
-		op := cfg[r.EntityType]
+		original := string(originalBytes[r.Start:r.End])
+
+		// Type-level mark-only: a span whose type is in DetectOnlyTypes is left
+		// VERBATIM. The bytes already sit in the output buffer untouched, so we
+		// skip operator lookup entirely and emit no AnonymizedItem — the
+		// caller's reverse map never records it, while the span stays in the
+		// recognizer results they passed in (still detected, still countable on
+		// a leak list / metric).
+		if cfg.DetectOnlyTypes[r.EntityType] {
+			continue
+		}
+
+		// Term-level allow: a span whose trimmed, lower-cased surface is in the
+		// AllowList is also left VERBATIM, regardless of entity type. Same
+		// pass-through mechanism as DetectOnlyTypes but keyed on surface.
+		if len(cfg.AllowList) > 0 {
+			if cfg.AllowList[strings.ToLower(strings.TrimSpace(original))] {
+				continue
+			}
+		}
+
+		op := cfg.Operators[r.EntityType]
 		if op == nil {
-			op = cfg["*"]
+			op = cfg.Operators["*"]
 		}
 		if op == nil {
 			op = &operators.Replace{}
 		}
 
-		original := string(originalBytes[r.Start:r.End])
+		// Detect-but-don't-anonymize: a span whose operator is a DetectOnly
+		// (e.g. operators.Keep) is left VERBATIM. Same effect as DetectOnlyTypes,
+		// retained for callers that drive mark-only via a per-type Keep operator
+		// rather than the DetectOnlyTypes set.
+		if do, ok := op.(DetectOnly); ok && do.IsDetectOnly() {
+			continue
+		}
+
 		replacement, err := op.Anonymize(original, r.EntityType)
 		if err != nil {
 			return nil, fmt.Errorf("operator %s on %s: %w", op.Name(), r.EntityType, err)

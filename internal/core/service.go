@@ -216,7 +216,7 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (_ *Syn
 		Consistent:     req.Consistent,
 		DocumentScoped: req.DocScoped,
 	}
-	anonCfg := anonymizer.AnonymizerConfig{"*": syn}
+	anonCfg := anonymizer.AnonymizerConfig{Operators: anonymizer.OperatorMap{"*": syn}}
 	allFindings := make([]analyzer.RecognizerResult, 0, 8)
 
 	synText := func(input string) (string, error) {
@@ -355,7 +355,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 		// and produce "no token mapped for X" errors.
 		localFindings = anonymizer.MergeAdjacentSameType(localFindings, input)
 
-		cfg := anonymizer.AnonymizerConfig{}
+		cfg := anonymizer.AnonymizerConfig{Operators: anonymizer.OperatorMap{}}
 		entityOperators := map[string]*tokenOperator{}
 		for _, finding := range localFindings {
 			if finding.Start < 0 || finding.End < 0 || finding.Start > finding.End || finding.End > len(input) {
@@ -369,7 +369,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 			if entityOp == nil {
 				entityOp = &tokenOperator{byCleartext: map[string]string{}}
 				entityOperators[finding.EntityType] = entityOp
-				cfg[finding.EntityType] = entityOp
+				cfg.Operators[finding.EntityType] = entityOp
 			}
 
 			cacheKey := finding.EntityType + "\x00" + cleartext

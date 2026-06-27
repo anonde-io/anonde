@@ -237,7 +237,7 @@ func (p *pdfRedactorImpl) redactText(ctx context.Context, raw []byte, req Redact
 	if err != nil {
 		return nil, RedactStats{}, err
 	}
-	res, err := anonde.DefaultAnonymizerEngine().Anonymize(extracted, findings, anonymizer.AnonymizerConfig{"*": op})
+	res, err := anonde.DefaultAnonymizerEngine().Anonymize(extracted, findings, anonymizer.AnonymizerConfig{Operators: anonymizer.OperatorMap{"*": op}})
 	if err != nil {
 		return nil, RedactStats{}, fmt.Errorf("text mode: anonymize: %w", err)
 	}
