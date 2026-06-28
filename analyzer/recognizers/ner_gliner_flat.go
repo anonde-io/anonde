@@ -78,7 +78,7 @@ type GLiNERFlatRecognizer struct {
 	promptCharLength int
 
 	// promptIDs caches the tokenised prompt prefix (post strip-specials).
-	// See ner_gliner.go for the per-piece encode rationale (Lever 0).
+	// See ner_gliner.go for the per-piece encode rationale.
 	promptIDs []int
 }
 

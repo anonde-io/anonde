@@ -98,7 +98,7 @@ type BoltVault struct {
 // `Close()` and should defer it.
 //
 // File mode 0600: only the running user can read the vault; matters
-// when the host is shared (Fly machine, multi-tenant dev box).
+// when the host is shared (multi-tenant VM or dev box).
 func OpenDB(path string) (*bolt.DB, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{
 		Timeout: 2 * time.Second, // give up rather than hang on a stuck lock

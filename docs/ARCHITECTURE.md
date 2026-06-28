@@ -4,7 +4,7 @@
 
 ```
 ┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│  text   ├──▶│ 40+ regex /  ├──▶│  GLiNER NER  ├──▶│  anonymizer  │──▶ tokenised text + vault
+│  text   ├──▶│ 70 regex /   ├──▶│  GLiNER NER  ├──▶│  anonymizer  │──▶ tokenised text + vault
 │         │   │  checksum    │   │  (PII labels │   │  (6 ops)     │
 │         │   │  recognizers │   │  + DE clin.) │   │              │
 └─────────┘   └──────────────┘   └──────────────┘   └──────────────┘

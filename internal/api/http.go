@@ -42,7 +42,7 @@ const DefaultMaxRequestBytes int64 = 10 << 20 // 10 MiB
 //   - native gRPC (over HTTP/2):         same Connect URL, content-negotiated
 //     (Connect's handler also speaks the gRPC wire protocol)
 //
-// Plus a plain-HTTP /healthz for Fly's healthcheck. The gateway and the
+// Plus a plain-HTTP /healthz for the container scheduler's healthcheck. The gateway and the
 // Connect handler share the underlying Service, so behaviour is
 // identical across surfaces; only error mapping differs (gRPC codes
 // vs connect.Code) and that's handled in proto_logic.go's siblings.
@@ -331,7 +331,7 @@ func (r *statusRecorder) Flush() {
 //     working?" without instrumenting individual handlers.
 //   - request_end with status, duration, and bytes written on completion.
 //
-// /healthz is skipped because Fly (and any container scheduler) hits it on
+// /healthz is skipped because any container scheduler hits it on
 // a sub-minute cadence and would otherwise drown the audit log.
 func auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

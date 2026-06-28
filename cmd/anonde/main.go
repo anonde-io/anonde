@@ -415,7 +415,7 @@ func verifyNERBackendOrFail(engine *analyzer.AnalyzerEngine, backendName string)
 // first user request.
 //
 // The 5 minute timeout accommodates the worst-case cold disk read +
-// pure-Go ONNX session init on the smallest Fly machine. Tighten via
+// pure-Go ONNX session init on the smallest VM. Tighten via
 // ANONDE_WARMUP_TIMEOUT if you have a tighter SLA for boot latency.
 func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
 	timeout := durationFromEnv("ANONDE_WARMUP_TIMEOUT", 5*time.Minute)

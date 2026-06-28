@@ -7,8 +7,10 @@ against real signal rather than guesswork.
 
 Disable with `ANONDE_TELEMETRY=off` or `ANONDE_OFFLINE=1`.
 
-A random install ID is persisted at `$XDG_DATA_HOME/anonde/install_id`
-(fallback `~/.anonde/install_id`) and reused across restarts.
+A random install ID is persisted under anonde's data directory and
+reused across restarts: `$ANONDE_DATA_DIR/install_id` when that anchor
+is set, else `$XDG_DATA_HOME/anonde/install_id`, else
+`~/.local/share/anonde/install_id`.
 
 Fields sent:
 

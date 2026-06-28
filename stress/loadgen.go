@@ -106,9 +106,7 @@ func (a Attack) Run(t *testing.T) (*vegeta.Metrics, []string) {
 // with a JSON body. tenantID is required; idPrefix is optional and,
 // when non-empty, lets the server mint deterministic-per-test ids.
 //
-// content can be any string the analyzer should chew on; for the
-// PII-density tests, prefer the synthesized corpus in
-// fixtures.go (TODO).
+// content can be any string the analyzer should chew on.
 func TargetCreateAnonymization(baseURL, tenantID, idPrefix, contentFormat, content string) vegeta.Target {
 	body := map[string]any{
 		"tenant_id":      tenantID,
