@@ -16,6 +16,7 @@ canonical:
   - IBAN
   - ADDRESS
   - PROFESSION
+  - SECRET
 
 # Per-entity severity weights for the **severity-weighted leak rate**.
 # A leaked SSN is not equivalent to a leaked city name; compliance
@@ -44,6 +45,7 @@ severity:
   IBAN: 10
   ADDRESS: 5
   PROFESSION: 1
+  SECRET: 10        # live credential leak — account-takeover class
   OTHER: 0           # chemicals, drug mentions etc — not PHI
 
 # Gold-side label mapping. Covers GraSCCo (GeMTeX DeID layer) plus the
@@ -80,7 +82,11 @@ gold:
   # JSONL — when a secret recognizer lands, a future phase scores them
   # by changing this one line (e.g. `SECRET: ID` or adding SECRET to the
   # `canonical:` list above). See bench/corpora/synth_logs/README.md.
-  SECRET: ~
+  #
+  # SCORED as of the SecretRecognizer landing (analyzer/recognizers/secret.go):
+  # anonde now ships a high-precision, leak-safe secret recognizer, so these
+  # gold spans are scored against canonical SECRET.
+  SECRET: SECRET
 
   # GraSCCo PHI labels (GeMTeX DeID layer 'kind' values).
   NAME_PATIENT: PERSON
@@ -99,12 +105,9 @@ gold:
   LOCATION_STREET: ADDRESS
   LOCATION_ZIP: ADDRESS
   LOCATION_OTHER: LOCATION
-  LOCATION: LOCATION
 
-  DATE: DATE
   DATE_BIRTH: DATE
 
-  AGE: AGE
 
   CONTACT_PHONE: PHONE
   CONTACT_FAX: PHONE
@@ -112,7 +115,6 @@ gold:
   CONTACT_URL: URL
   CONTACT_IP: ID
 
-  ID: ID
   ID_SSN: ID
   ID_MRN: ID
   ID_INSURANCE: ID
@@ -121,7 +123,6 @@ gold:
   ID_BIOID: ID
   ID_IDNUM: ID
 
-  PROFESSION: PROFESSION
 
   # ai4privacy structured-PII gold. The ai4privacy_* loader
   # (bench/corpora/ai4privacy_en/cmd/fetch_pii_masking.py) emits
@@ -295,6 +296,7 @@ anonde:
   KR_RRN: ID
   MEDICAL_LICENSE: ID
   DE_STEUER_ID: ID
+  SECRET: SECRET
   DENY_LIST: ~
 
 # Microsoft Presidio entity labels (see runner_presidio.py output).

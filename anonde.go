@@ -23,6 +23,7 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewMACAddressRecognizer(),
 		recognizers.NewURLRecognizer(),
 		recognizers.NewCryptoRecognizer(),
+		recognizers.NewSecretRecognizer(),
 		recognizers.NewDateTimeRecognizer(),
 
 		// United States / English-language clinical
