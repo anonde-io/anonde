@@ -2,10 +2,9 @@
 #
 #   docker compose --profile patterns  up    # ~12 MB,    patterns only, text/JSON only
 #   docker compose --profile ner       up    # ~1.13 GB,  GLiNER base + PDF + metrics
-#   docker compose --profile ner-stack up    # ~2.65 GB,  GLiNER base+LARGE + PDF + metrics
 #
 # Profiles are mutually exclusive: only one runs per `docker compose up`.
-# All three publish the API on the host port set by ANONDE_PORT (default 8081).
+# Both publish the API on the host port set by ANONDE_PORT (default 8081).
 # The NER profiles additionally expose Prometheus on the host port set by
 # METRICS_PORT (default 9090) — scrape http://localhost:9090/metrics.
 #
@@ -55,27 +54,9 @@ services:
       - anonde-data-ner:/var/lib/anonde
     restart: unless-stopped
 
-  anonde-ner-stack:
-    profiles: ["ner-stack"]
-    build:
-      context: .
-      dockerfile: Dockerfile.anonde-ner-stack
-    image: anonde:ner-stack
-    ports:
-      - "${ANONDE_PORT:-8081}:8080"
-      - "${METRICS_PORT:-9090}:9090"
-    environment:
-      ANALYZER_BACKEND: gliner-stack
-      ANONDE_PDF_ENABLED: "1"
-      METRICS_BIND: "0.0.0.0:9090"
-    volumes:
-      - anonde-data-ner-stack:/var/lib/anonde
-    restart: unless-stopped
-
 volumes:
   # Per-profile named volumes so switching profiles doesn't cross-pollinate
   # state (the install_id especially — sharing it across variants would make
   # the dashboard report a single install switching backend repeatedly).
   anonde-data-patterns:
   anonde-data-ner:
-  anonde-data-ner-stack:

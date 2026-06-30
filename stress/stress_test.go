@@ -55,13 +55,11 @@ func TestStress_PIIDense(t *testing.T) {
 		// ANONDE_MAX_CONCURRENT_REQUESTS budget; the limiter has
 		// its own dedicated PoolSaturation test. On a no-GPU CI
 		// runner each NER request takes ~1-2s of inference, so 2 RPS
-		// = 2-4 avg concurrent (under cap=4); ner-stack runs two
-		// sessions per request at ~2-3s each, so 1 RPS = 2-3 avg
-		// concurrent (under cap=3). Patterns is essentially free.
+		// = 2-4 avg concurrent (under cap=4). Patterns is essentially free.
 		attack := Attack{
 			Name:     "pii_dense",
 			Targets:  []vegeta.Target{TargetCreateAnonymization(c.HTTPURL, "stress-dense", "", "text", body)},
-			Rate:     ratePerVariant(v, 20, 2, 1),
+			Rate:     ratePerVariant(v, 20, 2),
 			Duration: 20 * time.Second,
 			Timeout:  10 * time.Second,
 		}
@@ -71,9 +69,8 @@ func TestStress_PIIDense(t *testing.T) {
 		// Thresholds are guard rails, not optimisation targets.
 		// Variant-aware floor: patterns is cheap (99%), NER pays
 		// per-request inference cost so brief over-cap windows are
-		// expected on small CI runners (90%), ner-stack runs two
-		// ONNX sessions per request so burst windows are even more
-		// common (85%). "Server fell over" still fails loudly.
+		// expected on small CI runners (85%). "Server fell over"
+		// still fails loudly.
 		AssertOK(t, m, successFloor(v), perVariantP99(v))
 
 		// Cross-check: counters ticked. A handler that no-ops would
@@ -96,9 +93,6 @@ func TestStress_PoolSaturation(t *testing.T) {
 		// We expect a non-trivial slice of 429s (the limiter
 		// rejecting overflow) and zero 5xx / connection errors.
 		cap := 4
-		if v.Name == "ner-stack" {
-			cap = 3
-		}
 		rate := cap * 3 // pile on
 
 		attack := Attack{
@@ -252,7 +246,7 @@ func TestStress_MultiTenant(t *testing.T) {
 		blast := Attack{
 			Name:     "multi_tenant.blast",
 			Targets:  []vegeta.Target{TargetCreateAnonymization(c.HTTPURL, "tenant-a", "", "text", piiDenseDoc())},
-			Rate:     ratePerVariant(v, 25, 2, 1),
+			Rate:     ratePerVariant(v, 25, 2),
 			Duration: 20 * time.Second,
 			Timeout:  10 * time.Second,
 		}
@@ -300,30 +294,25 @@ func TestStress_MultiTenant(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 // ratePerVariant returns a load level the variant can plausibly sustain.
-// Patterns is cheap; NER is bounded by pool inference cost; NER-stack
-// runs two ONNX sessions per request.
-func ratePerVariant(v Variant, patternsRPS, nerRPS, nerStackRPS int) int {
+// Patterns is cheap; NER is bounded by pool inference cost.
+func ratePerVariant(v Variant, patternsRPS, nerRPS int) int {
 	switch v.Name {
 	case "patterns":
 		return patternsRPS
 	case "ner":
 		return nerRPS
-	case "ner-stack":
-		return nerStackRPS
 	}
 	return patternsRPS
 }
 
 // perVariantP99 is the latency-budget envelope. Patterns is fast;
-// NER pays inference cost; NER-stack runs two models.
+// NER pays inference cost.
 func perVariantP99(v Variant) time.Duration {
 	switch v.Name {
 	case "patterns":
 		return 500 * time.Millisecond
 	case "ner":
 		return 3 * time.Second
-	case "ner-stack":
-		return 5 * time.Second
 	}
 	return 2 * time.Second
 }
@@ -339,8 +328,6 @@ func successFloor(v Variant) float64 {
 		return 0.99
 	case "ner":
 		return 0.85
-	case "ner-stack":
-		return 0.80
 	}
 	return 0.90
 }

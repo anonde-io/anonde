@@ -22,11 +22,10 @@ type RecognizerResult struct {
 // package; if a new NER recognizer (or a pool wrapping one) ships,
 // add its Name() string here.
 var nerRecognizerNames = map[string]bool{
-	"GLiNERRecognizer":            true,
-	"GLiNERFlatNERRecognizer":     true,
-	"GLiNEREnsembleNERRecognizer": true,
-	"GLiNERPool":                  true,
-	"GLiNERFlatPool":              true,
+	"GLiNERRecognizer":        true,
+	"GLiNERFlatNERRecognizer": true,
+	"GLiNERPool":              true,
+	"GLiNERFlatPool":          true,
 }
 
 // nerPreferredEntities is the set of entity types where NER is more

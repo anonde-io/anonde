@@ -38,10 +38,6 @@ make docker-run-ner     # NER container on :8081, PDF endpoint + metrics on :909
 make smoke              # round-trips ingest, reveal, delete against :8081
 ```
 
-The lowest-leak tier (`Dockerfile.anonde-ner-stack`, base + LARGE GLiNER
-+ YOLOS sig, ~2.65 GB, ~2× inference latency) builds via
-`make docker-build-ner-stack`.
-
 ## 2. Text: anonymize / deanonymize
 
 Current API is Stripe-style: `/v1/anonymizations/{id}/{verb}`.

@@ -365,7 +365,7 @@ func buildSHA() string {
 
 // verifyNERBackendOrFail is the boot-time fail-closed guard for the
 // silent-fallback bug class: when an NER backend was explicitly selected
-// (ANALYZER_BACKEND=gliner|gliner-flat|gliner-stack) but the model
+// (ANALYZER_BACKEND=gliner|gliner-flat) but the model
 // can't load, we exit non-zero rather than serve patterns-only while reporting
 // backend=gliner and leaking PERSON/ORG/LOCATION with no error surfaced. No-op
 // for the patterns backend, so that path and per-request disable_ner are
@@ -603,35 +603,20 @@ func listenAddr() string {
 //     4-input BIO ONNX exports). Same build / CGO / libonnxruntime
 //     requirements as gliner (`-tags ner`). Same env knobs (GLINER_MODEL,
 //     GLINER_THRESHOLD, GLINER_MODELS_DIR, ORT_SO_PATH).
-//   - ANALYZER_BACKEND=gliner-stack; registers BOTH the span-decoder
-//     base recognizer AND a flat-decoder recognizer in the same engine
-//     so each doc is scored by both models and the conflict resolver
-//     unions their findings. Configured by the existing GLINER_* env
-//     vars (BASE slot) plus the ANONDE_GLINER_FLAT_* env vars (flat slot,
-//     defaults to knowledgator/gliner-pii-large-v1.0 / model.onnx).
-//     ~2x latency vs gliner alone; pairs with Dockerfile.anonde-ner-stack
-//     which bakes both ONNX exports at build time. This is the lowest-
-//     leak deployment shape (local bench Σ ALL ≈ 9.7% across 30 corpora
-//     vs ~12.9% for gliner alone).
 //
 // Presidio is no longer a runtime backend. To benchmark anonde against
 // Presidio, see bench/corpora/ai4privacy_en/.
 //
-// Pool sizing (gliner / gliner-flat / gliner-stack):
+// Pool sizing (gliner / gliner-flat):
 //
 //   - GLINER_POOL_SIZE; integer ≥ 2 builds an N-instance pool for the
-//     base GLiNER recognizer (span decoder for `gliner` / `gliner-stack`,
-//     flat decoder for `gliner-flat`). Unset / 0 / 1 → single recognizer
+//     GLiNER recognizer (span decoder for `gliner`, flat decoder for
+//     `gliner-flat`). Unset / 0 / 1 → single recognizer
 //     (current behaviour, no change).
-//   - ANONDE_GLINER_FLAT_POOL_SIZE; integer ≥ 2 builds an N-instance
-//     pool for the FLAT recognizer of `gliner-stack` only. Unset / 0 / 1
-//     → single flat recognizer alongside the base pool.
 //
 // Memory cost is the binding constraint: ~500 MB per BASE quint8
 // instance, ~1.4 GB per LARGE FP32 instance. Size pools against your
-// VM's RAM, not your CPU count. In a `gliner-stack` deployment the
-// LARGE flat pool should usually be smaller than the BASE pool; e.g.
-// GLINER_POOL_SIZE=4 + ANONDE_GLINER_FLAT_POOL_SIZE=2 peaks ~4.8 GB.
+// VM's RAM, not your CPU count.
 //
 // ONNX Runtime session tuning (all GLiNER backends):
 //
@@ -657,19 +642,6 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		modelName := getenvDefault("GLINER_MODEL", "onnx-community/gliner_multi_pii-v1")
 		onnxPath := glinerOnnxFileFromEnv(modelName)
 		threshold := glinerThresholdFromEnv()
-		// Multi-model GLiNER stacking: if ANONDE_NER_STACK is set,
-		// build an ensemble across the listed model IDs instead of the
-		// single-model path. Unset → fall through to current behaviour
-		// with no change. EnsembleFromEnv returns (nil, nil) on unset
-		// and (nil, error) on a malformed value (e.g. ",,,") so a typo
-		// fails fast at boot rather than silently disabling NER.
-		if ens, ensErr := recognizers.EnsembleFromEnv(threshold, os.Getenv("ORT_SO_PATH"), glinerSpanFilterFromEnv()); ensErr != nil {
-			log.Fatalf("ANONDE_NER_STACK: %v", ensErr)
-		} else if ens != nil {
-			log.Printf("analyzer backend: gliner-ensemble (threshold=%.2f); single-model GLINER_MODEL=%s ignored",
-				threshold, modelName)
-			return anonde.DefaultAnalyzerEngineWithGLiNEREnsemble(ens), "gliner-ensemble", os.Getenv("ANONDE_NER_STACK")
-		}
 		labels, labelToEntity := glinerLabelSetFromEnv()
 		cfg := recognizers.GLiNERConfig{
 			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
@@ -726,91 +698,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 		}
 		log.Printf("analyzer backend: gliner-flat (model=%s, onnx=%s, threshold=%.2f)", modelName, onnxPath, threshold)
 		return anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg), "gliner-flat", modelName
-	case "gliner-stack":
-		// Span-decoder BASE + flat-decoder FLAT in one engine. The local
-		// 30-corpus bench measured Σ ALL ≈ 9.7% with this shape (vs
-		// ~12.9% for `gliner` alone). Two ONNX sessions resident; ~2x
-		// the per-request inference latency. Pair with
-		// Dockerfile.anonde-ner-stack which bakes both ONNX exports.
-		baseModel := getenvDefault("GLINER_MODEL", "knowledgator/gliner-pii-base-v1.0")
-		baseOnnx := glinerOnnxFileFromEnv(baseModel)
-		baseThreshold := glinerThresholdFromEnv()
-		flatModel := getenvDefault("ANONDE_GLINER_FLAT_MODEL", "knowledgator/gliner-pii-large-v1.0")
-		// LARGE export ships model.onnx at the repo root, not under onnx/.
-		// ANONDE_GLINER_FLAT_ONNX_FILE overrides for other flat exports.
-		flatOnnx := getenvDefault("ANONDE_GLINER_FLAT_ONNX_FILE", "model.onnx")
-		flatThreshold := baseThreshold
-		if raw := strings.TrimSpace(os.Getenv("ANONDE_GLINER_FLAT_THRESHOLD")); raw != "" {
-			if v, err := strconv.ParseFloat(raw, 64); err == nil {
-				flatThreshold = v
-			} else {
-				log.Printf("ANONDE_GLINER_FLAT_THRESHOLD=%q ignored: %v", raw, err)
-			}
-		}
-		basePoolSize := glinerPoolSizeFromEnv("GLINER_POOL_SIZE")
-		flatPoolSize := glinerPoolSizeFromEnv("ANONDE_GLINER_FLAT_POOL_SIZE")
-		log.Printf("analyzer backend: gliner-stack (base=%s onnx=%s thr=%.2f base_pool=%d) + flat (model=%s onnx=%s thr=%.2f flat_pool=%d)",
-			baseModel, baseOnnx, baseThreshold, basePoolSize,
-			flatModel, flatOnnx, flatThreshold, flatPoolSize)
-		labels, labelToEntity := glinerLabelSetFromEnv()
-		stackSpanFilter := glinerSpanFilterFromEnv()
-		stackClassThresholds := glinerClassThresholdsFromEnv()
-		baseCfg := recognizers.GLiNERConfig{
-			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
-			ModelName:         baseModel,
-			OnnxFilePath:      baseOnnx,
-			AutoDownload:      true,
-			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
-			Threshold:         baseThreshold,
-			ClassThresholds:   stackClassThresholds,
-			SpanFilter:        stackSpanFilter,
-			Labels:            labels,
-			LabelToEntity:     labelToEntity,
-		}
-		flatCfg := recognizers.GLiNERConfig{
-			ModelsDir:         os.Getenv("GLINER_MODELS_DIR"),
-			ModelName:         flatModel,
-			OnnxFilePath:      flatOnnx,
-			AutoDownload:      true,
-			SharedLibraryPath: os.Getenv("ORT_SO_PATH"),
-			Threshold:         flatThreshold,
-			ClassThresholds:   stackClassThresholds,
-			SpanFilter:        stackSpanFilter,
-			Labels:            labels,
-			LabelToEntity:     labelToEntity,
-		}
-		// Build the base slot: pool when sized, single recognizer
-		// otherwise. The two helpers register the chosen NER in the same
-		// pattern-recognizer registry shape, so the engine downstream is
-		// indistinguishable from the single-recognizer path.
-		var engine *analyzer.AnalyzerEngine
-		if basePoolSize >= 2 {
-			basePool, err := recognizers.NewGLiNERPool(baseCfg, basePoolSize)
-			if err != nil {
-				log.Fatalf("gliner-stack base pool init (size=%d): %v", basePoolSize, err)
-			}
-			engine = anonde.DefaultAnalyzerEngineWithGLiNERPool(basePool)
-		} else {
-			engine = anonde.DefaultAnalyzerEngineWithGLiNERConfig(baseCfg)
-		}
-		// Register the flat slot alongside the base. Same registry
-		// dispatches to both per doc; analyzer.RemoveConflicts merges
-		// overlaps via the NER-preferred rule for PERSON/ORG/LOC/AGE/
-		// PROFESSION/NRP. LARGE FP32 is ~1.4 GB per instance, so the
-		// flat pool defaults to a single recognizer when
-		// ANONDE_GLINER_FLAT_POOL_SIZE is unset.
-		if flatPoolSize >= 2 {
-			flatPool, err := recognizers.NewGLiNERFlatPool(flatCfg, flatPoolSize)
-			if err != nil {
-				log.Fatalf("gliner-stack flat pool init (size=%d): %v", flatPoolSize, err)
-			}
-			engine.Registry.Add(flatPool)
-		} else {
-			engine.Registry.Add(recognizers.NewGLiNERFlatRecognizer(flatCfg))
-		}
-		return engine, "gliner-stack", baseModel + "+" + flatModel
 	default:
-		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, gliner, gliner-flat, gliner-stack)", backend)
+		log.Fatalf("unsupported ANALYZER_BACKEND=%q (valid: patterns, gliner, gliner-flat)", backend)
 		return nil, "", ""
 	}
 }
@@ -820,9 +709,8 @@ func analyzerFromEnv() (*analyzer.AnalyzerEngine, string, string) {
 // or ≤ 0. A malformed value is logged but does NOT log.Fatalf,
 // matching the GLINER_THRESHOLD precedent so a typo doesn't keep the
 // server from booting; the operator gets the warning in startup logs
-// and falls through to single-recognizer behaviour. Used by both
-// GLINER_POOL_SIZE (BASE slot) and ANONDE_GLINER_FLAT_POOL_SIZE
-// (FLAT slot of gliner-stack).
+// and falls through to single-recognizer behaviour. Used by
+// GLINER_POOL_SIZE for the gliner / gliner-flat backends.
 func glinerPoolSizeFromEnv(key string) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {

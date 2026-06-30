@@ -30,7 +30,7 @@ then keeps the detailed grids below it as reference:
     This is the table a human reads to answer "does anonde beat
     presidio overall?" in five seconds. Per-(domain × language) detail
     moves into the Detailed breakdown below.
-  * Engine profiles (tier framing for anonde-patterns / anonde-ner / anonde-ner-stack)
+  * Engine profiles (tier framing for anonde-patterns / anonde-ner)
   * Domain × language coverage map (which cells exist)
   * "# Detailed breakdown" — leads with the dense per-(domain × language)
     leak-rate grid (the rows demoted off the scorecard), then per
@@ -611,26 +611,20 @@ def _strict_f1_grid(out: list[str], rows: dict, corpora: list[str],
 # win/verdict logic stays keyed on this one engine: `anonde-ner` is
 # what `docker pull ghcr.io/anonde-io/anonde-ner` runs by default, so
 # "does anonde beat the field?" is answered for the default build.
-# `anonde-ner-stack` is the premium variant (separate image,
-# `anonde-ner-stack`); it sits alongside as a tracked column but does
-# not flip the default's verdict.
 SCORECARD_ANCHOR = "anonde-ner"
 
-# Anonde engine columns pinned to the FRONT of the scorecard, in this
-# order, so the two NER variants render side by side: default NER
-# first (the verdict anchor), then the stack (premium tier). Engines
-# here that are absent from a given run are skipped silently.
-SCORECARD_FRONT = ["anonde-ner", "anonde-ner-stack"]
+# Anonde engine columns pinned to the FRONT of the scorecard so the NER
+# image renders ahead of the rival columns. Engines here that are absent
+# from a given run are skipped silently.
+SCORECARD_FRONT = ["anonde-ner"]
 
 
 def _is_rival(engine: str) -> bool:
     """True for engines that count as a *baseline* in the anonde verdict.
 
     The verdict answers "does the default NER image beat the competing
-    field?" — so every `anonde-*` engine is excluded. In particular
-    `anonde-ner-stack` is the same GLiNER PII family as the anchor,
-    just stacked with the LARGE model on top: it is a tracked
-    premium-tier column, not a competitor, and must not flip a ✅ to ❌.
+    field?" — so every `anonde-*` engine is excluded and only non-anonde
+    rivals can flip a ✅ to ❌.
     """
     return not engine.startswith("anonde")
 
@@ -792,9 +786,8 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
     and per-language corpus lists for the pooled rates.
     """
     anchor = SCORECARD_ANCHOR
-    # Column order: the anonde engine columns first, pinned in
-    # SCORECARD_FRONT order so the two NER variants render adjacent
-    # (default NER → stack). The anchor is the default NER image —
+    # Column order: the anonde engine column first, pinned in
+    # SCORECARD_FRONT order. The anchor is the default NER image —
     # every row's verdict is judged against it. The remaining engines
     # follow in the order they were requested.
     front = [e for e in SCORECARD_FRONT if e in engines]
@@ -825,22 +818,15 @@ def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
         f"of gold PHI spans missed — lower is better). `{anchor}` is the "
         "default NER image (`ghcr.io/anonde-io/anonde-ner`) and the "
         "anchor column; **Verdict** says whether it beats the field. "
-        "`anonde-ner-stack` is the premium variant — same default model "
-        "with the LARGE GLiNER PII flat-decoder stacked on top — shipped "
-        "as a separate image (`ghcr.io/anonde-io/anonde-ner-stack`) for "
-        "the deployments that can spare the extra RAM. It sits beside "
-        "the anchor so the trade-off is visible at a glance, but the "
-        "verdict is keyed on the default image. 🥇 marks the lowest-leak "
-        "engine in the row. Roll-up rows pool leaked-over-gold across "
-        "the group (doc-weighted, so larger corpora count more).\n")
+        "🥇 marks the lowest-leak engine in the row. Roll-up rows pool "
+        "leaked-over-gold across the group (doc-weighted, so larger "
+        "corpora count more).\n")
 
     # ---- header --------------------------------------------------------
     header = "| Slice | Scope |"
     for e in col_engines:
         if e == anchor:
             tag = " ⬅︎ anonde (default NER)"
-        elif e == "anonde-ner-stack":
-            tag = " · anonde (NER stack, premium)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -947,8 +933,7 @@ def _precision_scorecard(out: list[str], rows: dict, groups: list,
     the inverse of the leak scorecard, where lowest leak wins.
 
     This table answers the over-redaction question: "does engine X
-    over-redact more than engine Y?" — input to the anonde-ner vs
-    anonde-ner-stack default decision. There is no win/verdict tally here;
+    over-redact more than engine Y?". There is no win/verdict tally here;
     the verdict stays keyed on leak in the leak scorecard. Each cell also
     annotates the pooled raw FP count, because precision can read fine while
     absolute over-redaction volume is high.
@@ -986,8 +971,8 @@ def _precision_scorecard(out: list[str], rows: dict, groups: list,
         "miss real PII?\"); this one answers the inverse cost — "
         "over-redaction. Same structure as the leak "
         "scorecard: roll-up rows only (per domain · per language · "
-        f"overall), `{anchor}` anchored first, `anonde-ner-stack` beside "
-        "it when present. 🥇 marks the highest-precision engine in the "
+        f"overall), `{anchor}` anchored first. 🥇 marks the "
+        "highest-precision engine in the "
         "row. Each cell pools tp/(tp+fp) across the group (micro-average, "
         "doc-weighted) and annotates the pooled raw FP count — precision "
         "can look fine while absolute false-positive volume is high.\n")
@@ -997,8 +982,6 @@ def _precision_scorecard(out: list[str], rows: dict, groups: list,
     for e in col_engines:
         if e == anchor:
             tag = " ⬅︎ anonde (default NER)"
-        elif e == "anonde-ner-stack":
-            tag = " · anonde (NER stack, premium)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -1047,13 +1030,9 @@ def _precision_scorecard(out: list[str], rows: dict, groups: list,
     out.append(
         "> **Reading this table** — a cell of `92.0% (40 fp)` means 92% of "
         "the spans that engine redacted overlapped real PII; the remaining "
-        "8% (40 absolute spans) were over-redaction. For the "
-        "`anonde-ner` vs `anonde-ner-stack` default decision, compare "
-        "their two columns on **Σ ALL** and on the domain/language slices "
-        "you care about: the stack should only become the default if it "
-        "does not materially raise the false-positive rate over the base. "
-        "Recall (leak rate) is in the scorecard above; this is the other "
-        "half of the trade-off.\n")
+        "8% (40 absolute spans) were over-redaction. Recall (leak rate) is "
+        "in the scorecard above; this is the other half of the "
+        "trade-off.\n")
 
 
 def _precision_detail_grid(out: list[str], rows: dict, groups: list,
@@ -1085,8 +1064,6 @@ def _precision_detail_grid(out: list[str], rows: dict, groups: list,
     for e in col_engines:
         if e == anchor:
             tag = " ⬅︎ anonde (default NER)"
-        elif e == "anonde-ner-stack":
-            tag = " · anonde (NER stack, premium)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -1142,8 +1119,6 @@ def _per_cell_leak_grid(out: list[str], rows: dict, groups: list,
     for e in col_engines:
         if e == anchor:
             tag = " ⬅︎ anonde (default NER)"
-        elif e == "anonde-ner-stack":
-            tag = " · anonde (NER stack, premium)"
         else:
             tag = ""
         header += f" `{e}`{tag} |"
@@ -1279,11 +1254,9 @@ def _render(rows, label_map, corpora, engines, meta=None):
         engine_leaks.sort(key=lambda x: x[1])
         winner = engine_leaks[0]
         # gliner_row = the default NER image (the scorecard anchor);
-        # best_baseline = the best NON-anonde engine. `anonde-ner-stack`
-        # is a tracked premium-tier column, not a competing baseline,
-        # so `_is_rival` excludes it here exactly as in the scorecard
-        # verdict. (The card would otherwise quote it as "the best
-        # baseline", which is misleading.)
+        # best_baseline = the best NON-anonde engine. `_is_rival`
+        # excludes every anonde-* engine here exactly as in the
+        # scorecard verdict.
         gliner_row = next((x for x in engine_leaks
                            if x[0] == SCORECARD_ANCHOR), None)
         baseline_row = next((x for x in engine_leaks if _is_rival(x[0])), None)
@@ -1299,9 +1272,8 @@ def _render(rows, label_map, corpora, engines, meta=None):
     scorable = [v for v in per_corpus_verdict if v["scorable"]]
     # A "win" = the default NER image (`anonde-ner`) leaks no more than
     # every NON-anonde baseline on that corpus. Counted against rivals
-    # only — `anonde-ner-stack` is the same GLiNER PII family, so it
-    # never costs the default a win (mirrors the scorecard verdict's
-    # `_is_rival` rule).
+    # only — every anonde-* engine is excluded (mirrors the scorecard
+    # verdict's `_is_rival` rule).
     gliner_wins = 0
     for v in scorable:
         if v["gliner"] is None:
@@ -1327,10 +1299,7 @@ def _render(rows, label_map, corpora, engines, meta=None):
             f"`ghcr.io/anonde-io/anonde-ner`) is the lowest-leak engine on "
             f"**{gliner_wins} of {n_scorable}** gold-annotated corpora. Biggest absolute "
             f"improvement over the best baseline: **{biggest_pp * 100:+.1f}pp** in leak "
-            f"rate. `anonde-ner-stack` is the premium variant — same model with the "
-            f"LARGE GLiNER PII flat-decoder stacked on top — shipped as a separate "
-            f"image (`ghcr.io/anonde-io/anonde-ner-stack`) for deployments that can "
-            f"spare the extra RAM. It is not counted as a competitor in the verdict. "
+            f"rate. "
             f"Strict F1 trades exact-byte alignment for catching more PHI — the right "
             f"trade-off for a redactor, not a benchmark gaming exercise. "
             f"The inverse cost — over-redaction / false positives — now has its own "
@@ -1357,15 +1326,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # above is recall; this is precision (over-redaction). Same roll-up
     # structure, partial-view precision, winner = highest precision. The
     # verdict logic stays keyed on leak — this table is read, not scored
-    # against. Load-bearing for the anonde-ner vs anonde-ner-stack
-    # default decision.
+    # against.
     _precision_scorecard(out, rows, groups, engines, _domain_name, _language_name)
 
     # ---- Engine profiles --------------------------------------------
-    # The three anonde columns map 1:1 to the three shipping Docker
-    # images — `anonde`, `anonde-ner`, `anonde-ner-stack`. They are not
-    # three competing tools; they are three deployment tiers a self-
-    # hoster picks by image size + leak-rate budget. Wrapped in a
+    # The two anonde columns map 1:1 to the two shipping Docker
+    # images — `anonde`, `anonde-ner`. They are not competing tools;
+    # they are deployment tiers a self-hoster picks by image size +
+    # leak-rate budget. Wrapped in a
     # collapsed <details> block because the table is static between
     # runs — a reader who wants the tier framing can expand it, the
     # default view leads with the live numbers.
@@ -1386,11 +1354,6 @@ def _render(rows, label_map, corpora, engines, meta=None):
                "required | 5-30 s warmup | **default NER tier**. GLiNER PII "
                "(FP32 ONNX) + patterns. Natural text + multilingual PHI; the "
                "lowest-leak engine on most gold corpora. |")
-    out.append("| `anonde-ner-stack` | `ghcr.io/anonde-io/anonde-ner-stack` "
-               "(~2.1 GB) | required | 10-60 s warmup | **premium NER tier**. "
-               "Default NER + the LARGE GLiNER PII flat-decoder stacked on "
-               "top. Best leak rate on the Romance-language cells where the "
-               "default still leaks; pick when you can spare the RAM. |")
     out.append("| `presidio` | Microsoft Presidio (spaCy NER + regex) "
                "~1 GB | not required | 3-10 s | well-formed English "
                "(strong on EN newswire-shaped text where spaCy was trained) |")
@@ -1572,9 +1535,6 @@ def _render(rows, label_map, corpora, engines, meta=None):
     out.append("| `anonde-ner` | self-host (~2 GB RAM VM) | "
                "~**$0.001** | GLiNER PII baked into image. ~2 GB RAM is enough; "
                "CPU-only, runs on any commodity cloud VM. |")
-    out.append("| `anonde-ner-stack` | self-host (~4 GB RAM VM) | "
-               "~**$0.002** | Default NER + LARGE flat-decoder. Pick when "
-               "the extra ~3pp on Romance-language cells is worth ~2× RAM. |")
     out.append("| `presidio` | self-host (open-source) | **$0** marginal | "
                "Microsoft Presidio. spaCy backend, English-focused. |")
     out.append("| `gliner-py` | self-host (open-source) | **$0** marginal | "

@@ -7,8 +7,8 @@ version: 2
 # transitive dep change. Patch + minor bumps auto-PR; major bumps land
 # separately because they tend to require code changes.
 #
-# Docker images (Dockerfile.anonde, Dockerfile.anonde-ner,
-# Dockerfile.anonde-ner-stack) are intentionally NOT polled: the base
+# Docker images (Dockerfile.anonde, Dockerfile.anonde-ner) are
+# intentionally NOT polled: the base
 # images are gcr.io/distroless/* pinned for ABI compatibility with the
 # bundled libonnxruntime, and an automatic bump there would silently
 # break the CGO path. Treat those as manual updates.

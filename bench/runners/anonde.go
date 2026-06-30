@@ -80,10 +80,6 @@ func main() {
 		disableNER = flag.Bool("disable-ner", false, "force DisableNER=true regardless of backend")
 		foldParity = flag.Bool("fold-parity-labels", false, "fold STREET_ADDRESS + POSTAL_CODE to LOCATION (ai4privacy gold schema)")
 
-		flatGLiNERModel = flag.String("flat-gliner-model", "", "additional flat-decoder GLiNER model id (e.g. knowledgator/gliner-pii-large-v1.0); registered alongside the base")
-		flatGLiNEROnnx  = flag.String("flat-gliner-onnx", "", "ONNX file path inside the flat-GLiNER repo (e.g. model.onnx)")
-		flatGLiNERThr   = flag.Float64("flat-gliner-threshold", 0, "flat-GLiNER threshold (0 = recognizer default)")
-
 		// labelSet picks the GLiNER label set for every NER config this run:
 		// chat|clinical|finance|legal. Default is chat; each per-corpus
 		// Makefile pins its own domain (LABEL_SET ?= ...) so measurement is
@@ -151,9 +147,7 @@ func main() {
 		// slot is GLiNERFlatRecognizer. Kept as an opt-in backend for
 		// ad-hoc runs against flat-decoder GLiNER variants
 		// (knowledgator/gliner-pii-large-v1.0 ships a flat decoder; the
-		// span-decoder recognizer used by `gliner` cannot load it). Not
-		// referenced by the in-matrix engines today — `anonde-ner-stack`
-		// uses backend=gliner with --flat-gliner-* flags instead.
+		// span-decoder recognizer used by `gliner` cannot load it).
 		engine = anonde.DefaultAnalyzerEngineWithGLiNERFlatConfig(recognizers.GLiNERConfig{
 			ModelsDir:         *modelsDir,
 			ModelName:         *modelName,
@@ -203,31 +197,6 @@ func main() {
 		}
 		vcancel()
 		log.Printf("NER backend verified for %q", engineLabel)
-	}
-
-	// Optional second-stage GLiNER (token / flat decoder, e.g. LARGE).
-	// Registers alongside the existing recognizers so both inferences
-	// run per doc; the analyzer's RemoveConflicts merges overlaps. Only
-	// wired for the `gliner` backend — patterns-only ignores it.
-	if *backend == "gliner" && strings.TrimSpace(*flatGLiNERModel) != "" {
-		flatRec := recognizers.NewGLiNERFlatRecognizer(recognizers.GLiNERConfig{
-			ModelsDir:         *modelsDir,
-			ModelName:         *flatGLiNERModel,
-			OnnxFilePath:      *flatGLiNEROnnx,
-			AutoDownload:      *autoDL,
-			Threshold:         *flatGLiNERThr,
-			SharedLibraryPath: *ortLibPath,
-			SpanFilter:        nerSpanFilter,
-			ClassThresholds:   nerClassThresholds,
-			// Same resolved set as the base slot, so the ner-stack flat slot
-			// matches the base + the sidecar.
-			Labels:        nerLabels,
-			LabelToEntity: nerLabelToEntity,
-		})
-		engine.Registry.Add(flatRec)
-		engineLabel += "+flat[" + *flatGLiNERModel + "]"
-		log.Printf("flat-gliner: registered alongside base (model=%s onnx=%q threshold=%.2f)",
-			*flatGLiNERModel, *flatGLiNEROnnx, *flatGLiNERThr)
 	}
 
 	in, err := os.Open(*inPath)

@@ -49,7 +49,7 @@ Observed response / log output:
 | Build variant | patterns-only / `-tags ner` / Docker image tag |
 | OS + arch | e.g. macOS 14.5 arm64, Ubuntu 22.04 amd64 |
 | Go version (if building from source) | `go version` output |
-| Analyzer backend | `ANALYZER_BACKEND` value (patterns / gliner / gliner-flat / gliner-stack) |
+| Analyzer backend | `ANALYZER_BACKEND` value (patterns / gliner / gliner-flat) |
 | Language sent | `de`, `en`, multilingual, … |
 
 ## Additional context
