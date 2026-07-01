@@ -1,15 +1,15 @@
 # Recognizers
 
-anonde ships **70 pattern recognizers** plus pluggable **NER backends**. Pattern recognizers handle structured PII (IDs, phone numbers, emails, IBANs); NER catches unstructured PII (people, organisations, locations, ages, professions).
+anonde ships **73 pattern recognizers** plus pluggable **NER backends**. Pattern recognizers handle structured PII (IDs, phone numbers, emails, IBANs); NER catches unstructured PII (people, organisations, locations, ages, professions).
 
-## Pattern recognizers (70)
+## Pattern recognizers (73)
 
 Score is each pattern's confidence band; recognizers that validate via checksums score higher than pure-regex ones.
 
 | Region | Recognizers |
 |---|---|
 | Generic / international | `EmailRecognizer` · `PhoneRecognizer` · `CreditCardRecognizer` (Luhn) · `IBANRecognizer` (MOD-97) · `IPAddressRecognizer` · `MACAddressRecognizer` · `URLRecognizer` · `CryptoRecognizer` (Bitcoin/Ethereum) · `DateTimeRecognizer` |
-| English / US | `USSocialSecurityRecognizer` · `USPassportRecognizer` · `USBankRecognizer` · `USDriverLicenseRecognizer` · `USITINRecognizer` · `MedicalLicenseRecognizer` · `ENAnomalyRecognizer` (clinical-context PERSON) · `ENOrganizationRecognizer` |
+| English / US | `USSocialSecurityRecognizer` · `USPassportRecognizer` · `USBankRecognizer` · `USDriverLicenseRecognizer` · `USITINRecognizer` · `MedicalLicenseRecognizer` · `USNPIRecognizer` (NPI, Luhn + context-gated) · `USDEARecognizer` (DEA, checksum) · `USMBIRecognizer` (Medicare MBI) · `ENAnomalyRecognizer` (clinical-context PERSON) · `ENOrganizationRecognizer` |
 | United Kingdom | `UKNHSRecognizer` · `UKNINORecognizer` |
 | Italy | `ITFiscalCodeRecognizer` · `ITDriverLicenseRecognizer` · `ITVATCodeRecognizer` · `ITPassportRecognizer` · `ITIdentityCardRecognizer` |
 | Spain | `ESNIFRecognizer` · `ESNIERecognizer` |

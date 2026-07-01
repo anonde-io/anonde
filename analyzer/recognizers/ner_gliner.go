@@ -697,8 +697,8 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 		}
 	}
 
-	// Per-call summary at INFO. One line per /v1/ingest is a fine
-	// volume; fly logs already get healthcheck spam at 6/min, and this
+	// Per-call summary at INFO. One line per request is a fine
+	// volume; the runtime's logs already get healthcheck spam at 6/min, and this
 	// is the diagnostic that tells operators whether GLiNER is the cause
 	// of any "PII missed" complaints. Toggle with GLINER_QUIET=1 if it
 	// gets noisy under bulk traffic.

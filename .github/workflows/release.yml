@@ -1,14 +1,13 @@
 name: release
 
-# Tagged-release publisher for the three image variants:
+# Tagged-release publisher for the two image variants:
 #
 #   - ghcr.io/anonde-io/anonde            (patterns-only, ~12 MB)
 #   - ghcr.io/anonde-io/anonde-ner        (BASE GLiNER, CGO, ~770 MB)
-#   - ghcr.io/anonde-io/anonde-ner-stack  (BASE + LARGE GLiNER, ~2.1 GB)
 #
 # Sibling of docker-build.yml — same Dockerfiles, same multi-arch
 # strategy (buildx + QEMU for arm64), same GitHub-hosted runners
-# (ubuntu-latest for patterns and the two NER variants). The
+# (ubuntu-latest for patterns and the NER variant). The
 # only differences are: push: true, registry login, and the
 # docker/metadata-action tag policy.
 #
@@ -162,61 +161,6 @@ jobs:
           cache-from: type=gha,scope=anonde-ner
           cache-to: type=gha,scope=anonde-ner,mode=max
 
-  # ---- BASE + LARGE stack image: multi-arch, biggest build ----------
-  anonde-ner-stack:
-    name: publish anonde-ner-stack (amd64 + arm64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Free disk space
-        run: |
-          set -euo pipefail
-          df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
-          df -h /
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to ghcr.io
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive tags
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/anonde-ner-stack
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-,format=short
-          flavor: |
-            latest=auto
-
-      - name: Build and push linux/amd64 + linux/arm64
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: Dockerfile.anonde-ner-stack
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=anonde-ner-stack
-          cache-to: type=gha,scope=anonde-ner-stack,mode=max
-
   # ---- GitHub Release draft ----------------------------------------
   # Drafts a Release from the tag so the maintainer reviews + publishes.
   # Auto-generated notes (commit log since the previous tag) seed it;
@@ -225,7 +169,7 @@ jobs:
   github-release:
     name: draft GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [anonde, anonde-ner, anonde-ner-stack]
+    needs: [anonde, anonde-ner]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

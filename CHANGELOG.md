@@ -22,14 +22,25 @@ each such change is called out under a **Changed** or **Removed** heading.
   gRPC transports for create/anonymize, synthesize, and PDF redaction.
 - **The NER build tag `hugot` is renamed to `ner`.** Self-hosters who
   build the NER variant from source now use `go build -tags ner ./...`
-  (was `-tags hugot`); the published `anonde-ner` / `anonde-ner-stack`
-  images are unaffected. The old name was misleading once the hugot
+  (was `-tags hugot`); the published `anonde-ner` image is unaffected.
+  The old name was misleading once the hugot
   transformer backend was removed (see below) — the tag only ever gated
   GLiNER. The `anonde_build_info` metric label for NER builds is now
   `ner` (was `hugot`).
 
 ### Removed
 
+- **`anonde-ner-stack` image and the `gliner-stack` backend.** The NER
+  lineup consolidates to a single NER image: `anonde-ner` (base GLiNER,
+  ~770 MB) alongside the patterns-only `anonde` (~12 MB). The premium
+  BASE+LARGE stack image (~2.1 GB) and its bundled
+  `ANALYZER_BACKEND=gliner-stack` ensemble are no longer built, pushed,
+  or documented. The LARGE GLiNER model itself stays reachable via
+  `ANALYZER_BACKEND=gliner-flat` for self-hosters who want it, so no
+  detection capability is lost — only the prebuilt two-model image and
+  its ensemble wiring. `Dockerfile.anonde-ner-stack`, the
+  `make docker-build-ner-stack` target, the `ner-stack` compose profile,
+  and the stack jobs in the release / build CI are all removed.
 - **hugot / XLM-R transformer NER backend** (`ANALYZER_BACKEND=hugot`
   and the `HUGOT_MODEL` / `HUGOT_MODELS_DIR` env vars). GLiNER strictly
   outperformed it on every benched corpus and was the production default;

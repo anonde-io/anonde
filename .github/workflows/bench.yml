@@ -176,8 +176,8 @@ jobs:
       # auto-downloads on first use and the analyzer SWALLOWS a failed
       # download into a silent patterns-only fallback; prefetching here
       # makes that a loud, early failure and repairs a partial cache.
-      # This per-push bench only exercises the BASE model (no ner-stack),
-      # so only one export is prefetched. Tool: bench/tools/prefetch.
+      # This per-push bench exercises the BASE model, so only one export
+      # is prefetched. Tool: bench/tools/prefetch.
       - name: Prefetch GLiNER model (fail if absent/partial)
         run: |
           set -euo pipefail

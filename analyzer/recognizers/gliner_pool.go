@@ -23,7 +23,7 @@
 // ----
 // Each instance holds the ONNX session resident, ~500 MB for the
 // default knowledgator/gliner-pii-base-v1.0 quint8 build. N=4 peaks
-// around 2 GB of RSS; it fits on a `shared-cpu-1x:4096MB` Fly machine
+// around 2 GB of RSS; it fits on a small shared-CPU VM with ~4 GB RAM
 // with room for the Go heap, but anything smaller will OOM. Size the
 // pool against your VM's memory budget, not your CPU count.
 //
@@ -51,8 +51,8 @@
 // Integration
 // -----------
 // This file is opt-in only. It is NOT wired into `analyzer.go` or the
-// platform service. Use it when fly logs show concurrent /v1/ingest
-// queueing visible as wall-clock latency on `r.mu` and you have memory
+// service by default. Use it when the runtime's logs show concurrent
+// request queueing visible as wall-clock latency on `r.mu` and you have memory
 // headroom for N sessions. For typical low-QPS deploys a bare
 // `GLiNERRecognizer` is the right answer.
 

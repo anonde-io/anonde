@@ -54,7 +54,6 @@ The matrix scores these cells:
 |---|---|:---:|:---:|
 | `anonde-patterns` | patterns-only floor (maps to `ghcr.io/anonde-io/anonde`) | ✓ | ✓ |
 | **`anonde-ner`** | **default NER image: patterns + GLiNER (`knowledgator/gliner-pii-base-v1.0`, FP32, threshold 0.40). Maps to `ghcr.io/anonde-io/anonde-ner`.** | ✓ | ✓ |
-| `anonde-ner-stack` | premium NER image: default + the LARGE GLiNER PII flat-decoder stacked on top. Maps to `ghcr.io/anonde-io/anonde-ner-stack`. | ✓ | ✓ |
 | `presidio` | Microsoft Presidio (external baseline competitor) | – | ✓ |
 | `gliner-py` | Python sidecar GLiNER (parity check on the Go-native build) | ✓ | ✓ |
 
@@ -68,7 +67,7 @@ load → predict → score loop using the unified runner:
 
 ```sh
 make -C bench/corpora/openmed all ANONDE_BACKEND=patterns-only   # fastest
-make -C bench/corpora/openmed all ANONDE_BACKEND=gliner          # production stack
+make -C bench/corpora/openmed all ANONDE_BACKEND=gliner          # production NER
 make -C bench/corpora/openmed all ANONDE_BACKEND=gliner-flat   # flat-decoder GLiNER
 ```
 

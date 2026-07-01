@@ -36,17 +36,6 @@ func DefaultAnalyzerEngineWithGLiNERFlatConfig(_ recognizers.GLiNERConfig) *anal
 	return nil
 }
 
-// DefaultAnalyzerEngineWithGLiNEREnsemble is the fail-fast stub for the
-// GLiNER ensemble recognizer. Same rationale as
-// DefaultAnalyzerEngineWithGLiNERConfig; the real implementation needs
-// `-tags ner`.
-func DefaultAnalyzerEngineWithGLiNEREnsemble(_ *recognizers.EnsembleGLiNERRecognizer) *analyzer.AnalyzerEngine {
-	log.Fatalf("gliner-ensemble backend not available: this binary was built without -tags ner. " +
-		"Rebuild with `go build -tags ner ./...` for the GLiNER ensemble variant, " +
-		"or unset ANONDE_NER_STACK to use the single-model path.")
-	return nil
-}
-
 // DefaultAnalyzerEngineWithGLiNERPool is the fail-fast stub for the
 // span-decoder GLiNER pool. Same rationale as
 // DefaultAnalyzerEngineWithGLiNERConfig; the real implementation needs
@@ -65,6 +54,6 @@ func DefaultAnalyzerEngineWithGLiNERPool(_ *recognizers.GLiNERPool) *analyzer.An
 func DefaultAnalyzerEngineWithGLiNERFlatPool(_ *recognizers.GLiNERFlatPool) *analyzer.AnalyzerEngine {
 	log.Fatalf("gliner flat pool not available: this binary was built without -tags ner. " +
 		"Rebuild with `go build -tags ner ./...` for the GLiNER flat pool, " +
-		"or unset GLINER_POOL_SIZE / ANONDE_GLINER_FLAT_POOL_SIZE to use the single-recognizer path.")
+		"or unset GLINER_POOL_SIZE to use the single-recognizer path.")
 	return nil
 }

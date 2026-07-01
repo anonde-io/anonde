@@ -22,11 +22,10 @@ type RecognizerResult struct {
 // package; if a new NER recognizer (or a pool wrapping one) ships,
 // add its Name() string here.
 var nerRecognizerNames = map[string]bool{
-	"GLiNERRecognizer":            true,
-	"GLiNERFlatNERRecognizer":     true,
-	"GLiNEREnsembleNERRecognizer": true,
-	"GLiNERPool":                  true,
-	"GLiNERFlatPool":              true,
+	"GLiNERRecognizer":        true,
+	"GLiNERFlatNERRecognizer": true,
+	"GLiNERPool":              true,
+	"GLiNERFlatPool":          true,
 }
 
 // nerPreferredEntities is the set of entity types where NER is more
@@ -89,6 +88,13 @@ var validatedStructuredRecognizers = map[string]bool{
 	"UKNHSRecognizer":                  true,
 	"DESteuerIDRecognizer":             true,
 	"ISINRecognizer":                   true,
+	// US healthcare IDs (Tier 1): all drop the finding on checksum/format
+	// failure, so a finding proves the surface passed — qualifies for the
+	// carve-out (keeps a valid NPI/DEA/MBI from being restyled when GLiNER
+	// mislabels its surface as a fuzzy PERSON/ORG in clinical text).
+	"USNPIRecognizer":                  true,
+	"USDEARecognizer":                  true,
+	"USMBIRecognizer":                  true,
 }
 
 // isValidatedStructured reports whether r came from a checksum/validator-

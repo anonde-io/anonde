@@ -35,6 +35,14 @@ type validatedRecognizer struct {
 	// becomes max(patternScore, score). When passes==false and score==0 the
 	// finding is dropped entirely; otherwise the lower score is used.
 	Validate func(string) (bool, float64)
+	// RequireContext, when true, drops any (post-validation) match that has no
+	// context keyword within contextGateWindow chars of the span. Unlike the
+	// engine-level context BOOST (which only raises score and cannot gate when
+	// the analyzer's ScoreThreshold is 0), this is a HARD precision gate for
+	// loose-surface recognizers whose checksum alone is too permissive — e.g.
+	// US_NPI's bare \d{10}, where ~1-in-10 random numbers pass Luhn. A
+	// checksum-valid but context-free match is dropped entirely.
+	RequireContext bool
 }
 
 type scoredPattern struct {
@@ -143,6 +151,11 @@ func (r *validatedRecognizer) Analyze(_ context.Context, text string, _ []string
 				score = vScore
 			}
 		}
+		// Hard context gate: loose-surface recognizers keep a match only when a
+		// context keyword sits nearby, regardless of the analyzer threshold.
+		if r.RequireContext && !r.hasContextNear(text, sp.s, sp.e) {
+			continue
+		}
 		out = append(out, analyzer.RecognizerResult{
 			Start:          sp.s,
 			End:            sp.e,
@@ -152,6 +165,55 @@ func (r *validatedRecognizer) Analyze(_ context.Context, text string, _ []string
 		})
 	}
 	return out, nil
+}
+
+// contextGateWindow is the ± char window scanned around a span for a context
+// keyword when RequireContext is set.
+const contextGateWindow = 48
+
+// hasContextNear reports whether any of the recognizer's context keywords
+// appears (as a whole word/phrase, case-insensitively) within contextGateWindow
+// characters of [s,e).
+func (r *validatedRecognizer) hasContextNear(text string, s, e int) bool {
+	lo := s - contextGateWindow
+	if lo < 0 {
+		lo = 0
+	}
+	hi := e + contextGateWindow
+	if hi > len(text) {
+		hi = len(text)
+	}
+	win := strings.ToLower(text[lo:hi])
+	for _, kw := range r.context {
+		if kw != "" && containsWordCI(win, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsWordCI reports whether needle occurs in hay (both already lower-cased)
+// bounded by non-alphanumeric ASCII (so "npi" does not match inside "npixyz").
+func containsWordCI(hay, needle string) bool {
+	for i := 0; i+len(needle) <= len(hay); {
+		j := strings.Index(hay[i:], needle)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(needle)
+		beforeOK := start == 0 || !isAlnumASCII(hay[start-1])
+		afterOK := end == len(hay) || !isAlnumASCII(hay[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		i = start + 1
+	}
+	return false
+}
+
+func isAlnumASCII(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
 }
 
 // stripSeparators removes spaces, dots, dashes, and slashes; common formatters

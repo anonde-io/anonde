@@ -214,13 +214,12 @@ flow.
 
 ## Docker image variants
 
-Three Dockerfiles ship with the repo, pick per workload:
+Two Dockerfiles ship with the repo, pick per workload:
 
 | Image | Built via | Size | Backend | Use when |
 |---|---|---|---|---|
 | `anonde-smoke:patterns` | `make docker-build` | ~12 MB | patterns-only | German clinical text, structured English fields, no narrative names |
 | `anonde-smoke:ner` | `make docker-build-ner` | ~1.13 GB | GLiNER base + patterns + OCR + YOLOS sig | production default; Σ ALL ≈ 12.9% leak across 30 corpora; PDF endpoint enabled |
-| `anonde-smoke:ner-stack` | `make docker-build-ner-stack` | ~2.65 GB | GLiNER base + LARGE + patterns + YOLOS sig | lowest-leak tier (Σ ALL ≈ 8.4%), ~2× inference latency |
 
 `make docker-run` and `make docker-run-ner` build the image (if needed)
 and start the container. The NER container exposes

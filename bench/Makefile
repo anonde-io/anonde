@@ -56,23 +56,6 @@ GLINER_MODEL     ?= knowledgator/gliner-pii-base-v1.0
 # runtime flag of the same image, not a separate engine, so it no
 # longer has its own bench column.
 GLINER_ONNX_FILE ?= onnx/model.onnx
-# Larger GLiNER PII variant — 3-4x the parameter count of the base
-# model. Same HF org, same task; FP32 ONNX. Loaded by the LARGE flat
-# decoder that stacks on top of the BASE recognizer in the
-# `anonde-ner-stack` engine (and the matching
-# `ghcr.io/anonde-io/anonde-ner-stack` image), giving the premium tier
-# its lift on the Romance-language cells where the default still
-# leaks.
-GLINER_LARGE_MODEL     ?= knowledgator/gliner-pii-large-v1.0
-# HuggingFace's knowledgator/gliner-pii-large-v1.0 exports its ONNX at
-# `onnx/model.onnx` — same layout as the BASE model. A prior comment
-# here claimed it shipped at the repo root; that was wrong and broke
-# the LARGE download in the gliner-flat recognizer (the downloader
-# does an exact file lookup via the HF Hub API, not a directory walk,
-# so a missing file 404s and the cell silently falls back to the BASE
-# recognizer only — making anonde-ner-stack byte-equivalent to
-# anonde-ner). Verified against the HF tree API on 2026-05-27.
-GLINER_LARGE_ONNX_FILE ?= onnx/model.onnx
 GLINER_THRESHOLD ?= 0.40
 ANONDE_MODEL     ?=
 ANONDE_ONNX_FILE ?=
@@ -191,17 +174,25 @@ endif
 # at FP32 (`onnx/model.onnx`) and is the verdict anchor in the
 # scorecard. Runs as part of `corpus-%`, so every per-push bench
 # scores it.
-#
-# anonde-ner-stack is the premium NER tier — the engine that ships in
-# `ghcr.io/anonde-io/anonde-ner-stack`. It stacks BOTH the BASE FP32
-# recognizer AND the LARGE flat-decoder recognizer in the same
-# analyzer engine — every doc runs through both inferences and
-# RemoveConflicts merges overlaps. Gives the matrix the strongest
-# leak-rate numbers; pick this image when you can spare the RAM
-# (~2.1 GB image, ~4 GB resident). Gated OUT of `corpus-%`; pulled
-# in only by `matrix` / `matrix-*` via the ner-stack-cells target
-# below.
-ENGINES := anonde-patterns anonde-ner anonde-ner-stack presidio gliner-py openai-pf
+ENGINES := anonde-patterns anonde-ner presidio gliner-py openai-pf
+
+# presidio-transformer is an ADDITIONAL, EN-only Presidio column: Presidio's
+# BEST English config (spaCy `en_core_web_trf` transformer) rendered ALONGSIDE
+# the `presidio` cell's default `en_core_web_lg`. It is deliberately NOT in
+# ENGINES, because it covers English corpora only — a DE/ES/FR/IT cell would be
+# a permanent "–". Instead it is appended to the render engine list only for
+# EN-inclusive renders (ENGINES_EN_TRF), and its cells are wired for
+# $(EN_CORPORA) only (see CELL_presidio_trf). Keep ENGINES_EN_TRF in sync with
+# ENGINES if you add/remove a base engine.
+ENGINES_EN_TRF := anonde-patterns anonde-ner presidio presidio-transformer gliner-py openai-pf
+
+# RUN_PRESIDIO_TRF=1 opts the (heavier — en_core_web_trf pulls torch) Presidio
+# transformer column into the full `matrix` / `render`: it appends the trf
+# column to the rendered report and pulls the EN trf cells into `matrix`.
+# Unset = every base target behaves exactly as before (no trf column, no trf
+# cells). The `matrix-en-presidio-trf` target enables it for an EN-only run.
+RUN_PRESIDIO_TRF ?=
+RENDER_ENGINES   := $(if $(RUN_PRESIDIO_TRF),$(ENGINES_EN_TRF),$(ENGINES))
 
 # openai-pf gating + subsample size. RUN_OPENAI_PF=1 enables the cell;
 # OPENAI_PF_SAMPLE is how many docs (deterministic, sorted by id) the
@@ -223,7 +214,8 @@ OPENAI_PF_PYTHON  ?= $(OPENAI_PF_VENV)/bin/python
 MATRIX_REPORT := $(HERE)REPORT_MATRIX.md
 MATRIX_CSV    := $(HERE)results_matrix.csv
 
-.PHONY: help data matrix matrix-de matrix-en matrix-es matrix-fr matrix-it clean \
+.PHONY: help data matrix matrix-de matrix-en matrix-es matrix-fr matrix-it \
+        matrix-en-presidio-trf clean \
         $(addprefix corpus-,$(ALL_CORPORA)) \
         $(addprefix data-,$(ALL_CORPORA))
 
@@ -240,6 +232,7 @@ help:
 	@echo "  make matrix-es          Spanish subset only"
 	@echo "  make matrix-fr          French subset only"
 	@echo "  make matrix-it          Italian subset only"
+	@echo "  make matrix-en-presidio-trf  EN slice + Presidio en_core_web_trf (both Presidio configs)"
 	@echo "  make corpus-<NAME>      run the 4 always-on engines on a single corpus"
 	@echo "  make clean              remove generated data + reports + the matrix outputs"
 	@echo ""
@@ -279,39 +272,30 @@ $(addprefix data-,$(ALL_CORPORA)):
 # anonde engine name → analyzer backend.
 #   anonde-ner        → backend=gliner   (span decoder, BASE FP32 —
 #                                         the default NER image's stack)
-#   anonde-ner-stack  → backend=gliner   (BASE FP32 + the LARGE flat
-#                                         recognizer added on top via
-#                                         the --flat-gliner-* flags)
 # Which model id / ONNX file each cell passes is decided by
-# GLINER_MODEL_FOR + GLINER_ONNX_FILE_FOR; the extra stack flags are
-# appended by CELL_anonde only when $(2) == anonde-ner-stack.
+# GLINER_MODEL_FOR + GLINER_ONNX_FILE_FOR.
 define ANONDE_BACKEND_FOR
 $(if $(filter anonde-patterns,$(1)),patterns-only,\
-$(if $(filter anonde-ner anonde-ner-stack,$(1)),gliner,\
+$(if $(filter anonde-ner,$(1)),gliner,\
 ))
 endef
 
 # anonde-* engine name → ONNX file (BASE NER slot).
 #   anonde-ner        → FP32 BASE (default NER image)
-#   anonde-ner-stack  → FP32 BASE in the NER slot; the LARGE flat
-#                       recognizer is added on top via the
-#                       --flat-gliner-* flags (see CELL_anonde)
 # Any other engine falls back to ANONDE_ONNX_FILE (the generic override
 # knob). Kept on ONE line on purpose: a multi-line `define` with
 # `\`-continued `$(if ...)` collapses each continuation to a leading
 # space, and this value lands inside a quoted `--onnx-file "..."` arg
 # where that space is not stripped.
-GLINER_ONNX_FILE_FOR = $(if $(filter anonde-ner anonde-ner-stack,$(1)),$(GLINER_ONNX_FILE),$(ANONDE_ONNX_FILE))
+GLINER_ONNX_FILE_FOR = $(if $(filter anonde-ner,$(1)),$(GLINER_ONNX_FILE),$(ANONDE_ONNX_FILE))
 
-# anonde-* engine name → GLiNER model id (BASE NER slot). Both
-# anonde-ner and anonde-ner-stack use the production BASE model id
-# (GLINER_MODEL, default knowledgator/gliner-pii-base-v1.0). The
-# stack engine ALSO adds the LARGE sibling on top via
-# --flat-gliner-model (see CELL_anonde); that does not go through
-# this macro. Kept as a function-style assignment for symmetry with
-# GLINER_ONNX_FILE_FOR above; today it's a constant for every
-# in-matrix anonde engine, but leaving the macro in place keeps the
-# call site identical if a future engine needs a different base id.
+# anonde-* engine name → GLiNER model id (BASE NER slot). anonde-ner
+# uses the production BASE model id (GLINER_MODEL, default
+# knowledgator/gliner-pii-base-v1.0). Kept as a function-style
+# assignment for symmetry with GLINER_ONNX_FILE_FOR above; today it's
+# a constant for every in-matrix anonde engine, but leaving the macro
+# in place keeps the call site identical if a future engine needs a
+# different base id.
 GLINER_MODEL_FOR = $(GLINER_MODEL)
 
 # Corpus → language code. Defaults to `de` when a corpus is in none of the
@@ -366,18 +350,17 @@ define CELL_anonde
 $(CORPORA_DIR)/$(1)/data/anonde_$(2).jsonl: | data-$(1)
 	@echo "[matrix] $(1) x $(2)"
 	cd $(ROOT) && go run \
-	  $(if $(filter $(2),anonde-ner anonde-ner-stack),-tags ner,) \
+	  $(if $(filter $(2),anonde-ner),-tags ner,) \
 	  ./bench/runners/anonde.go \
 	    --in  bench/corpora/$(1)/data/corpus.jsonl \
 	    --out bench/corpora/$(1)/data/anonde_$(2).jsonl \
 	    --backend $(call ANONDE_BACKEND_FOR,$(2)) \
 	    --language $(call LANG_FOR_CORPUS,$(1)) \
-	    --model "$(if $(filter $(2),anonde-ner anonde-ner-stack),$(call GLINER_MODEL_FOR,$(2)),)" \
+	    --model "$(if $(filter $(2),anonde-ner),$(call GLINER_MODEL_FOR,$(2)),)" \
 	    --onnx-file "$(call GLINER_ONNX_FILE_FOR,$(2))" \
-	    --gliner-threshold $(if $(filter $(2),anonde-ner anonde-ner-stack),$(GLINER_THRESHOLD),0) \
-	    $(if $(filter $(2),anonde-ner anonde-ner-stack),--label-set "$(call LABEL_SET_FOR,$(1))",) \
-	    $(if $(filter $(2),anonde-ner anonde-ner-stack),--ort-library "$(ORT_LIB)",) \
-	    $(if $(filter $(2),anonde-ner-stack),--flat-gliner-model "$(GLINER_LARGE_MODEL)" --flat-gliner-onnx "$(GLINER_LARGE_ONNX_FILE)" --flat-gliner-threshold 0,) \
+	    --gliner-threshold $(if $(filter $(2),anonde-ner),$(GLINER_THRESHOLD),0) \
+	    $(if $(filter $(2),anonde-ner),--label-set "$(call LABEL_SET_FOR,$(1))",) \
+	    $(if $(filter $(2),anonde-ner),--ort-library "$(ORT_LIB)",) \
 	    $(call FOLD_FOR_CORPUS,$(1))
 endef
 
@@ -399,6 +382,29 @@ $(CORPORA_DIR)/$(1)/data/anonde_presidio.jsonl: | data-$(1)
 	  --out $(CORPORA_DIR)/$(1)/data/anonde_presidio.jsonl \
 	  --language $(call LANG_FOR_CORPUS,$(1)) || \
 	  echo "[matrix] WARN: presidio cell for $(1) failed — render will show as missing"
+endef
+
+# presidio-transformer cell: Presidio's BEST English config. Same runner as
+# CELL_presidio but with --engine transformer, which loads spaCy's
+# `en_core_web_trf` (transformer) model instead of the `en_core_web_lg`
+# default the `presidio` cell uses. EN-ONLY — trf is an English model, so this
+# define is expanded for $(EN_CORPORA) only and --language is hard-wired to en.
+# Distinct output file (anonde_presidio-transformer.jsonl) so it NEVER clobbers
+# the _lg `anonde_presidio.jsonl`; the render discovers it as the
+# `presidio-transformer` engine and routes its labels through the same
+# `presidio` label_map section (compare.py/_pmap_for match on the `presidio`
+# prefix). Warn-and-skip on failure and NOT .PHONY, exactly like CELL_presidio,
+# so a completed cell caches. The heavy trf/torch install is opt-in at the call
+# site (the presidio-trf-* targets / bench-full.yml), not a per-cell gate — the
+# recipe itself just runs.
+define CELL_presidio_trf
+$(CORPORA_DIR)/$(1)/data/anonde_presidio-transformer.jsonl: | data-$(1)
+	@echo "[matrix] $(1) x presidio-transformer (lang=en, en_core_web_trf)"
+	$(PYTHON) $(ROOT)/bench/runners/presidio.py \
+	  --in  $(CORPORA_DIR)/$(1)/data/corpus.jsonl \
+	  --out $(CORPORA_DIR)/$(1)/data/anonde_presidio-transformer.jsonl \
+	  --language en --engine transformer || \
+	  echo "[matrix] WARN: presidio-transformer cell for $(1) failed — render will show as missing"
 endef
 
 # gliner-py cell: Python sidecar; works on any corpus, English-friendly labels.
@@ -476,24 +482,24 @@ endef
 # isn't installed locally the cell is reported as missing rather than
 # crashing the build.
 $(foreach c,$(ALL_CORPORA),\
-  $(foreach e,anonde-patterns anonde-ner anonde-ner-stack,\
+  $(foreach e,anonde-patterns anonde-ner,\
     $(eval $(call CELL_anonde,$(c),$(e))))\
   $(eval $(call CELL_gliner_py,$(c)))\
   $(eval $(call CELL_presidio,$(c)))\
   $(eval $(call CELL_openai_pf,$(c))))
 
+# presidio-transformer cells — EN corpora ONLY (trf is an English model).
+$(foreach c,$(EN_CORPORA),\
+  $(eval $(call CELL_presidio_trf,$(c))))
+
 # Per-corpus convenience target — runs the always-on engines for one
-# corpus. openai-pf and anonde-ner-stack are deliberately NOT
-# prerequisites here: this is the target the per-push bench
-# (bench.yml) calls via `corpus-openmed` etc., and the per-push bench
-# stays lean (anonde-patterns + anonde-ner + gliner-py + presidio).
-# openai-pf at ~80 s/doc would blow the PR budget; anonde-ner-stack
-# is a fast in-process Go cell but loads ~1.7 GB of LARGE weights on
-# top of the BASE ONNX, so it is kept off `corpus-%` to leave the
-# per-push bench scope unchanged. Both are pulled in only by
-# `matrix` / `matrix-*` (see openai-pf-cells and ner-stack-cells
-# below). Presidio runs on every language (en + de + es spaCy
-# models); if a given dev box lacks the matching model the cell
+# corpus. openai-pf is deliberately NOT a prerequisite here: this is
+# the target the per-push bench (bench.yml) calls via `corpus-openmed`
+# etc., and the per-push bench stays lean (anonde-patterns + anonde-ner
+# + gliner-py + presidio). openai-pf at ~80 s/doc would blow the PR
+# budget, so it is pulled in only by `matrix` / `matrix-*` (see
+# openai-pf-cells below). Presidio runs on every language (en + de + es
+# spaCy models); if a given dev box lacks the matching model the cell
 # warn-and-skips.
 $(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
     $(CORPORA_DIR)/%/data/anonde_anonde-patterns.jsonl \
@@ -508,40 +514,33 @@ $(addprefix corpus-,$(ALL_CORPORA)): corpus-%: \
 .PHONY: openai-pf-cells $(addprefix openai-pf-,$(ALL_CORPORA))
 openai-pf-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ALL_CORPORA)))
 
-# anonde-ner-stack cells, separated out the same way as openai-pf-cells:
-# only the full-matrix targets (`matrix` / `matrix-*`) depend on them, so
-# the per-push `corpus-%` path / bench.yml never build the stack cell.
-# Each cell loads BOTH the BASE FP32 ONNX and the LARGE flat-decoder
-# ONNX (the LARGE weights are ~1.7 GB), so cells run a touch slower
-# than the single-model anonde-ner variant but stay well inside the
-# matrix cell budget.
-.PHONY: ner-stack-cells $(addprefix ner-stack-,$(ALL_CORPORA))
-ner-stack-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-ner-stack.jsonl,$(ALL_CORPORA)))
-
-# Per-corpus anonde-ner-stack convenience target — `make
-# ner-stack-openmed`. Used by bench-full.yml so each matrix cell
-# builds only its own corpus's stack cell without overriding ALL_CORPORA.
-$(addprefix ner-stack-,$(ALL_CORPORA)): ner-stack-%: \
-    $(CORPORA_DIR)/%/data/anonde_anonde-ner-stack.jsonl
-
 # Per-corpus openai-pf convenience target — `make openai-pf-openmed
 # RUN_OPENAI_PF=1`. Used by bench-full.yml so each matrix cell runs only
 # its own corpus's openai-pf cell without overriding ALL_CORPORA.
 $(addprefix openai-pf-,$(ALL_CORPORA)): openai-pf-%: \
     $(CORPORA_DIR)/%/data/anonde_openai-pf.jsonl
 
-# Materialise the full matrix (always-on engines + anonde-ner-stack +
-# openai-pf), then render the combined report. Run openai-pf with the
-# gate on:
+# presidio-transformer cells, EN corpora only — separated out (like
+# openai-pf-cells) so ONLY the trf-aware targets pull them in; the default
+# `matrix` / per-language matrices never build them. bench-full.yml calls the
+# per-corpus `presidio-trf-<corpus>` target on its EN cells when opted in.
+.PHONY: presidio-trf-cells $(addprefix presidio-trf-,$(EN_CORPORA))
+presidio-trf-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_presidio-transformer.jsonl,$(EN_CORPORA)))
+
+$(addprefix presidio-trf-,$(EN_CORPORA)): presidio-trf-%: \
+    $(CORPORA_DIR)/%/data/anonde_presidio-transformer.jsonl
+
+# Materialise the full matrix (always-on engines + openai-pf), then
+# render the combined report. Run openai-pf with the gate on:
 #   make matrix RUN_OPENAI_PF=1
-matrix: $(addprefix corpus-,$(ALL_CORPORA)) ner-stack-cells openai-pf-cells render
+matrix: $(addprefix corpus-,$(ALL_CORPORA)) openai-pf-cells \
+        $(if $(RUN_PRESIDIO_TRF),presidio-trf-cells) render
 
 # Per-language subset matrices. Each depends on its corpora's always-on
 # cells plus the openai-pf cells (self-gated on RUN_OPENAI_PF). FR / IT
 # mirror ES exactly — Phase 1 populated FR_CORPORA / IT_CORPORA with the
 # ai4privacy French / Italian slices.
 matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
-           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-ner-stack.jsonl,$(DE_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(DE_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -552,7 +551,6 @@ matrix-de: $(addprefix corpus-,$(DE_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
-           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-ner-stack.jsonl,$(EN_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(EN_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -563,7 +561,6 @@ matrix-en: $(addprefix corpus-,$(EN_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
-           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-ner-stack.jsonl,$(ES_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(ES_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -574,7 +571,6 @@ matrix-es: $(addprefix corpus-,$(ES_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
-           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-ner-stack.jsonl,$(FR_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(FR_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -585,7 +581,6 @@ matrix-fr: $(addprefix corpus-,$(FR_CORPORA)) \
 	  --csv $(MATRIX_CSV)
 
 matrix-it: $(addprefix corpus-,$(IT_CORPORA)) \
-           $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_anonde-ner-stack.jsonl,$(IT_CORPORA))) \
            $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(IT_CORPORA)))
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
@@ -595,12 +590,32 @@ matrix-it: $(addprefix corpus-,$(IT_CORPORA)) \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
 
+# EN-only, on-demand: the always-on EN engines PLUS Presidio's transformer
+# (en_core_web_trf) config, rendered over the EN slice with BOTH Presidio
+# columns — the default _lg `presidio` and `presidio-transformer`. This is the
+# fast path to refresh the honest anonde-vs-Presidio-best-English comparison
+# without paying for the full ~60-min multilingual matrix. Needs the trf assets
+# installed locally:
+#   pip install presidio-analyzer spacy spacy-transformers
+#   python -m spacy download en_core_web_trf
+.PHONY: matrix-en-presidio-trf
+matrix-en-presidio-trf: $(addprefix corpus-,$(EN_CORPORA)) \
+                        presidio-trf-cells \
+                        $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(EN_CORPORA)))
+	$(PYTHON) $(HERE)scoring/render_matrix.py \
+	  --corpora-root $(CORPORA_DIR) \
+	  --corpus "$(EN_CORPORA)" \
+	  --engine "$(ENGINES_EN_TRF)" \
+	  --label-map $(HERE)scoring/label_map.yaml \
+	  --out $(MATRIX_REPORT) \
+	  --csv $(MATRIX_CSV)
+
 .PHONY: render
 render:
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
 	  --corpus "$(ALL_CORPORA)" \
-	  --engine "$(ENGINES)" \
+	  --engine "$(RENDER_ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)

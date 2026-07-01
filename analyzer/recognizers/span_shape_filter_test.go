@@ -131,7 +131,7 @@ func TestSpanFilterStoplist(t *testing.T) {
 // / clinical / chat benefit.
 func TestMoneyGuardUniversal(t *testing.T) {
 	t.Parallel()
-	for _, f := range []SpanFilterConfig{MoneyGuardFilter(), NewSpanFilter(), StrictSpanFilter(), LegalSpanFilter()} {
+	for _, f := range []SpanFilterConfig{MoneyGuardFilter(), NewSpanFilter(), StrictSpanFilter(), LegalSpanFilter(), ClinicalSpanFilter()} {
 		for _, c := range []struct{ typ, s string }{
 			{"ID", "8.750 EUR"}, {"ID", "2.300,00 EUR"}, {"ID", "150.000 EUR"},
 			{"ID", "€42"}, {"ID", "USD 1,200"}, {"POSTAL_CODE", "8.750 EUR"},
@@ -319,5 +319,96 @@ func TestLegalNoiseScopedToIDTypes(t *testing.T) {
 	f := LegalSpanFilter()
 	if f.rejectSpanSurface("PERSON", "K3") {
 		t.Error("legal-noise path wrongly rejected PERSON K3 (must be ID/POSTAL_CODE-scoped)")
+	}
+}
+
+// TestClinicalSpanFilterRejectsClinicalNoise confirms the clinical profile
+// drops the recurring PERSON / ORGANIZATION FP surface forms (patient/staff
+// roles, sex markers, field labels, department names) from the meddocan_es /
+// openmed FP audit, plus the productive department-context constructs.
+func TestClinicalSpanFilterRejectsClinicalNoise(t *testing.T) {
+	t.Parallel()
+	f := ClinicalSpanFilter()
+
+	// Stoplist: role / demographic / field-label / clinical-term surfaces.
+	for _, c := range []struct{ typ, s string }{
+		// Spanish (meddocan) PERSON FPs.
+		{"PERSON", "paciente"}, {"PERSON", "Paciente"}, {"PERSON", "varón"},
+		{"PERSON", "mujer"}, {"PERSON", "hombre"}, {"PERSON", "h"}, {"PERSON", "m"},
+		{"PERSON", "fecha"}, {"PERSON", "edad"}, {"PERSON", "médico"},
+		{"PERSON", "además"}, {"PERSON", "tumor"}, {"PERSON", "próstata"},
+		// German (openmed) PERSON FPs.
+		{"PERSON", "Patient"}, {"PERSON", "Patientin"}, {"PERSON", "Patienten"},
+		{"PERSON", "Pat."}, {"PERSON", "Arzt"}, {"PERSON", "Direktor"},
+		{"PERSON", "Klinikvorstand"}, {"PERSON", "Anamnese"}, {"PERSON", "Befund"},
+		{"PERSON", "mit"}, {"PERSON", "keine"}, {"PERSON", "Leber"}, {"PERSON", "FOLFOX"},
+		// English coverage.
+		{"PERSON", "patient"}, {"PERSON", "physician"}, {"PERSON", "nurse"},
+		// Lone hospital departments tagged ORGANIZATION.
+		{"ORGANIZATION", "hospital"}, {"ORGANIZATION", "Urgencias"},
+		{"ORGANIZATION", "nefrología"}, {"ORGANIZATION", "UCI"},
+		{"ORGANIZATION", "medicina interna"}, {"ORGANIZATION", "Klinik"},
+		{"ORGANIZATION", "Ambulanz"}, {"ORGANIZATION", "ICU"},
+	} {
+		if !f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("clinical filter FAILED to reject %s %q", c.typ, c.s)
+		}
+	}
+
+	// ClinicalNoise department-context gate on ORGANIZATION.
+	for _, c := range []struct{ typ, s string }{
+		{"ORGANIZATION", "Servicio de Urología"},
+		{"ORGANIZATION", "servicio de neurocirugía"},
+		{"ORGANIZATION", "Unidad de Cuidados Intensivos"},
+		{"ORGANIZATION", "unidad de nefrología"},
+		{"ORGANIZATION", "Área de Urgencias"},
+		{"ORGANIZATION", "Sección de Cardiología"},
+		{"ORGANIZATION", "Centro de Salud"},
+		{"ORGANIZATION", "centro"},
+	} {
+		if !f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("clinical department gate FAILED to reject %s %q", c.typ, c.s)
+		}
+	}
+}
+
+// TestClinicalSpanFilterLeakSafety is the recall-safety claim: the clinical
+// profile must NEVER drop a real patient name, a named institution, or a
+// multi-token span that merely contains a stoplisted word. A single false
+// reject here is a leak.
+func TestClinicalSpanFilterLeakSafety(t *testing.T) {
+	t.Parallel()
+	f := ClinicalSpanFilter()
+	keep := []struct{ typ, s string }{
+		// Real patient names — including ones containing a role word.
+		{"PERSON", "Ignacio Rico Pedroza"}, {"PERSON", "Patient Müller"},
+		{"PERSON", "Maria Lopez"}, {"PERSON", "Hans Leber"},
+		{"PERSON", "Ana Fiebre García"},
+		// Named institutions / departments with a proper name attached —
+		// the department gate is anchored so these survive.
+		{"ORGANIZATION", "Hospital Ramón y Cajal"},
+		{"ORGANIZATION", "Centro de Salud de Vallecas"},
+		{"ORGANIZATION", "Klinikum München"},
+		// Real places.
+		{"LOCATION", "Madrid"}, {"LOCATION", "München"},
+		// Structured types are immune even on a stoplisted surface.
+		{"ID", "paciente"}, {"POSTAL_CODE", "28001"}, {"EMAIL_ADDRESS", "patient"},
+		{"DATE_TIME", "fecha"},
+	}
+	for _, c := range keep {
+		if f.rejectSpanSurface(c.typ, c.s) {
+			t.Errorf("clinical filter WRONGLY rejected %s %q (LEAK risk)", c.typ, c.s)
+		}
+	}
+}
+
+// TestClinicalNoiseScopedToOrg confirms the department-context gate is
+// ORGANIZATION-only: a "servicio de ..."-shaped PERSON is not dropped by the
+// gate (only by a stoplist hit, which these are not).
+func TestClinicalNoiseScopedToOrg(t *testing.T) {
+	t.Parallel()
+	f := ClinicalSpanFilter()
+	if f.rejectSpanSurface("PERSON", "Servicio de Urología") {
+		t.Error("clinical-noise gate wrongly rejected PERSON (must be ORGANIZATION-scoped)")
 	}
 }

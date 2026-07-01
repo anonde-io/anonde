@@ -123,10 +123,6 @@ docker-build: ## Build the patterns-only image ($(IMAGE):patterns)
 docker-build-ner: ## Build the NER image (~1.13 GB, $(IMAGE):ner, GLiNER base + YOLOS sig + tesseract + poppler)
 	docker build -f Dockerfile.anonde-ner -t $(IMAGE):ner .
 
-.PHONY: docker-build-ner-stack
-docker-build-ner-stack: ## Build the lowest-leak image (~2.65 GB, GLiNER base+LARGE + YOLOS sig, $(IMAGE):ner-stack)
-	docker build -f Dockerfile.anonde-ner-stack -t $(IMAGE):ner-stack .
-
 .PHONY: docker-run
 docker-run: docker-build ## Build + start the patterns container on :$(PORT) (text/JSON only, no PDF, no metrics)
 	-docker rm -f $(CONTAINER) >/dev/null 2>&1

@@ -54,10 +54,8 @@
 // Integration
 // -----------
 // This file is opt-in only. Wire via `cmd/anonde/main.go::analyzerFromEnv`
-// when `GLINER_POOL_SIZE >= 2` for `gliner-flat`, or
-// `ANONDE_GLINER_FLAT_POOL_SIZE >= 2` for the flat slot of
-// `gliner-stack`. For typical low-QPS deploys a bare
-// `GLiNERFlatRecognizer` is the right answer.
+// when `GLINER_POOL_SIZE >= 2` for `gliner-flat`. For typical low-QPS
+// deploys a bare `GLiNERFlatRecognizer` is the right answer.
 
 package recognizers
 

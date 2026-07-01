@@ -1,24 +1,23 @@
 # Deployment
 
-anonde ships three Docker variants of the same `cmd/anonde` HTTP service. Pick per workload.
+anonde ships two Docker variants of the same `cmd/anonde` HTTP service. Pick per workload.
 
 | File | What it ships | Image size | When to use |
 |---|---|---:|---|
 | `Dockerfile.anonde` | Pure Go binary, no NER, no CGO | ~12 MB | patterns-only deployments; max throughput |
 | `Dockerfile.anonde-ner` | Same binary + libonnxruntime + baked GLiNER BASE model | ~770 MB | production: detects PERSON/ORG/etc. via GLiNER. Bench Σ ALL ≈ 12.9% leak rate across 30 corpora. |
-| `Dockerfile.anonde-ner-stack` | Same as `-ner` plus the LARGE GLiNER variant baked in too | ~2.1 GB | lowest-leak tier: registers BOTH base (span decoder) and LARGE (flat decoder) recognizers in one analyzer engine. Bench Σ ALL ≈ 8.4%. ~2× per-request inference latency vs `-ner` (both models run concurrently per request); peak RAM ~2.8 GB at single-instance, more with pooling. |
 
 ## Running a variant
 
-Three peer entry points; all build the same image you'd ship.
+Two peer entry points; both build the same image you'd ship.
 
-| Workflow | Patterns | NER | NER stack |
-|---|---|---|---|
-| Make | `make docker-run` | `make docker-run-ner` | (build only: `make docker-build-ner-stack`) |
-| Compose | `docker compose --profile patterns up` | `docker compose --profile ner up` | `docker compose --profile ner-stack up` |
-| Raw docker | `docker build -f Dockerfile.anonde -t anonde:patterns . && docker run --rm -p 8081:8080 anonde:patterns` | see [`Dockerfile.anonde-ner`](../Dockerfile.anonde-ner) header | see [`Dockerfile.anonde-ner-stack`](../Dockerfile.anonde-ner-stack) header |
+| Workflow | Patterns | NER |
+|---|---|---|
+| Make | `make docker-run` | `make docker-run-ner` |
+| Compose | `docker compose --profile patterns up` | `docker compose --profile ner up` |
+| Raw docker | `docker build -f Dockerfile.anonde -t anonde:patterns . && docker run --rm -p 8081:8080 anonde:patterns` | see [`Dockerfile.anonde-ner`](../Dockerfile.anonde-ner) header |
 
-Compose profiles are mutually exclusive: only one runs per `docker compose up`. All publish the API on `${ANONDE_PORT:-8081}`; the NER profiles additionally expose Prometheus on `${METRICS_PORT:-9090}`. No volumes; models are baked into the NER images; persist the vault with a bbolt path (see "Vault + request limits" below) if you need state across restarts.
+Compose profiles are mutually exclusive: only one runs per `docker compose up`. Both publish the API on `${ANONDE_PORT:-8081}`; the NER profile additionally exposes Prometheus on `${METRICS_PORT:-9090}`. No volumes; models are baked into the NER image; persist the vault with a bbolt path (see "Vault + request limits" below) if you need state across restarts.
 
 ## NER image internals
 
@@ -42,8 +41,6 @@ In-memory vault and store are cleared on each redeploy, so a token issued under 
 | `patterns` | No NER. 70 regex/checksum pattern recognizers only. | default Go build |
 | `gliner` | One GLiNER PII recognizer (span decoder, BASE model). | `-tags ner` + CGO |
 | `gliner-flat` | One GLiNER recognizer with the flat / token decoder (LARGE-style 4-input BIO ONNX exports). | `-tags ner` + CGO |
-| `gliner-stack` | BOTH the span-decoder base + the flat-decoder recognizer in one engine. The conflict resolver unions findings. Lowest-leak option; pairs with `Dockerfile.anonde-ner-stack`. | `-tags ner` + CGO |
-| `gliner-ensemble` | Multi-model GLiNER ensemble; gated by `ANONDE_NER_STACK=id1,id2,...` env var. | `-tags ner` + CGO |
 
 ### NER variant (defaults wired in `Dockerfile.anonde-ner`)
 
@@ -64,31 +61,19 @@ Memory-constrained deployments can opt back into INT8 at runtime with `GLINER_QU
 |---|---|---|
 | `GLINER_QUANT` | `fp32` | ONNX precision selector: `fp32` (production, lowest leak), `int8` (smallest, ~6pp more leak), or `fp16`. Auto-resolves the conventional filename per HF repo; `GLINER_ONNX_FILE` overrides it with an explicit in-repo path. (Note: `fp16` is currently rejected by onnxruntime for `gliner-pii-base-v1.0`; use `fp32`.) |
 
-### Stack variant (defaults wired in `Dockerfile.anonde-ner-stack`)
-
-Everything from the NER variant plus:
-
-```bash
-ANALYZER_BACKEND=gliner-stack
-ANONDE_GLINER_FLAT_MODEL=knowledgator/gliner-pii-large-v1.0
-ANONDE_GLINER_FLAT_ONNX_FILE=model.onnx       # repo-root, not under onnx/
-# ANONDE_GLINER_FLAT_THRESHOLD=                 # defaults to GLINER_THRESHOLD
-```
-
 ### Pool sizing (concurrency under load)
 
 Each `GLiNERRecognizer` serialises its `Analyze()` calls on an internal mutex (the ONNX session isn't safe for concurrent `Run()`). For multi-request concurrency, opt into N-instance pools:
 
 | Var | Default | What |
 |---|---|---|
-| `GLINER_POOL_SIZE` | 1 (single recognizer) | Integer ≥ 2 → builds an N-instance pool for the BASE recognizer (`gliner` and `gliner-stack`) or the FLAT recognizer (`gliner-flat`). |
-| `ANONDE_GLINER_FLAT_POOL_SIZE` | 1 | Integer ≥ 2 → N-instance pool for the FLAT slot of `gliner-stack` only. Separate from BASE because LARGE is ~3× the RAM. |
+| `GLINER_POOL_SIZE` | 1 (single recognizer) | Integer ≥ 2 → builds an N-instance pool for the BASE recognizer (`gliner`) or the FLAT recognizer (`gliner-flat`). |
 | `WARMUP_ON_START` | unset | `1` fires a startup Analyze + pre-warms every pool instance in parallel, so the first user requests don't pay 5–30 s cold init per instance. |
 
-Memory cost is the binding constraint: ~500 MB per BASE instance, ~1.4 GB per LARGE instance. Sample sizings:
+Memory cost is the binding constraint: ~500 MB per BASE instance, ~1.4 GB per LARGE (flat) instance. Sample sizings:
 
-- 4 GB VM, gliner-stack: `GLINER_POOL_SIZE=2 ANONDE_GLINER_FLAT_POOL_SIZE=1` ≈ 1 GB BASE + 1.4 GB FLAT + ~500 MB overhead ≈ 2.9 GB peak.
-- 8 GB VM, gliner-stack: `GLINER_POOL_SIZE=4 ANONDE_GLINER_FLAT_POOL_SIZE=2` ≈ 2 GB + 2.8 GB + overhead ≈ 5.3 GB peak.
+- 2 GB VM, gliner: `GLINER_POOL_SIZE=2` ≈ 1 GB BASE + ~500 MB overhead ≈ 1.5 GB peak.
+- 4 GB VM, gliner-flat: `GLINER_POOL_SIZE=2` ≈ 2.8 GB FLAT + ~500 MB overhead ≈ 3.3 GB peak.
 
 ### HTTP concurrency budget
 
@@ -122,8 +107,6 @@ These knobs change detection behaviour and output, not just performance. Default
 | `GLINER_SPAN_FILTER` | unset (money guard on) | The NER path always runs a universal **money guard** (drops currency-amount `ID`/`POSTAL_CODE` spans; bench-proven leak-safe on every corpus). `1` additionally enables the opt-in **structural shape filter** (UUID / locale / semver / model-slug / hex / base64 / SCREAMING_SNAKE on fuzzy types + stoplist) — a precision tool that trades recall on PII-dense traffic, so it is off by default. Implied on by `GLINER_STRICT=1`. `GLINER_LABEL_SET=legal` applies this filter plus the legal role/statute/exhibit profile automatically. |
 | `GLINER_STOPLIST` | empty | Comma-separated extra denylist terms appended (lower-cased) to the shape filter's built-in stoplist. Only effective when the shape filter is on. |
 | `GLINER_POOL_SIZE` | 1 (single recognizer) | Integer ≥ 2 builds an N-instance pool for the BASE recognizer to serve concurrent requests (each instance serialises its own ONNX session). Sized against RAM, not vCPU — see Pool sizing above. |
-| `ANONDE_NER_STACK` | unset | Comma-separated GLiNER model IDs. When set with `ANALYZER_BACKEND=gliner`, builds a multi-model ensemble (OR-union of findings) instead of the single-model path. A value that trims to empty (e.g. `,,,`) fails loudly at boot rather than silently disabling NER. |
-| `ANONDE_NER_STACK_PARALLEL` | unset (sequential) | `1` runs ensemble members concurrently (one goroutine each) when latency matters more than peak RAM. Default runs them sequentially. |
 | `WARMUP_ON_START` | unset | `1` fires one startup Analyze and pre-warms every pool instance in parallel, so the first user requests don't each pay the 5–30 s cold ONNX init. Recommended for any NER deploy behind a load balancer. |
 | `ANONDE_NER_VERIFY_TIMEOUT` | `5m` | Timeout for the boot-time fail-closed NER verification (above). Raise on slow disks / cold model caches; lower for a tighter boot SLA. |
 | `ANONDE_WARMUP_TIMEOUT` | `5m` | Timeout for the `WARMUP_ON_START` priming call. |
@@ -138,7 +121,7 @@ These knobs change detection behaviour and output, not just performance. Default
 
 ### Persistent data directory
 
-All three shipped images set `ANONDE_DATA_DIR=/var/lib/anonde` and
+Both shipped images set `ANONDE_DATA_DIR=/var/lib/anonde` and
 declare it as a Docker `VOLUME`. Everything anonde persists on disk
 lives under that one path:
 
@@ -187,7 +170,7 @@ rasterises each page with `pdftoppm` and OCRs it with `tesseract`,
 then feeds the joined text into the normal analyzer pipeline. Pure
 shell-out: no CGO, no Go dependencies.
 
-The `anonde-ner` and `anonde-ner-stack` images install
+The `anonde-ner` image installs
 `poppler-utils` + `tesseract-ocr` with the
 `eng+deu+fra+spa+ita+ron` language packs, so OCR is on by default
 there. The patterns-only image (`anonde`) does not bundle them; the

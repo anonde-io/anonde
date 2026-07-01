@@ -19,19 +19,8 @@ name: bench-full
 # openai-pf is too slow for the per-push bench (bench.yml), which leaves
 # it excluded. See bench/Makefile's ENGINES block for the gating design.
 #
-# It also runs the anonde-ner-stack engine — the default BASE GLiNER
-# PII recognizer with the LARGE sibling
-# (knowledgator/gliner-pii-large-v1.0) stacked on top as a flat
-# decoder, matching the `ghcr.io/anonde-io/anonde-ner-stack` shipping
-# image. It is the premium NER tier: best leak rate on the
-# Romance-language cells where the default NER still leaks, at the
-# cost of ~2.1 GB image / ~4 GB resident. Like openai-pf it is kept
-# off the per-push corpus-X target (bench.yml stays lean); the full
-# matrix pulls it in via `make ner-stack-X`.
-#
-# The six engines per corpus: anonde-patterns, anonde-ner (default
-# NER image, BASE FP32), anonde-ner-stack (premium NER image, BASE +
-# LARGE flat stacked), gliner-py, presidio, openai-pf.
+# The five engines per corpus: anonde-patterns, anonde-ner (default
+# NER image, BASE FP32), gliner-py, presidio, openai-pf.
 #
 # Triggers:
 #   * Weekly Sundays at 06:00 UTC (≈07:00 Berlin, ≈01:00 NY).
@@ -78,6 +67,11 @@ on:
         description: 'Optional artifact-label override (default: weekly-<date> or dispatch-<sha>)'
         required: false
         default: ''
+      run_presidio_trf:
+        description: 'Also run Presidio en_core_web_trf (transformer) on EN corpora — Presidio''s best English config. Heavier (pulls torch); EN-only; off on scheduled runs.'
+        type: boolean
+        required: false
+        default: false
 
 # Do NOT cancel an in-progress full bench — losing a 40-min run to a
 # non-bench push is worse than running two in series.
@@ -204,7 +198,7 @@ jobs:
       # Free disk on the ~14 GB runner before the cell pulls its heavy
       # assets. The cell stacks: openai/privacy-filter (~2.8 GB), the
       # GLiNER PII ONNX exports (INT8 model_quint8.onnx + FP32 model.onnx
-      # for the base + the larger gliner-pii-large-v1.0 FP32 export), a
+      # for the base), a
       # spaCy model (~750 MB), and TWO Python venvs (bench base + the
       # isolated openai-pf venv). Both venvs install CPU-only torch (the
       # PyTorch CPU wheel index — see bench/requirements*.txt), which
@@ -288,14 +282,30 @@ jobs:
               echo "no spaCy model mapping for corpus '${{ matrix.corpus }}'; skipping" ;;
           esac
 
-      # Cache the GLiNER PII model assets. Two artifacts the matrix
-      # uses share these dirs: `knowledgator/gliner-pii-base-v1.0`
-      # (FP32 `onnx/model.onnx`, used by both anonde-ner and the BASE
-      # slot of anonde-ner-stack) and `knowledgator/gliner-pii-large-v1.0`
-      # (FP32 `model.onnx`, the LARGE flat decoder added by
-      # anonde-ner-stack). The cache path covers both; the
-      # `-base-large` key suffix is an explicit "this cache has both
-      # variants" anchor.
+      # Presidio's BEST English config — spaCy's `en_core_web_trf` transformer
+      # model — via spacy-transformers (which pulls torch). This powers the
+      # `presidio-transformer` column, the honest second Presidio config next
+      # to the default `en_core_web_lg` `presidio` column. Gated TWO ways so it
+      # never bloats the default weekly run: (1) opt-in only — the
+      # workflow_dispatch `run_presidio_trf` boolean, so a scheduled run and
+      # any non-dispatch trigger skip it; (2) EN-only — trf is an English
+      # model, so the heavy ~430 MB model + spacy-transformers install runs
+      # solely on English cells.
+      - name: Install Presidio transformer model (EN, opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_presidio_trf }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.corpus }}" in
+            ai4privacy_en|conll2003_en|wnut_17|mapa_en|synth_finance_en|synth_logs|synth_clinical_en)
+              pip install spacy-transformers
+              python -m spacy download en_core_web_trf ;;
+            *)
+              echo "presidio-transformer is EN-only; corpus '${{ matrix.corpus }}' is not English — skipping trf install" ;;
+          esac
+
+      # Cache the GLiNER PII model assets. The matrix uses
+      # `knowledgator/gliner-pii-base-v1.0` (FP32 `onnx/model.onnx`),
+      # the BASE GLiNER model the anonde-ner engine loads.
       # The `-v<N>` suffix is a MANUAL cache version on these two static
       # keys. actions/cache NEVER re-saves a key that already exists, so a
       # key once seeded with an empty/partial model dir (a run where the
@@ -312,13 +322,13 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
-          key: hf-cache-gliner-pii-base-large-v2
+          key: hf-cache-gliner-pii-base-v3
 
       - name: Cache anonde model cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/anonde/models
-          key: anonde-models-gliner-pii-base-large-v2
+          key: anonde-models-gliner-pii-base-v3
 
       # Cache key includes the recognizer + bench-runner source as well
       # as the corpus loader, because the cached path contains BOTH the
@@ -394,9 +404,8 @@ jobs:
       # repairs a partially-restored HF/anonde model cache. After this
       # step every gliner cell is guaranteed to load its model from cache.
       #
-      # The two exports mirror bench/Makefile exactly: BASE (used by
-      # anonde-ner and the BASE slot of anonde-ner-stack) and LARGE (the
-      # flat decoder added by anonde-ner-stack). The -onnx args below are a
+      # The export mirrors bench/Makefile exactly: BASE (used by
+      # anonde-ner). The -onnx arg below is a
       # download/resolution HINT, not a hard path: the prefetch verifier
       # mirrors the recognizer's ONNX resolution order
       # (analyzer/recognizers/ner_gliner.go) — model.onnx at root, else the
@@ -404,31 +413,29 @@ jobs:
       # HF layout is not necessarily onnx/model.onnx, so a verifier that
       # hard-required that single path fail-closed while the recognizer
       # loaded fine off the walk fallback (the bug behind bench-full run
-      # 27502162712). The -onnx args SHOULD still match GLINER_ONNX_FILE /
-      # GLINER_LARGE_ONNX_FILE in bench/Makefile so the resolution order
+      # 27502162712). The -onnx arg SHOULD still match GLINER_ONNX_FILE
+      # in bench/Makefile so the resolution order
       # matches the recognizer. Tool: bench/tools/prefetch/main.go — same
       # hugot.DownloadModel + ~/.cache/anonde/models layout as the
       # recognizer.
-      - name: Prefetch GLiNER models (fail if absent/partial)
+      - name: Prefetch GLiNER model (fail if absent/partial)
         run: |
           set -euo pipefail
           CGO_ENABLED=1 ORT_SO_PATH="$ORT_LIB" \
             go run -tags ner ./bench/tools/prefetch \
-              -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx \
-              -model knowledgator/gliner-pii-large-v1.0 -onnx onnx/model.onnx
+              -model knowledgator/gliner-pii-base-v1.0  -onnx onnx/model.onnx
 
       # Run the always-on engines (corpus-X = patterns + anonde-ner +
-      # presidio + gliner-py), then the anonde-ner-stack cell, then the
-      # openai-pf cell. The stack + openai-pf cells are kept off the
-      # per-push `corpus-X` target so bench.yml stays lean; the full
-      # matrix pulls them in explicitly here (ner-stack-X / openai-pf-X).
+      # presidio + gliner-py), then the openai-pf cell. The openai-pf
+      # cell is kept off the per-push `corpus-X` target so bench.yml
+      # stays lean; the full matrix pulls it in explicitly here
+      # (openai-pf-X).
       # openai-pf is additionally gated behind RUN_OPENAI_PF=1 — set
       # here (and only here / on the `matrix` target) so the slow
       # ~80 s/doc model runs on the weekly full matrix but never on the
       # per-push PR bench. The openai-pf cell is scored on a
       # deterministic OPENAI_PF_SAMPLE-doc subsample; render_matrix.py
-      # scores it over only the docs it returned. The ner-stack cell is
-      # a fast in-process Go run (no gate needed).
+      # scores it over only the docs it returned.
       # LABEL_SET is NOT pinned here. Each corpus is measured under its own
       # domain: bench/Makefile's LABEL_SET_FOR maps the corpus to its label set
       # (clinical/finance/legal/chat), mirroring each corpus's own Makefile
@@ -441,8 +448,24 @@ jobs:
         run: |
           set -euo pipefail
           make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
-          make -C bench ner-stack-${{ matrix.corpus }} PYTHON=python3
           make -C bench openai-pf-${{ matrix.corpus }} PYTHON=python3 RUN_OPENAI_PF=1
+
+      # Presidio-transformer (en_core_web_trf) cell — EN-only, opt-in. Writes
+      # anonde_presidio-transformer.jsonl alongside the _lg
+      # anonde_presidio.jsonl (never clobbers it), so the render can show BOTH
+      # Presidio configs on the English rows. The `presidio-trf-<corpus>`
+      # target only exists for EN corpora; the case guard keeps this a no-op on
+      # non-EN cells. Same opt-in gate as the install step above.
+      - name: Run Presidio-transformer cell (EN, opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_presidio_trf }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.corpus }}" in
+            ai4privacy_en|conll2003_en|wnut_17|mapa_en|synth_finance_en|synth_logs|synth_clinical_en)
+              make -C bench presidio-trf-${{ matrix.corpus }} PYTHON=python3 ;;
+            *)
+              echo "presidio-transformer is EN-only; corpus '${{ matrix.corpus }}' is not English — skipping trf cell" ;;
+          esac
 
       # Upload the cell's data dir as an artifact. The render job will
       # download every cell-* artifact and reassemble bench/corpora/.
@@ -516,16 +539,25 @@ jobs:
       # that file by default (it sits beside the script), so no extra flag
       # is needed here. A corpus missing from corpora.yaml still renders —
       # under an 'uncategorized' group, with a stderr warning.
+      # RUN_PRESIDIO_TRF=1 appends the EN-only `presidio-transformer` column
+      # (Presidio en_core_web_trf) to the rendered report — but only when the
+      # opt-in dispatch input asked for it AND its EN cells were produced
+      # above. On a scheduled run the input is unset, so the render is
+      # byte-for-byte the same as before this change.
       - name: Render REPORT_MATRIX (grouped by domain × language)
         run: |
-          make -C bench render PYTHON=python3
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ inputs.run_presidio_trf }}" = "true" ]; then
+            make -C bench render PYTHON=python3 RUN_PRESIDIO_TRF=1
+          else
+            make -C bench render PYTHON=python3
+          fi
 
       # Same canary as the per-push bench, but walks every gold-bearing
-      # corpus and checks BOTH GLiNER-backed anonde cells — the default
-      # NER (`anonde-ner`, BASE FP32) and the premium stack
-      # (`anonde-ner-stack`, BASE FP32 + LARGE flat). A silent fallback
-      # to patterns is the highest-cost bug class, and both cells are
-      # equally exposed to it (bad ORT_LIB / missing ONNX).
+      # corpus and checks the GLiNER-backed anonde cell — the default
+      # NER (`anonde-ner`, BASE FP32). A silent fallback to patterns is
+      # the highest-cost bug class (bad ORT_LIB / missing ONNX).
       - name: Guard rail — GLiNER actually fired
         run: |
           python3 - <<'PYEOF'
@@ -535,10 +567,9 @@ jobs:
           failures = []
           checked = 0
           root = Path("bench/corpora")
-          # The two GLiNER-backed anonde cells the matrix runs.
+          # The GLiNER-backed anonde cell the matrix runs.
           gliner_engines = (
               "anonde-ner",
-              "anonde-ner-stack",
           )
           for corpus_dir in sorted(root.iterdir()):
               gold = corpus_dir / "data" / "corpus.jsonl"
@@ -587,91 +618,6 @@ jobs:
               sys.exit(1)
           PYEOF
 
-      # Companion canary to the one above: catches the case where the
-      # gliner-flat (LARGE) recognizer registers but contributes zero
-      # findings on every doc — the silent-fallback mode that, in 2026
-      # week 22, made anonde-ner-stack byte-equivalent to anonde-ner
-      # because GLINER_LARGE_ONNX_FILE pointed at a non-existent path
-      # (the analyzer's "recognizer error (swallowed)" log line was
-      # the only signal, and the matrix happily rendered identical
-      # numbers in both columns). A healthy stack must diverge from
-      # the default NER on at least some docs somewhere in the matrix.
-      - name: Guard rail — anonde-ner-stack diverges from anonde-ner
-        run: |
-          python3 - <<'PYEOF'
-          import json, sys
-          from pathlib import Path
-
-          root = Path("bench/corpora")
-          pairs = 0
-          differing_docs = 0
-          per_corpus = []
-          for corpus_dir in sorted(root.iterdir()):
-              ner = corpus_dir / "data" / "anonde_anonde-ner.jsonl"
-              stack = corpus_dir / "data" / "anonde_anonde-ner-stack.jsonl"
-              if not ner.exists() or not stack.exists():
-                  continue
-              pairs += 1
-              ner_docs = {}
-              with ner.open() as fh:
-                  for line in fh:
-                      d = json.loads(line)
-                      ner_docs[d["id"]] = d.get("findings", [])
-              stack_docs = {}
-              with stack.open() as fh:
-                  for line in fh:
-                      d = json.loads(line)
-                      stack_docs[d["id"]] = d.get("findings", [])
-              diff_here = 0
-              for doc_id, ner_findings in ner_docs.items():
-                  s_findings = stack_docs.get(doc_id, [])
-                  # Compare (start, end, type) tuples — scores can wobble
-                  # by sub-epsilon on otherwise-identical spans, but a
-                  # firing flat recognizer should add NEW spans (or merge
-                  # to different end positions) somewhere.
-                  n_tup = sorted((f["start"], f["end"], f["type"]) for f in ner_findings)
-                  s_tup = sorted((f["start"], f["end"], f["type"]) for f in s_findings)
-                  if n_tup != s_tup:
-                      diff_here += 1
-                      differing_docs += 1
-              per_corpus.append((corpus_dir.name, diff_here, len(ner_docs)))
-              print(f"  {corpus_dir.name}: {diff_here}/{len(ner_docs)} docs where stack diverges from ner")
-          if pairs == 0:
-              print("\nGuard rail FAILED: no anonde-ner / anonde-ner-stack cell pairs found")
-              sys.exit(1)
-          total_docs = sum(n for _, _, n in per_corpus)
-          corpora_with_diff = sum(1 for _, d, _ in per_corpus if d > 0)
-          # Two-part threshold to catch the "barely diverges" failure mode
-          # (cache-restored stale cells where 9 of 8500 docs happen to
-          # differ in scoring-noise ways but the flat recognizer never
-          # actually fired). A healthy stack should change findings on
-          # >= 1% of docs total AND on >= 25% of populated corpus pairs.
-          min_doc_pct = 1.0  # percent of total docs
-          min_corpus_pct = 25.0  # percent of populated corpus pairs
-          doc_pct = (differing_docs / total_docs * 100.0) if total_docs else 0.0
-          corpus_pct = (corpora_with_diff / pairs * 100.0) if pairs else 0.0
-          fail = doc_pct < min_doc_pct or corpus_pct < min_corpus_pct
-          print("")
-          print(f"Summary: {differing_docs} of {total_docs} docs diverge ({doc_pct:.2f}%);")
-          print(f"         {corpora_with_diff} of {pairs} corpus pairs show any divergence ({corpus_pct:.1f}%).")
-          if fail:
-              print("")
-              print("Guard rail FAILED: anonde-ner-stack diverges from anonde-ner")
-              print(f"on too few docs/corpora to indicate the LARGE flat recognizer")
-              print(f"is actually firing.")
-              print(f"  - need >= {min_doc_pct}% of docs to diverge; got {doc_pct:.2f}%")
-              print(f"  - need >= {min_corpus_pct}% of corpus pairs to show ANY diff; got {corpus_pct:.1f}%")
-              print("")
-              print("Common causes:")
-              print("  - LARGE model download failed (check bench-cell logs for")
-              print("    'gliner-flat: INIT FAILED:' / 'recognizer error (swallowed)')")
-              print("  - GLINER_LARGE_ONNX_FILE points at a non-existent HF path")
-              print("  - actions/cache restored stale cells from a run with a bug")
-              print("    (bump rv* in the cache key to force fresh re-runs)")
-              sys.exit(1)
-          print("Guard rail OK: flat recognizer is firing across the matrix.")
-          PYEOF
-
       - name: Compute snapshot label
         id: label
         run: |
@@ -707,7 +653,7 @@ jobs:
             echo "## anonde bench — full matrix (parallelised)"
             echo ""
             echo "_Run: ${{ github.event_name }} · label: ${{ steps.label.outputs.label }}_"
-            echo "_Engines (6): anonde-patterns, anonde-ner (default NER image), anonde-ner-stack (premium NER image — BASE + LARGE flat stacked), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
+            echo "_Engines (5): anonde-patterns, anonde-ner (default NER image), gliner-py, presidio, openai-pf (subsampled — 40 docs/corpus)_"
             echo "_Corpora in matrix: 30, across 6 domains × 5 languages._"
             echo "_New since Phase 0: ai4privacy de/fr/it/es (Phase 1) · MAPA en/de/es/fr/it legal (Phase 2) · synth_finance en/de/es/fr/it + synth_logs (Phase 3) · synth_clinical en/fr/it + meddocan_es (Phase 4)._"
             echo "_Excluded from the matrix: pmc_de / wiki_de (precision-probe, no gold), conll2003_de (loader-gated), ggponc_de (DUA registration)._"
@@ -743,7 +689,7 @@ jobs:
           title: "bench: refresh REPORT_MATRIX (${{ steps.label.outputs.label }})"
           body: |
             Weekly auto-refresh of `bench/REPORT_MATRIX.md` from the full
-            30-corpus × 8-engine matrix.
+            30-corpus × 5-engine matrix.
 
             - Trigger: `${{ github.event_name }}`
             - Label: `${{ steps.label.outputs.label }}`

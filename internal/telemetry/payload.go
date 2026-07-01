@@ -41,7 +41,7 @@ type Heartbeat struct {
 	Arch string `json:"arch"`
 
 	// Backend is the active analyzer backend
-	// (patterns|gliner|gliner-flat|gliner-stack|gliner-ensemble).
+	// (patterns|gliner|gliner-flat).
 	// Set once at boot; informs which deployment shape the post-launch
 	// roadmap should harden first.
 	Backend string `json:"backend"`

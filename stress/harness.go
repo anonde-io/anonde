@@ -12,9 +12,9 @@
 //     actual production artefact — env defaults, baked models, glibc
 //     base image, CGO + libonnxruntime, tesseract + poppler, the works.
 //     In-process Go boot misses most of that.
-//   - testcontainers-go consumes the existing Dockerfile.anonde{,-ner,
-//     -ner-stack} unchanged — same image a self-hoster would pull.
-//   - One harness, three variants, comparable metrics.
+//   - testcontainers-go consumes the existing Dockerfile.anonde{,-ner}
+//     unchanged — same image a self-hoster would pull.
+//   - One harness, two variants, comparable metrics.
 //
 // What this file is NOT: a tuning oracle. The thresholds in
 // stress_test.go are pass/fail guards against regressions, not
@@ -77,18 +77,6 @@ var Variants = []Variant{
 		HasNER:       true,
 		HasPDF:       true,
 		BuildTimeout: 15 * time.Minute,
-	},
-	{
-		Name:       "ner-stack",
-		Dockerfile: "Dockerfile.anonde-ner-stack",
-		Env: map[string]string{
-			"GLINER_POOL_SIZE":               "2",
-			"ANONDE_GLINER_FLAT_POOL_SIZE":   "1",
-			"ANONDE_MAX_CONCURRENT_REQUESTS": "3",
-		},
-		HasNER:       true,
-		HasPDF:       true,
-		BuildTimeout: 20 * time.Minute,
 	},
 }
 

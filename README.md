@@ -184,8 +184,8 @@ PDFs are a first-class HTTP endpoint, not a separate binary. Two surfaces:
 
 When the text layer is empty or too short (an image-only scan or
 photo-to-PDF), both surfaces transparently rasterise each page and OCR it
-before running the analyzer — no caller change. The `anonde-ner` /
-`anonde-ner-stack` images bundle `poppler-utils` + `tesseract-ocr`
+before running the analyzer — no caller change. The `anonde-ner` image
+bundles `poppler-utils` + `tesseract-ocr`
 (`eng+deu+fra+spa+ita+ron`), so OCR and the YOLOS signature redactor are on
 by default there; the patterns-only image stays ~12 MB and skips them.
 

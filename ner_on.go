@@ -44,26 +44,9 @@ func DefaultAnalyzerEngineWithGLiNERFlatConfig(cfg recognizers.GLiNERConfig) *an
 	return analyzer.NewAnalyzerEngine(registry)
 }
 
-// DefaultAnalyzerEngineWithGLiNEREnsemble wires a pre-built
-// EnsembleGLiNERRecognizer into the standard pattern-recognizer
-// registry. The ensemble itself is constructed by
-// recognizers.NewEnsembleGLiNERRecognizer / EnsembleFromEnv, so this
-// constructor is intentionally thin; the multi-model stacking logic
-// lives in the ensemble file, and this is only the analyzer-engine
-// glue.
-//
-// Real implementation only; ner_off.go's stub log.Fatalfs.
-func DefaultAnalyzerEngineWithGLiNEREnsemble(ens *recognizers.EnsembleGLiNERRecognizer) *analyzer.AnalyzerEngine {
-	registry := analyzer.NewRecognizerRegistry()
-	registry.Add(ens)
-	registry.Add(patternRecognizers()...)
-	return analyzer.NewAnalyzerEngine(registry)
-}
-
 // DefaultAnalyzerEngineWithGLiNERPool wires a pre-built GLiNERPool
 // (N parallel span-decoder GLiNER instances) into the standard
-// pattern-recognizer registry. Mirror of
-// DefaultAnalyzerEngineWithGLiNEREnsemble; the pool is constructed by
+// pattern-recognizer registry. The pool is constructed by
 // recognizers.NewGLiNERPool, so this constructor is intentionally thin.
 //
 // The pool's Name() ("GLiNERPool") is registered in
