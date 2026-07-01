@@ -420,3 +420,111 @@ func validateUKNHS(s string) bool {
 	}
 	return check == int(s[9]-'0')
 }
+
+// ---------------------------------------------------------------------------
+// US healthcare identifiers (Tier 1). All three are high-precision by
+// construction: NPI and DEA carry an arithmetic check digit; MBI's strict
+// per-position character class is the precision guard. This is the gap
+// Presidio issue #2136 tracks, and the set is HIPAA Safe-Harbor-aligned.
+// ---------------------------------------------------------------------------
+
+// US NPI (National Provider Identifier): 10 digits issued by CMS/NPPES. The
+// 10th digit is a Luhn check computed over the NPPES ISO/IEC 7812 issuer
+// prefix "80840" prepended to the first 9 identifier digits. Equivalently,
+// running Luhn over "80840"+all-10-digits (prefix + 9 identifier + check
+// digit) must pass — the appended correct check digit makes the whole string
+// a multiple of 10. This rejects ~90% of random 10-digit numbers and is the
+// precision guard that lets the loose \d{10} surface run always-on.
+//
+// Reference: CMS "NPI check digit" specification.
+func validateUSNPI(s string) bool {
+	if len(s) != 10 || !digitsOnly(s) {
+		return false
+	}
+	return luhn("80840" + s)
+}
+
+// US DEA registration number: [A-Z][A-Z9][0-9]{7}. First char is the
+// registrant-type letter; second is the first letter of the registrant's last
+// name OR the digit 9 (used for certain mid-level / institutional
+// registrations). The 7th digit (last char) is a check digit: sum the
+// 1st/3rd/5th digits, add twice the sum of the 2nd/4th/6th digits, and the
+// units digit of that total must equal the 7th digit.
+//
+// Reference: DEA registration number check-digit algorithm.
+func validateUSDEA(s string) bool {
+	if len(s) != 9 {
+		return false
+	}
+	if s[0] < 'A' || s[0] > 'Z' {
+		return false
+	}
+	if !((s[1] >= 'A' && s[1] <= 'Z') || s[1] == '9') {
+		return false
+	}
+	if !digitsOnly(s[2:]) {
+		return false
+	}
+	// d(0)=d1 … d(6)=d7 over the seven trailing digits.
+	d := func(i int) int { return int(s[2+i] - '0') }
+	sum := (d(0) + d(2) + d(4)) + 2*(d(1)+d(3)+d(5))
+	return sum%10 == d(6)
+}
+
+// mbiExcludedLetter reports whether c is one of the six letters CMS omits from
+// MBI alphabetic / alphanumeric positions to avoid visual confusion with
+// digits: S, L, O, I, B, Z.
+func mbiExcludedLetter(c byte) bool {
+	switch c {
+	case 'S', 'L', 'O', 'I', 'B', 'Z':
+		return true
+	default:
+		return false
+	}
+}
+
+// mbiAlpha reports whether c is an allowed MBI alphabetic character:
+// A–Z minus the six excluded letters.
+func mbiAlpha(c byte) bool {
+	return c >= 'A' && c <= 'Z' && !mbiExcludedLetter(c)
+}
+
+// validateUSMBI validates a Medicare Beneficiary Identifier's strict 11-char
+// positional format (CMS spec). The MBI replaced the SSN-based HICN on
+// Medicare cards. There is no arithmetic checksum — the per-position character
+// classes ARE the precision guard:
+//
+//	pos 1         numeric 1–9 (non-zero)
+//	pos 2,5,8,9   alphabetic  (A–Z excluding S,L,O,I,B,Z)
+//	pos 3,6       alphanumeric (0–9 or the allowed letters)
+//	pos 4,7,10,11 numeric 0–9
+//
+// Input must already be separator-stripped (any display-form hyphens removed).
+func validateUSMBI(s string) bool {
+	if len(s) != 11 {
+		return false
+	}
+	// pos 1 (index 0): numeric, non-zero.
+	if s[0] < '1' || s[0] > '9' {
+		return false
+	}
+	// pos 4,7,10,11 (index 3,6,9,10): numeric.
+	for _, i := range []int{3, 6, 9, 10} {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	// pos 2,5,8,9 (index 1,4,7,8): alphabetic, non-excluded.
+	for _, i := range []int{1, 4, 7, 8} {
+		if !mbiAlpha(s[i]) {
+			return false
+		}
+	}
+	// pos 3,6 (index 2,5): alphanumeric, non-excluded.
+	for _, i := range []int{2, 5} {
+		if !((s[i] >= '0' && s[i] <= '9') || mbiAlpha(s[i])) {
+			return false
+		}
+	}
+	return true
+}

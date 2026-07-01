@@ -34,6 +34,11 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewUSITINRecognizer(),
 		recognizers.NewUSZipRecognizer(),
 		recognizers.NewMedicalLicenseRecognizer(),
+		// US healthcare identifiers (Tier 1): checksum/format-gated, so
+		// safe always-on like credit_card. Presidio issue #2136 gap.
+		recognizers.NewUSNPIRecognizer(),
+		recognizers.NewUSDEARecognizer(),
+		recognizers.NewUSMBIRecognizer(),
 		recognizers.NewENAnomalyRecognizer(),
 		recognizers.NewENOrganizationRecognizer(),
 		recognizers.NewENStreetRecognizer(),

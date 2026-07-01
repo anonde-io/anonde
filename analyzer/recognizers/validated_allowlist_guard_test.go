@@ -8,7 +8,7 @@ import (
 
 // TestValidatedStructuredAllowlist_NamesMatchConstructors guards the
 // validated-structured carve-out in analyzer/result.go: it instantiates each of
-// the 17 checksum/validator-backed recognizers via its real constructor and
+// the 20 checksum/validator-backed recognizers via its real constructor and
 // asserts the resulting Name() is on the carve-out allowlist
 // (analyzer.IsValidatedStructuredName).
 //
@@ -38,6 +38,9 @@ func TestValidatedStructuredAllowlist_NamesMatchConstructors(t *testing.T) {
 		NewUKNHSRecognizer(),
 		NewDESteuerIDRecognizer(),
 		NewISINRecognizer(),
+		NewUSNPIRecognizer(),
+		NewUSDEARecognizer(),
+		NewUSMBIRecognizer(),
 	}
 
 	seen := make(map[string]bool, len(recs))
