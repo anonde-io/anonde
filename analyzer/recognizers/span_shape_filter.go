@@ -118,11 +118,17 @@ var (
 
 	// Clinical department / unit construct: "servicio de urología", "unidad
 	// de cuidados intensivos", "área de urgencias", "sección de cardiología".
-	// A specialty-bearing service/unit prefix + "de" + rest — always a
-	// hospital department, NEVER a named institution or a patient. The
-	// prefix set is Romance (es/ca); German lone departments are handled by
-	// the stoplist. Clinical-only (ClinicalNoise). Case-insensitive.
-	reClinicalDept = regexp.MustCompile(`(?i)^\s*(?:servicio|servei|unidad|unitat|[áa]rea|secci[oó]n|departamento|dpto\.?)\s+de\s+\S.*$`)
+	// A specialty-bearing service/unit prefix + "de" + a SHORT specialty
+	// (1–3 alphabetic words, optional trailing period). The tight tail matters:
+	// GLiNER sometimes glues a department onto a following named hospital
+	// ("Servicio de Urología. HULP", "Servicio de Urología Hospital Univ. La
+	// Fe"); dropping that whole span would leak the real institution, so the
+	// pattern deliberately does NOT match once the span runs past the specialty
+	// (a mid-span period+content or a 4th+ word ends the match), leaving those
+	// mixed spans for the resolver. The prefix set is Romance (es/ca); German
+	// lone departments are handled by the stoplist. Clinical-only
+	// (ClinicalNoise). Case-insensitive.
+	reClinicalDept = regexp.MustCompile(`(?i)^\s*(?:servicio|servei|unidad|unitat|[áa]rea|secci[oó]n|departamento|dpto\.?)\s+de\s+[a-záéíóúñü]+(?:\s+[a-záéíóúñü]+){0,2}\.?\s*$`)
 
 	// Lone health centre: "centro" or "centro de salud" (anchored, so a
 	// *named* centre "Centro de Salud de Vallecas" survives and stays
@@ -382,10 +388,12 @@ func clinicalRoleStoplist() []string {
 		"paciente", "pacientes", "enfermo", "enferma",
 		"médico", "medico", "médica", "medica", "doctor", "doctora",
 		"enfermero", "enfermera", "enfermería", "enfermeria",
-		"facultativo", "personal", "familiar", "familiares",
+		"facultativo", "personal",
+		// NB: family-relationship words (familiar/familiares, niño/niña, …) are
+		// deliberately NOT here — clinical de-id gold (meddocan) annotates
+		// relatives as PERSON, so dropping them would leak real PII.
 		// Sex / demographic markers (incl. the header abbreviations "h"/"m").
 		"varón", "varon", "mujer", "hombre",
-		"niño", "nino", "niña", "nina", "niños", "ninos", "niñas", "ninas",
 		"h", "m",
 		// Header / field labels.
 		"fecha", "edad", "sexo", "nombre", "apellidos", "apellido",
