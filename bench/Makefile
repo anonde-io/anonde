@@ -176,6 +176,24 @@ endif
 # scores it.
 ENGINES := anonde-patterns anonde-ner presidio gliner-py openai-pf
 
+# presidio-transformer is an ADDITIONAL, EN-only Presidio column: Presidio's
+# BEST English config (spaCy `en_core_web_trf` transformer) rendered ALONGSIDE
+# the `presidio` cell's default `en_core_web_lg`. It is deliberately NOT in
+# ENGINES, because it covers English corpora only — a DE/ES/FR/IT cell would be
+# a permanent "–". Instead it is appended to the render engine list only for
+# EN-inclusive renders (ENGINES_EN_TRF), and its cells are wired for
+# $(EN_CORPORA) only (see CELL_presidio_trf). Keep ENGINES_EN_TRF in sync with
+# ENGINES if you add/remove a base engine.
+ENGINES_EN_TRF := anonde-patterns anonde-ner presidio presidio-transformer gliner-py openai-pf
+
+# RUN_PRESIDIO_TRF=1 opts the (heavier — en_core_web_trf pulls torch) Presidio
+# transformer column into the full `matrix` / `render`: it appends the trf
+# column to the rendered report and pulls the EN trf cells into `matrix`.
+# Unset = every base target behaves exactly as before (no trf column, no trf
+# cells). The `matrix-en-presidio-trf` target enables it for an EN-only run.
+RUN_PRESIDIO_TRF ?=
+RENDER_ENGINES   := $(if $(RUN_PRESIDIO_TRF),$(ENGINES_EN_TRF),$(ENGINES))
+
 # openai-pf gating + subsample size. RUN_OPENAI_PF=1 enables the cell;
 # OPENAI_PF_SAMPLE is how many docs (deterministic, sorted by id) the
 # openai-pf runner scores. render_matrix.py scores openai-pf over only
@@ -196,7 +214,8 @@ OPENAI_PF_PYTHON  ?= $(OPENAI_PF_VENV)/bin/python
 MATRIX_REPORT := $(HERE)REPORT_MATRIX.md
 MATRIX_CSV    := $(HERE)results_matrix.csv
 
-.PHONY: help data matrix matrix-de matrix-en matrix-es matrix-fr matrix-it clean \
+.PHONY: help data matrix matrix-de matrix-en matrix-es matrix-fr matrix-it \
+        matrix-en-presidio-trf clean \
         $(addprefix corpus-,$(ALL_CORPORA)) \
         $(addprefix data-,$(ALL_CORPORA))
 
@@ -213,6 +232,7 @@ help:
 	@echo "  make matrix-es          Spanish subset only"
 	@echo "  make matrix-fr          French subset only"
 	@echo "  make matrix-it          Italian subset only"
+	@echo "  make matrix-en-presidio-trf  EN slice + Presidio en_core_web_trf (both Presidio configs)"
 	@echo "  make corpus-<NAME>      run the 4 always-on engines on a single corpus"
 	@echo "  make clean              remove generated data + reports + the matrix outputs"
 	@echo ""
@@ -364,6 +384,29 @@ $(CORPORA_DIR)/$(1)/data/anonde_presidio.jsonl: | data-$(1)
 	  echo "[matrix] WARN: presidio cell for $(1) failed — render will show as missing"
 endef
 
+# presidio-transformer cell: Presidio's BEST English config. Same runner as
+# CELL_presidio but with --engine transformer, which loads spaCy's
+# `en_core_web_trf` (transformer) model instead of the `en_core_web_lg`
+# default the `presidio` cell uses. EN-ONLY — trf is an English model, so this
+# define is expanded for $(EN_CORPORA) only and --language is hard-wired to en.
+# Distinct output file (anonde_presidio-transformer.jsonl) so it NEVER clobbers
+# the _lg `anonde_presidio.jsonl`; the render discovers it as the
+# `presidio-transformer` engine and routes its labels through the same
+# `presidio` label_map section (compare.py/_pmap_for match on the `presidio`
+# prefix). Warn-and-skip on failure and NOT .PHONY, exactly like CELL_presidio,
+# so a completed cell caches. The heavy trf/torch install is opt-in at the call
+# site (the presidio-trf-* targets / bench-full.yml), not a per-cell gate — the
+# recipe itself just runs.
+define CELL_presidio_trf
+$(CORPORA_DIR)/$(1)/data/anonde_presidio-transformer.jsonl: | data-$(1)
+	@echo "[matrix] $(1) x presidio-transformer (lang=en, en_core_web_trf)"
+	$(PYTHON) $(ROOT)/bench/runners/presidio.py \
+	  --in  $(CORPORA_DIR)/$(1)/data/corpus.jsonl \
+	  --out $(CORPORA_DIR)/$(1)/data/anonde_presidio-transformer.jsonl \
+	  --language en --engine transformer || \
+	  echo "[matrix] WARN: presidio-transformer cell for $(1) failed — render will show as missing"
+endef
+
 # gliner-py cell: Python sidecar; works on any corpus, English-friendly labels.
 # Script is named `gliner_sidecar.py` (not `gliner.py`) because a script
 # named `gliner.py` would shadow the installed `gliner` package on the
@@ -445,6 +488,10 @@ $(foreach c,$(ALL_CORPORA),\
   $(eval $(call CELL_presidio,$(c)))\
   $(eval $(call CELL_openai_pf,$(c))))
 
+# presidio-transformer cells — EN corpora ONLY (trf is an English model).
+$(foreach c,$(EN_CORPORA),\
+  $(eval $(call CELL_presidio_trf,$(c))))
+
 # Per-corpus convenience target — runs the always-on engines for one
 # corpus. openai-pf is deliberately NOT a prerequisite here: this is
 # the target the per-push bench (bench.yml) calls via `corpus-openmed`
@@ -473,10 +520,21 @@ openai-pf-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.
 $(addprefix openai-pf-,$(ALL_CORPORA)): openai-pf-%: \
     $(CORPORA_DIR)/%/data/anonde_openai-pf.jsonl
 
+# presidio-transformer cells, EN corpora only — separated out (like
+# openai-pf-cells) so ONLY the trf-aware targets pull them in; the default
+# `matrix` / per-language matrices never build them. bench-full.yml calls the
+# per-corpus `presidio-trf-<corpus>` target on its EN cells when opted in.
+.PHONY: presidio-trf-cells $(addprefix presidio-trf-,$(EN_CORPORA))
+presidio-trf-cells: $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_presidio-transformer.jsonl,$(EN_CORPORA)))
+
+$(addprefix presidio-trf-,$(EN_CORPORA)): presidio-trf-%: \
+    $(CORPORA_DIR)/%/data/anonde_presidio-transformer.jsonl
+
 # Materialise the full matrix (always-on engines + openai-pf), then
 # render the combined report. Run openai-pf with the gate on:
 #   make matrix RUN_OPENAI_PF=1
-matrix: $(addprefix corpus-,$(ALL_CORPORA)) openai-pf-cells render
+matrix: $(addprefix corpus-,$(ALL_CORPORA)) openai-pf-cells \
+        $(if $(RUN_PRESIDIO_TRF),presidio-trf-cells) render
 
 # Per-language subset matrices. Each depends on its corpora's always-on
 # cells plus the openai-pf cells (self-gated on RUN_OPENAI_PF). FR / IT
@@ -532,12 +590,32 @@ matrix-it: $(addprefix corpus-,$(IT_CORPORA)) \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
 
+# EN-only, on-demand: the always-on EN engines PLUS Presidio's transformer
+# (en_core_web_trf) config, rendered over the EN slice with BOTH Presidio
+# columns — the default _lg `presidio` and `presidio-transformer`. This is the
+# fast path to refresh the honest anonde-vs-Presidio-best-English comparison
+# without paying for the full ~60-min multilingual matrix. Needs the trf assets
+# installed locally:
+#   pip install presidio-analyzer spacy spacy-transformers
+#   python -m spacy download en_core_web_trf
+.PHONY: matrix-en-presidio-trf
+matrix-en-presidio-trf: $(addprefix corpus-,$(EN_CORPORA)) \
+                        presidio-trf-cells \
+                        $(addprefix $(CORPORA_DIR)/,$(addsuffix /data/anonde_openai-pf.jsonl,$(EN_CORPORA)))
+	$(PYTHON) $(HERE)scoring/render_matrix.py \
+	  --corpora-root $(CORPORA_DIR) \
+	  --corpus "$(EN_CORPORA)" \
+	  --engine "$(ENGINES_EN_TRF)" \
+	  --label-map $(HERE)scoring/label_map.yaml \
+	  --out $(MATRIX_REPORT) \
+	  --csv $(MATRIX_CSV)
+
 .PHONY: render
 render:
 	$(PYTHON) $(HERE)scoring/render_matrix.py \
 	  --corpora-root $(CORPORA_DIR) \
 	  --corpus "$(ALL_CORPORA)" \
-	  --engine "$(ENGINES)" \
+	  --engine "$(RENDER_ENGINES)" \
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)

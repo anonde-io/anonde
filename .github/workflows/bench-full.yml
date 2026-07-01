@@ -67,6 +67,11 @@ on:
         description: 'Optional artifact-label override (default: weekly-<date> or dispatch-<sha>)'
         required: false
         default: ''
+      run_presidio_trf:
+        description: 'Also run Presidio en_core_web_trf (transformer) on EN corpora — Presidio''s best English config. Heavier (pulls torch); EN-only; off on scheduled runs.'
+        type: boolean
+        required: false
+        default: false
 
 # Do NOT cancel an in-progress full bench — losing a 40-min run to a
 # non-bench push is worse than running two in series.
@@ -277,6 +282,27 @@ jobs:
               echo "no spaCy model mapping for corpus '${{ matrix.corpus }}'; skipping" ;;
           esac
 
+      # Presidio's BEST English config — spaCy's `en_core_web_trf` transformer
+      # model — via spacy-transformers (which pulls torch). This powers the
+      # `presidio-transformer` column, the honest second Presidio config next
+      # to the default `en_core_web_lg` `presidio` column. Gated TWO ways so it
+      # never bloats the default weekly run: (1) opt-in only — the
+      # workflow_dispatch `run_presidio_trf` boolean, so a scheduled run and
+      # any non-dispatch trigger skip it; (2) EN-only — trf is an English
+      # model, so the heavy ~430 MB model + spacy-transformers install runs
+      # solely on English cells.
+      - name: Install Presidio transformer model (EN, opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_presidio_trf }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.corpus }}" in
+            ai4privacy_en|conll2003_en|wnut_17|mapa_en|synth_finance_en|synth_logs|synth_clinical_en)
+              pip install spacy-transformers
+              python -m spacy download en_core_web_trf ;;
+            *)
+              echo "presidio-transformer is EN-only; corpus '${{ matrix.corpus }}' is not English — skipping trf install" ;;
+          esac
+
       # Cache the GLiNER PII model assets. The matrix uses
       # `knowledgator/gliner-pii-base-v1.0` (FP32 `onnx/model.onnx`),
       # the BASE GLiNER model the anonde-ner engine loads.
@@ -424,6 +450,23 @@ jobs:
           make -C bench corpus-${{ matrix.corpus }} PYTHON=python3
           make -C bench openai-pf-${{ matrix.corpus }} PYTHON=python3 RUN_OPENAI_PF=1
 
+      # Presidio-transformer (en_core_web_trf) cell — EN-only, opt-in. Writes
+      # anonde_presidio-transformer.jsonl alongside the _lg
+      # anonde_presidio.jsonl (never clobbers it), so the render can show BOTH
+      # Presidio configs on the English rows. The `presidio-trf-<corpus>`
+      # target only exists for EN corpora; the case guard keeps this a no-op on
+      # non-EN cells. Same opt-in gate as the install step above.
+      - name: Run Presidio-transformer cell (EN, opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_presidio_trf }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.corpus }}" in
+            ai4privacy_en|conll2003_en|wnut_17|mapa_en|synth_finance_en|synth_logs|synth_clinical_en)
+              make -C bench presidio-trf-${{ matrix.corpus }} PYTHON=python3 ;;
+            *)
+              echo "presidio-transformer is EN-only; corpus '${{ matrix.corpus }}' is not English — skipping trf cell" ;;
+          esac
+
       # Upload the cell's data dir as an artifact. The render job will
       # download every cell-* artifact and reassemble bench/corpora/.
       - name: Upload cell artifacts
@@ -496,9 +539,20 @@ jobs:
       # that file by default (it sits beside the script), so no extra flag
       # is needed here. A corpus missing from corpora.yaml still renders —
       # under an 'uncategorized' group, with a stderr warning.
+      # RUN_PRESIDIO_TRF=1 appends the EN-only `presidio-transformer` column
+      # (Presidio en_core_web_trf) to the rendered report — but only when the
+      # opt-in dispatch input asked for it AND its EN cells were produced
+      # above. On a scheduled run the input is unset, so the render is
+      # byte-for-byte the same as before this change.
       - name: Render REPORT_MATRIX (grouped by domain × language)
         run: |
-          make -C bench render PYTHON=python3
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ inputs.run_presidio_trf }}" = "true" ]; then
+            make -C bench render PYTHON=python3 RUN_PRESIDIO_TRF=1
+          else
+            make -C bench render PYTHON=python3
+          fi
 
       # Same canary as the per-push bench, but walks every gold-bearing
       # corpus and checks the GLiNER-backed anonde cell — the default

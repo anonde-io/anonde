@@ -618,6 +618,17 @@ SCORECARD_ANCHOR = "anonde-ner"
 # from a given run are skipped silently.
 SCORECARD_FRONT = ["anonde-ner"]
 
+# Engines that, by construction, cover only a SUBSET of the matrix's corpora.
+# Their columns render "–" on the corpora they don't target, and every
+# roll-up cell pools only over the corpora they actually ran on — the same
+# "partial coverage" idea as an engine benchmarked on a doc subsample
+# (openai-pf via --max-docs), lifted to the corpus axis. Currently:
+#   * presidio-transformer — Presidio's `en_core_web_trf` config is an English
+#     model, so it is wired for English corpora only (bench/Makefile
+#     CELL_presidio_trf). It is the second Presidio column on the EN rows,
+#     next to the default `en_core_web_lg` `presidio` column.
+EN_ONLY_ENGINES = frozenset({"presidio-transformer"})
+
 
 def _is_rival(engine: str) -> bool:
     """True for engines that count as a *baseline* in the anonde verdict.
@@ -1285,6 +1296,31 @@ def _verdict_cards(out: list[str], per_corpus_verdict: list[dict],
     out.append("")
 
 
+def _en_only_note(engines: list[str]) -> str | None:
+    """A blockquote flagging any EN-only engine column present in this render.
+
+    Reused wherever an EN-only engine (see `EN_ONLY_ENGINES`, e.g.
+    `presidio-transformer`) is a column: it marks the column as partial
+    coverage — its non-EN cells are `–` by design, not a failed run, and its
+    roll-up rows pool over the English corpora it ran on. Returns None when no
+    EN-only engine is present, so the note is emitted only when relevant.
+    """
+    present = [e for e in engines if e in EN_ONLY_ENGINES]
+    if not present:
+        return None
+    names = ", ".join(f"`{e}`" for e in present)
+    plural = "s" if len(present) > 1 else ""
+    return (
+        f"> **EN-only column{plural}** — {names}: English corpora only. "
+        f"`presidio-transformer` is Presidio's `en_core_web_trf` config (an "
+        f"English transformer model), benchmarked next to the default "
+        f"`en_core_web_lg` `presidio` column so the report shows both Presidio "
+        f"configs on English. Non-EN cells render `–` **by design** — not a "
+        f"failed run — and the roll-up rows pool leak rate over the English "
+        f"corpora only (partial coverage, like a subsampled engine). Compare "
+        f"against the other engines on the English rows only.\n")
+
+
 def _render(rows, label_map, corpora, engines, meta=None):
     """rows: dict[(corpus, engine)] = evaluate-result-or-None.
     meta: parsed corpora.yaml (domain/language metadata); may be {}.
@@ -1418,6 +1454,14 @@ def _render(rows, label_map, corpora, engines, meta=None):
     # per-language Σ), anonde-anchored on the default NER image. The per-cell
     # detail moves into the Detailed breakdown below.
     _scorecard(out, rows, groups, engines, _domain_name, _language_name)
+
+    # ---- EN-only column note ----------------------------------------
+    # If an EN-only engine (e.g. presidio-transformer) is a column, mark it as
+    # partial coverage so its "–" non-EN cells and EN-pooled roll-ups aren't
+    # misread as failures. No-op when no such engine is present.
+    en_only = _en_only_note(engines)
+    if en_only:
+        out.append(en_only)
 
     # ---- Precision (false-positive) scorecard -----------------------
     # Additive surfacing of the OTHER half of the trade-off: leak rate
