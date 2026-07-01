@@ -110,10 +110,14 @@ func main() {
 
 	nerLabels, nerLabelToEntity := resolveLabelSet(*labelSet)
 
-	// Legal label set applies its precision profile (role stoplist +
-	// statute/exhibit suppressor + shapes) by default, mirroring main.go.
-	if resolveLabelSetName(*labelSet) == "legal" {
+	// Legal / clinical label sets apply their precision profile by default,
+	// mirroring main.go: legal → role stoplist + statute/exhibit suppressor;
+	// clinical → multilingual role/field/department stoplist + department gate.
+	switch resolveLabelSetName(*labelSet) {
+	case "legal":
 		nerSpanFilter = upgradeToLegalSpanFilter(nerSpanFilter)
+	case "clinical":
+		nerSpanFilter = upgradeToClinicalSpanFilter(nerSpanFilter)
 	}
 
 	var (
@@ -385,6 +389,23 @@ func upgradeToLegalSpanFilter(sf recognizers.SpanFilterConfig) recognizers.SpanF
 		sf.Stoplist[k] = true
 	}
 	sf.LegalNoise = true
+	return sf
+}
+
+// upgradeToClinicalSpanFilter folds the clinical profile into an
+// already-enabled span filter: sets ClinicalNoise (the ORGANIZATION
+// department-context gate) and merges the multilingual clinical role/field/
+// department stoplist on top of the existing one (preserving operator
+// --stoplist extras). Mirrors upgradeToLegalSpanFilter.
+func upgradeToClinicalSpanFilter(sf recognizers.SpanFilterConfig) recognizers.SpanFilterConfig {
+	clinical := recognizers.ClinicalSpanFilter()
+	if !sf.Enabled {
+		return clinical
+	}
+	for k := range clinical.Stoplist {
+		sf.Stoplist[k] = true
+	}
+	sf.ClinicalNoise = true
 	return sf
 }
 

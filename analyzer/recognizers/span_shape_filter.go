@@ -13,6 +13,8 @@
 //     matrix in the span-filter scope-back.
 //
 // LegalNoise layers statute/exhibit ID rejection for GLINER_LABEL_SET=legal.
+// ClinicalNoise layers a hospital-department / unit gate on ORGANIZATION for
+// GLINER_LABEL_SET=clinical (plus a role/field/department stoplist).
 // Structured types (EMAIL/IBAN/CARD/...) are never touched by the shape rules.
 //
 // Not build-tagged on purpose — pure data, so it is unit-tested and benched in
@@ -113,6 +115,19 @@ var (
 
 	// Exhibit / attachment label: "K1", "Anlage K3". Legal-only.
 	reLegalExhibit = regexp.MustCompile(`^(?:Anlage\s+)?[A-Z]\d{1,3}$`)
+
+	// Clinical department / unit construct: "servicio de urología", "unidad
+	// de cuidados intensivos", "área de urgencias", "sección de cardiología".
+	// A specialty-bearing service/unit prefix + "de" + rest — always a
+	// hospital department, NEVER a named institution or a patient. The
+	// prefix set is Romance (es/ca); German lone departments are handled by
+	// the stoplist. Clinical-only (ClinicalNoise). Case-insensitive.
+	reClinicalDept = regexp.MustCompile(`(?i)^\s*(?:servicio|servei|unidad|unitat|[áa]rea|secci[oó]n|departamento|dpto\.?)\s+de\s+\S.*$`)
+
+	// Lone health centre: "centro" or "centro de salud" (anchored, so a
+	// *named* centre "Centro de Salud de Vallecas" survives and stays
+	// redacted). Clinical-only (ClinicalNoise). Case-insensitive.
+	reClinicalCentro = regexp.MustCompile(`(?i)^\s*centro(?:\s+de\s+salud)?\s*$`)
 )
 
 // isStructuralSurface reports whether the WHOLE trimmed surface is a
@@ -189,6 +204,13 @@ type SpanFilterConfig struct {
 	// statute ref ("§ 29 ZPO") or exhibit label ("K1", "Anlage K3").
 	// Legal-only — set by LegalSpanFilter; consulted only when Enabled.
 	LegalNoise bool
+
+	// ClinicalNoise additionally rejects ORGANIZATION spans shaped like a
+	// hospital department / unit ("servicio de urología", "unidad de
+	// cuidados intensivos", "centro de salud"). Clinical-only — set by
+	// ClinicalSpanFilter; consulted only when Enabled. The role/field/
+	// department stoplist rides on the shared Stoplist (all fuzzy types).
+	ClinicalNoise bool
 }
 
 // Active reports whether the config rejects anything (either layer on).
@@ -342,6 +364,106 @@ func LegalSpanFilter(extra ...string) SpanFilterConfig {
 	return sf
 }
 
+// clinicalRoleStoplist is the multilingual (es / de / en) denylist of clinical
+// role, sex/demographic, field-label, discourse-stopword, and clinical-term
+// surfaces GLiNER's clinical label set recurrently mislabels as PERSON or
+// ORGANIZATION. Every entry is a NON-name surface form extracted from the
+// meddocan_es (1544 PERSON FP) + openmed (1277 PERSON FP, 536 ORG FP) FP
+// audit — patient/staff roles, sex markers, header labels, function words,
+// body-parts / conditions / drug-regimen tokens, and lone hospital
+// departments. Matched on the WHOLE lower-cased trimmed surface only, so a
+// real multi-token name ("Ignacio Rico Pedroza", "Patient Müller") is never
+// touched. Deliberately holds NO first name / surname / real place: dropping
+// any entry cannot lower recall by construction. Lower-cased.
+func clinicalRoleStoplist() []string {
+	return []string{
+		// ── Spanish (meddocan) ────────────────────────────────────────────
+		// Patient / staff roles + inflections.
+		"paciente", "pacientes", "enfermo", "enferma",
+		"médico", "medico", "médica", "medica", "doctor", "doctora",
+		"enfermero", "enfermera", "enfermería", "enfermeria",
+		"facultativo", "personal", "familiar", "familiares",
+		// Sex / demographic markers (incl. the header abbreviations "h"/"m").
+		"varón", "varon", "mujer", "hombre",
+		"niño", "nino", "niña", "nina", "niños", "ninos", "niñas", "ninas",
+		"h", "m",
+		// Header / field labels.
+		"fecha", "edad", "sexo", "nombre", "apellidos", "apellido",
+		"teléfono", "telefono", "domicilio", "nhc", "historia",
+		// Discourse / function words GLiNER over-fires on as PERSON.
+		"además", "ademas", "asimismo", "previamente", "posteriormente",
+		"actualmente", "durante", "tras",
+		// Clinical terms (body-part / condition / drug) mislabelled PERSON.
+		"lesión", "lesion", "tumor", "próstata", "prostata",
+		"fiebre", "dosis", "dolor",
+		// Lone hospital departments / units (ORG). Productive "servicio de
+		// <x>" / "unidad de <x>" / "centro de salud" go through ClinicalNoise.
+		"hospital", "urgencias", "uci", "planta", "consulta", "postoperatorio",
+		"centro", "unidad", "medicina interna",
+		"nefrología", "nefrologia", "urología", "urologia",
+		"oncología", "oncologia", "cardiología", "cardiologia",
+		"neurología", "neurologia", "neurocirugía", "neurocirugia",
+		"farmacia", "pediatría", "pediatria", "ginecología", "ginecologia",
+		"traumatología", "traumatologia", "radiología", "radiologia",
+		"psiquiatría", "psiquiatria", "dermatología", "dermatologia",
+		"digestivo", "hematología", "hematologia",
+		"endocrinología", "endocrinologia", "reumatología", "reumatologia",
+		"neumología", "neumologia", "anestesia",
+		"rehabilitación", "rehabilitacion",
+
+		// ── German (openmed) ──────────────────────────────────────────────
+		// Patient / staff roles + inflections.
+		"patient", "patientin", "patienten", "patientinnen", "pat", "pat.",
+		"arzt", "ärztin", "arztin", "oberarzt", "oberärztin", "chefarzt",
+		"assistenz", "assistent", "assistentin",
+		"direktor", "direktorin", "klinikvorstand",
+		"pfleger", "pflegerin", "schwester",
+		// Header / field labels.
+		"tel", "tel.", "fax", "tag", "datum",
+		"anamnese", "befund", "kontrolle", "aufnahme", "diagnose",
+		"name", "vorname", "nachname", "geburtsdatum",
+		// Common German function words over-fired as PERSON.
+		"mit", "sehr", "keine", "es", "und", "oder",
+		// Clinical terms (organ / regimen) mislabelled PERSON.
+		"leber", "therapie", "folfox", "zyklus",
+		// Lone hospital departments / units (ORG).
+		"klinik", "klinikum", "ambulanz", "poliklinik", "notaufnahme",
+		"intensivstation", "station", "praxis",
+
+		// ── English (multilingual coverage) ───────────────────────────────
+		// Roles / sex / demographic.
+		"patient", "patients", "physician", "clinician", "provider",
+		"doctor", "nurse", "caregiver", "subject",
+		"male", "female", "man", "woman", "boy", "girl",
+		// Header / field labels.
+		"date", "age", "sex", "ward", "admission", "discharge", "diagnosis",
+		"dob",
+		// Clinical terms.
+		"lesion", "tumor", "tumour", "fever", "dose", "prostate", "liver",
+		"therapy", "cycle",
+		// Lone hospital departments / units (ORG).
+		"hospital", "clinic", "emergency", "icu", "department", "unit",
+		"pharmacy", "surgery", "cardiology", "neurology", "oncology",
+		"radiology", "pediatrics", "paediatrics", "urology", "nephrology",
+		"dermatology", "psychiatry", "internal medicine",
+		"intensive care unit", "medical center", "medical centre",
+		"health center", "health centre",
+	}
+}
+
+// ClinicalSpanFilter layers the clinical precision profile on the universal
+// filter: the multilingual role/field/department stoplist + the ClinicalNoise
+// department gate (drops ORGANIZATION spans shaped like "servicio de <x>" /
+// "unidad de <x>" / "centro de salud"). Wired when GLINER_LABEL_SET=clinical.
+// Recall-safe by construction — every rule matches only a whole-surface known
+// non-name or a department construct, never a patient identity. Extra terms
+// lower-cased.
+func ClinicalSpanFilter(extra ...string) SpanFilterConfig {
+	sf := NewSpanFilter(append(clinicalRoleStoplist(), extra...)...)
+	sf.ClinicalNoise = true
+	return sf
+}
+
 // Reject is the exported form of rejectSpanSurface for out-of-package
 // callers (the bench/probes/span_shape probe). Production recognizers call
 // the unexported method directly.
@@ -397,6 +519,16 @@ func (f SpanFilterConfig) rejectSpanSurface(entityType, surface string) bool {
 	}
 
 	if len(f.Stoplist) > 0 && f.Stoplist[strings.ToLower(s)] {
+		return true
+	}
+
+	// Clinical department / unit gate (ORGANIZATION-only): drops the
+	// productive "servicio de <specialty>" / "unidad de <x>" constructs and a
+	// lone "centro (de salud)" that GLiNER's clinical label set tags as
+	// ORGANIZATION but which are hospital services/wards, never a named
+	// institution. ClinicalNoise-only; a *named* centre survives (anchored).
+	if f.ClinicalNoise && entityType == "ORGANIZATION" &&
+		(reClinicalDept.MatchString(s) || reClinicalCentro.MatchString(s)) {
 		return true
 	}
 

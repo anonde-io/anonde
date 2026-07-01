@@ -787,7 +787,9 @@ func glinerClassThresholdsFromEnv() map[string]float64 {
 // glinerSpanFilterFromEnv builds the GLiNER post-filter. The money guard
 // (currency amounts are never a PII ID) is always on for the NER path.
 // GLINER_LABEL_SET=legal applies the legal precision profile (role stoplist
-// + statute/exhibit suppressor + shapes) by default — leak-safe on the legal
+// + statute/exhibit suppressor + shapes) by default; GLINER_LABEL_SET=clinical
+// applies the clinical precision profile (multilingual role/field/department
+// stoplist + department-context gate) by default — both leak-safe on their
 // corpora. For other label sets the broader structural shape filter is
 // opt-in (GLINER_SPAN_FILTER / GLINER_STRICT), since it overlaps gold on
 // PII-dense corpora. GLINER_STOPLIST appends extra denylist terms.
@@ -800,8 +802,11 @@ func glinerSpanFilterFromEnv() recognizers.SpanFilterConfig {
 			}
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("GLINER_LABEL_SET")), "legal") {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GLINER_LABEL_SET"))) {
+	case "legal":
 		return recognizers.LegalSpanFilter(extra...)
+	case "clinical":
+		return recognizers.ClinicalSpanFilter(extra...)
 	}
 	if boolFromEnv("GLINER_SPAN_FILTER", false) || boolFromEnv("GLINER_STRICT", false) {
 		return recognizers.StrictSpanFilter(extra...)

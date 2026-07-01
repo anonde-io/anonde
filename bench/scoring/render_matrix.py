@@ -674,51 +674,113 @@ def _fmt_rate(r: float | None, best: bool = False) -> str:
 # as a trivial secondary column in the detail grid.
 
 
-def _partial_pred_tally(cell: dict | None) -> tuple[int, int]:
-    """(tp, fp) summed across all entity types in a cell's partial view.
+def _partial_pred_tally(cell: dict | None,
+                        exclude_zero_gold: bool = True) -> tuple[int, int]:
+    """(tp, fp) summed across entity types in a cell's partial view.
 
     tp + fp = total predicted spans the engine emitted (in the partial
     view a predicted span is exactly one of tp/fp). Returns (0, 0) for a
     missing cell so callers can pool unconditionally.
+
+    **Precision-scorecard zero-gold rule** (`exclude_zero_gold=True`, the
+    default — this is the ONLY caller of this function, all of them
+    precision roll-ups): an entity type the corpus annotates ZERO gold
+    spans of (`t_tp + t_fn == 0` in this partial tally) is *unscoreable
+    for precision*. With no gold of that type present, every prediction
+    of it is mechanically a false positive against absent gold — a schema
+    gap (the corpus annotates PERSON but not LOCATION), not real
+    over-redaction. Its tp/fp are therefore dropped from the precision
+    pool. This is a scorecard-aggregation choice only: the raw per-type
+    counts in `cell["partial"]` (and in `results_matrix.csv`) are left
+    intact, and leak-rate / recall never call this function.
+
+    Pass `exclude_zero_gold=False` to recover the raw tally including the
+    zero-gold types — used solely for the "raw incl. zero-gold"
+    transparency line under the precision scorecard.
     """
     if cell is None:
         return 0, 0
-    tp = sum(v[0] for v in cell["partial"].values())
-    fp = sum(v[1] for v in cell["partial"].values())
+    tp = fp = 0
+    for (t_tp, t_fp, t_fn) in cell["partial"].values():
+        if exclude_zero_gold and (t_tp + t_fn) == 0:
+            # Zero gold of this type in this corpus ⇒ unscoreable for
+            # precision; drop it from the pool (see docstring).
+            continue
+        tp += t_tp
+        fp += t_fp
     return tp, fp
 
 
-def _cell_partial_precision(rows: dict, corpus: str,
-                            engine: str) -> tuple[float | None, int, int]:
+def _cell_partial_precision(rows: dict, corpus: str, engine: str,
+                            exclude_zero_gold: bool = True
+                            ) -> tuple[float | None, int, int]:
     """Partial precision for one (corpus, engine) cell.
 
     Returns (precision, tp, fp); precision is None when the engine emitted
-    no spans at all (tp + fp == 0) — nothing redacted, so the
-    "fraction of redactions that were real" question is undefined.
+    no *scoreable* spans (tp + fp == 0) — either nothing redacted, or every
+    prediction fell in a zero-gold type that the scorecard rule excludes.
     """
-    tp, fp = _partial_pred_tally(rows.get((corpus, engine)))
+    tp, fp = _partial_pred_tally(rows.get((corpus, engine)), exclude_zero_gold)
     if tp + fp == 0:
         return None, tp, fp
     return tp / (tp + fp), tp, fp
 
 
-def _group_partial_precision(rows: dict, corpora: list[str],
-                             engine: str) -> tuple[float | None, int, int]:
+def _group_partial_precision(rows: dict, corpora: list[str], engine: str,
+                             exclude_zero_gold: bool = True
+                             ) -> tuple[float | None, int, int]:
     """Pooled (micro-averaged) partial precision over a set of corpora —
     Σtp / Σ(tp+fp) across the group, the same doc/count-weighting style
     `_group_leak` uses for leak rate (larger corpora count proportionally).
 
+    The zero-gold precision rule (see `_partial_pred_tally`) is applied by
+    default: a `(corpus, entity-type)` cell with no gold of that type is
+    dropped from the pool. Empty-gold corpora — whose every type is
+    zero-gold — therefore contribute nothing and fall out of the
+    aggregation automatically, needing no per-corpus config.
+
     Returns (precision, total_tp, total_fp); precision is None when no
-    engine span was emitted anywhere in the group.
+    scoreable engine span was emitted anywhere in the group.
     """
     tp_sum = fp_sum = 0
     for c in corpora:
-        tp, fp = _partial_pred_tally(rows.get((c, engine)))
+        tp, fp = _partial_pred_tally(rows.get((c, engine)), exclude_zero_gold)
         tp_sum += tp
         fp_sum += fp
     if tp_sum + fp_sum == 0:
         return None, tp_sum, fp_sum
     return tp_sum / (tp_sum + fp_sum), tp_sum, fp_sum
+
+
+def _precision_exclusion_stats(rows: dict, corpora: list[str],
+                               engines: list[str]) -> tuple[int, int]:
+    """Count what the zero-gold precision rule excludes, for the footnote.
+
+    Returns (n_typecells, n_corpora):
+      * n_typecells — distinct `(corpus, entity-type)` pairs where the
+        corpus annotates zero gold of that type yet at least one engine
+        predicted a span of it (the schema-gap FP groups dropped from the
+        precision pool). Counted once per (corpus, type), engine-agnostic.
+      * n_corpora — corpora whose gold is empty for EVERY type
+        (`total_gold == 0` across every engine cell): the whole corpus
+        drops out of the precision aggregation.
+    """
+    excluded_typecells: set[tuple[str, str]] = set()
+    empty_gold_corpora: set[str] = set()
+    for c in corpora:
+        cells = [rows[(c, e)] for e in engines if (c, e) in rows]
+        if not cells:
+            continue
+        if all(cell["total_gold"] == 0 for cell in cells):
+            empty_gold_corpora.add(c)
+        for e in engines:
+            cell = rows.get((c, e))
+            if cell is None:
+                continue
+            for t, (tp, fp, fn) in cell["partial"].items():
+                if (tp + fn) == 0 and (tp + fp) > 0:
+                    excluded_typecells.add((c, t))
+    return len(excluded_typecells), len(empty_gold_corpora)
 
 
 def _cell_strict_precision(rows: dict, corpus: str,
@@ -1033,6 +1095,42 @@ def _precision_scorecard(out: list[str], rows: dict, groups: list,
         "8% (40 absolute spans) were over-redaction. Recall (leak rate) is "
         "in the scorecard above; this is the other half of the "
         "trade-off.\n")
+
+    # ---- transparency footnote: the zero-gold exclusion rule ----------
+    # Every precision number above pools only *scoreable* (corpus, type)
+    # cells — a type the corpus never annotates has no gold to be right
+    # about, so its predictions are mechanical FPs, not over-redaction
+    # (see `_partial_pred_tally`). This footnote states the rule, the
+    # count of what it drops, and — so nothing looks hidden — the RAW Σ
+    # precision that still includes every zero-gold cell.
+    n_cells, n_corp = _precision_exclusion_stats(rows, all_corpora, col_engines)
+    raw_bits: list[str] = []
+    for e in col_engines:
+        p_raw, _tp_raw, fp_raw = _group_partial_precision(
+            rows, all_corpora, e, exclude_zero_gold=False)
+        if p_raw is None:
+            continue
+        raw_bits.append(f"`{e}` {p_raw:.1%} ({fp_raw} fp)")
+    footnote = (
+        "> **Why some predictions are not counted** — a `(corpus, "
+        "entity-type)` cell where the gold annotates **zero** spans of that "
+        "type (`tp + fn == 0`) is *unscoreable for precision*: with no gold "
+        "of that type present, every prediction there is mechanically a "
+        "false positive against absent gold — a **schema gap** (e.g. a "
+        "corpus that annotates PERSON but not LOCATION), not real "
+        "over-redaction. Such cells are **excluded** from the precision "
+        "pool above, and an empty-gold corpus (every type zero-gold) drops "
+        "out entirely. This is a scorecard-aggregation choice only — the "
+        "raw per-type counts stay intact in `results_matrix.csv`, and "
+        "**leak-rate / recall are untouched** (they score against the full "
+        f"gold). Excluded here: **{n_cells} (corpus, type) cells** across "
+        f"**{n_corp} empty-gold corpora**.")
+    if raw_bits:
+        footnote += (" For full transparency, the raw Σ ALL precision "
+                     "*including* every zero-gold cell: "
+                     + " · ".join(raw_bits) + ".")
+    footnote += "\n"
+    out.append(footnote)
 
 
 def _precision_detail_grid(out: list[str], rows: dict, groups: list,
