@@ -115,6 +115,14 @@ func (g structuralGuardRecognizer) Analyze(ctx context.Context, text string, lan
 		if r.Start >= 0 && r.End <= len(text) && r.Start < r.End && isStructuralSurface(text[r.Start:r.End]) {
 			continue
 		}
+		// Corroboration gate: drop a lone capitalised PERSON candidate that
+		// sits on an FP-indicating structural surface (JSON key / label,
+		// contraction, "/<digit>" path) with no local name cue. Leak-safe by
+		// construction — never fires on a bare name in prose (see
+		// anomaly_corroboration.go).
+		if suppressAnomalyPerson(text, r.Start, r.End) {
+			continue
+		}
 		out = append(out, r)
 	}
 	return out, nil

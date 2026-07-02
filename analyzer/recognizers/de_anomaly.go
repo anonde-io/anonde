@@ -403,6 +403,17 @@ func (r *DEAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 		if isStructuralSurface(text[start:end]) {
 			return
 		}
+		// Corroboration gate: a lone capitalised token on an FP-indicating
+		// structural surface (JSON key / label before ':'/'=', an English
+		// contraction, or a "/<digit>" version path) with no local name cue is
+		// a structured-surface false positive, not a name. Leak-safe by
+		// construction — never fires on a bare name written in prose (see
+		// anomaly_corroboration.go). The DE multi-token path is ≥2 tokens so
+		// only titled single-name captures can reach here; those keep via the
+		// adjacent-title name cue.
+		if suppressAnomalyPerson(text, start, end) {
+			return
+		}
 		emitted[key] = struct{}{}
 		// Header/footer positional boost.
 		if start < headerEnd || start >= footerStart {

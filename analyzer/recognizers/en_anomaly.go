@@ -257,6 +257,16 @@ func (r *ENAnomalyRecognizer) Analyze(_ context.Context, text string, _ []string
 		if isStructuralSurface(text[start:end]) {
 			return
 		}
+		// Corroboration gate: a lone capitalised token on an FP-indicating
+		// structural surface (JSON key / label before ':'/'=', an English
+		// contraction, or a "/<digit>" version path) with no local name cue is
+		// a structured-surface false positive, not a name. Leak-safe by
+		// construction — never fires on a bare name written in prose (see
+		// anomaly_corroboration.go). Complements isStructuralSurface (token
+		// SHAPE) with token PUNCTUATION CONTEXT.
+		if suppressAnomalyPerson(text, start, end) {
+			return
+		}
 		key := [2]int{start, end}
 		if cur, ok := bestByKey[key]; ok && cur >= score {
 			return
