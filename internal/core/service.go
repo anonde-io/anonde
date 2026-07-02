@@ -219,7 +219,13 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (_ *Syn
 	anonCfg := anonymizer.AnonymizerConfig{Operators: anonymizer.OperatorMap{"*": syn}}
 	allFindings := make([]analyzer.RecognizerResult, 0, 8)
 
-	synText := func(input string) (string, error) {
+	// base is the byte offset of input within the submitted document; it
+	// shifts the analyzer's input-local finding offsets to document-relative
+	// ones before they land in the response. For the plain-text path base is
+	// 0; for JSON leaves / NDJSON+log lines it locates the leaf/line in the
+	// submitted document (see content.TransformJSONStringLeavesAt /
+	// TransformLinesAt for the exactness caveats).
+	synText := func(input string, base int) (string, error) {
 		input = content.SanitizeUTF8(content.StripANSI(input))
 		if strings.TrimSpace(input) == "" {
 			return input, nil
@@ -230,31 +236,39 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (_ *Syn
 		if err != nil {
 			return "", fmt.Errorf("analyze: %w", err)
 		}
-		allFindings = append(allFindings, findings...)
+		for _, finding := range findings {
+			finding.Start += base
+			finding.End += base
+			allFindings = append(allFindings, finding)
+		}
 		if len(findings) == 0 {
 			return input, nil
 		}
+		// Anonymize needs the input-local spans, so pass the unshifted
+		// findings here — only the response copy above is document-relative.
 		out, err := s.anonymize.Anonymize(input, findings, anonCfg)
 		if err != nil {
 			return "", fmt.Errorf("synthesize: %w", err)
 		}
 		return out.Text, nil
 	}
-	jsonLeafFn := func(value string) (string, error) { return synText(value) }
-	jsonDocFn := func(value string) (string, error) {
-		return content.TransformJSONStringLeaves(value, jsonLeafFn)
+	segmentFn := func(value string, base int) (string, error) { return synText(value, base) }
+	jsonDocFn := func(line string, base int) (string, error) {
+		return content.TransformJSONStringLeavesAt(line, func(value string, leafBase int) (string, error) {
+			return synText(value, base+leafBase)
+		})
 	}
 
 	var synthesized string
 	switch format {
 	case content.FormatText, content.FormatPDF:
-		synthesized, err = synText(analyzableContent)
+		synthesized, err = synText(analyzableContent, 0)
 	case content.FormatJSON:
-		synthesized, err = content.TransformJSONStringLeaves(analyzableContent, jsonLeafFn)
+		synthesized, err = content.TransformJSONStringLeavesAt(analyzableContent, segmentFn)
 	case content.FormatNDJSON:
-		synthesized, err = content.TransformLines(analyzableContent, true, jsonDocFn, synText)
+		synthesized, err = content.TransformLinesAt(analyzableContent, true, jsonDocFn, segmentFn)
 	case content.FormatLogs:
-		synthesized, err = content.TransformLines(analyzableContent, false, jsonDocFn, synText)
+		synthesized, err = content.TransformLinesAt(analyzableContent, false, jsonDocFn, segmentFn)
 	default:
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
@@ -328,7 +342,14 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 		analysisCfg.ScoreThreshold = s.defaultScore
 	}
 
-	anonymizeText := func(input string) (string, []analyzer.RecognizerResult, error) {
+	// anonymizeText anonymizes one input segment. base is the byte offset of
+	// that segment within the submitted document, used to translate the
+	// analyzer's segment-local finding offsets into the document-relative
+	// offsets the response (Findings + TokenRef.Start/End) is contracted to
+	// carry. For the plain-text path base is 0 (segment == document); for
+	// JSON string leaves and NDJSON / log lines it locates the leaf/line in
+	// the submitted document.
+	anonymizeText := func(input string, base int) (string, []analyzer.RecognizerResult, error) {
 		// All raw input is sanitized: invalid UTF-8 broken before the
 		// recognizers and ANSI escapes stripped. For text/json/pdf paths the
 		// caller hasn't done this; for ndjson/logs the line splitter has,
@@ -344,7 +365,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 			return "", nil, fmt.Errorf("analyze content: %w", err)
 		}
 		if len(localFindings) == 0 {
-			return input, localFindings, nil
+			return input, nil, nil
 		}
 		// Pre-merge same-type adjacent spans (e.g. GLiNER returns
 		// "Elena" and "Rossi" as separate PERSON findings; the
@@ -390,62 +411,67 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 			tokens = append(tokens, TokenRef{
 				Token:      token,
 				EntityType: finding.EntityType,
-				Start:      finding.Start,
-				End:        finding.End,
+				Start:      base + finding.Start,
+				End:        base + finding.End,
 			})
 		}
+		// Anonymize needs the input-local spans; keep localFindings unshifted
+		// for it and hand the caller a document-relative copy for the response.
 		result, err := s.anonymize.Anonymize(input, localFindings, cfg)
 		if err != nil {
 			return "", nil, fmt.Errorf("anonymize content: %w", err)
 		}
-		return result.Text, localFindings, nil
+		docFindings := make([]analyzer.RecognizerResult, len(localFindings))
+		for i, finding := range localFindings {
+			finding.Start += base
+			finding.End += base
+			docFindings[i] = finding
+		}
+		return result.Text, docFindings, nil
 	}
 
-	// jsonLeafFn handles a single JSON document (or an NDJSON line) by
-	// recursing through string leaves. textFn handles a plain text segment.
-	jsonLeafFn := func(value string) (string, error) {
-		out, localFindings, err := anonymizeText(value)
+	// segmentFn anonymizes one string segment (a JSON string leaf or a plain
+	// text / log line) at document offset base, accumulating its
+	// document-relative findings. jsonDocFn recurses a JSON document (or an
+	// NDJSON / logs JSON line) rooted at lineBase, composing the line offset
+	// with each leaf's in-line source offset.
+	segmentFn := func(value string, base int) (string, error) {
+		out, docFindings, err := anonymizeText(value, base)
 		if err != nil {
 			return "", err
 		}
-		findings = append(findings, localFindings...)
+		findings = append(findings, docFindings...)
 		return out, nil
 	}
-	jsonDocFn := func(value string) (string, error) {
-		return content.TransformJSONStringLeaves(value, jsonLeafFn)
-	}
-	textFn := func(value string) (string, error) {
-		out, localFindings, err := anonymizeText(value)
-		if err != nil {
-			return "", err
-		}
-		findings = append(findings, localFindings...)
-		return out, nil
+	jsonDocFn := func(line string, lineBase int) (string, error) {
+		return content.TransformJSONStringLeavesAt(line, func(value string, leafBase int) (string, error) {
+			return segmentFn(value, lineBase+leafBase)
+		})
 	}
 
 	anonymizedContent := analyzableContent
 	switch format {
 	case content.FormatText, content.FormatPDF:
-		out, localFindings, err := anonymizeText(analyzableContent)
+		out, docFindings, err := anonymizeText(analyzableContent, 0)
 		if err != nil {
 			return nil, err
 		}
 		anonymizedContent = out
-		findings = append(findings, localFindings...)
+		findings = append(findings, docFindings...)
 	case content.FormatJSON:
-		out, err := content.TransformJSONStringLeaves(analyzableContent, jsonLeafFn)
+		out, err := content.TransformJSONStringLeavesAt(analyzableContent, segmentFn)
 		if err != nil {
 			return nil, err
 		}
 		anonymizedContent = out
 	case content.FormatNDJSON:
-		out, err := content.TransformLines(analyzableContent, true, jsonDocFn, textFn)
+		out, err := content.TransformLinesAt(analyzableContent, true, jsonDocFn, segmentFn)
 		if err != nil {
 			return nil, err
 		}
 		anonymizedContent = out
 	case content.FormatLogs:
-		out, err := content.TransformLines(analyzableContent, false, jsonDocFn, textFn)
+		out, err := content.TransformLinesAt(analyzableContent, false, jsonDocFn, segmentFn)
 		if err != nil {
 			return nil, err
 		}

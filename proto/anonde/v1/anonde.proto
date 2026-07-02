@@ -163,6 +163,17 @@ service Service {
 }
 
 // Finding is one detected PII span. Mirrors analyzer.RecognizerResult.
+//
+// start / end are byte offsets into the SUBMITTED document (the analyzer
+// input) — where the PII was detected — not indices into the anonymized /
+// synthesized output (token replacement shifts those positions). The
+// offsets are document-relative for every content_format: for json / ndjson
+// / logs a string leaf or line is located by its source position in the
+// submitted document, so two PII values in different leaves / lines report
+// distinct, increasing offsets rather than both restarting at 0. Offsets are
+// exact for content without JSON escape sequences or ANSI codes (the common
+// case); past such a sequence a per-byte offset can drift by the extra
+// source bytes the sequence occupies.
 message Finding {
   int32 start = 1;
   int32 end = 2;
@@ -171,7 +182,10 @@ message Finding {
   string recognizer_name = 5;
 }
 
-// TokenRef is one minted token tied to a finding offset.
+// TokenRef is one minted token tied to a detected span. start / end use the
+// same document-relative byte-offset convention as Finding.start / end (see
+// above): the position of the detected cleartext in the SUBMITTED document,
+// not an index into anonymized_content.
 message TokenRef {
   string token = 1;
   string entity_type = 2;

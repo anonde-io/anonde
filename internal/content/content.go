@@ -231,6 +231,123 @@ func transformJSONValue(v any, fn func(string) (string, error)) (any, error) {
 	}
 }
 
+// TransformJSONStringLeavesAt is the offset-aware sibling of
+// TransformJSONStringLeaves. It walks the document in source order and,
+// for every string VALUE leaf, invokes fn with the byte offset (into
+// content) at which that leaf's decoded content begins — i.e. the byte
+// immediately after the leaf's opening quote. Object keys, numbers,
+// booleans and null pass through unchanged, exactly as
+// TransformJSONStringLeaves, and the re-serialised output is identical.
+//
+// The reported base is exact for string leaves that contain no escape
+// sequences (the common case): base + a leaf-local finding offset yields
+// the finding's byte position in content. For leaves that use JSON
+// escapes the base still locates the leaf, but a per-character mapping
+// past an escape drifts by the escape's extra source bytes.
+func TransformJSONStringLeavesAt(content string, fn func(value string, base int) (string, error)) (string, error) {
+	w := &jsonLeafWalker{src: content, dec: json.NewDecoder(strings.NewReader(content)), fn: fn}
+	updated, err := w.parseValue()
+	if err != nil {
+		return "", err
+	}
+	// Reject trailing data after the top-level value so this matches
+	// json.Unmarshal's single-document strictness (relied on by the
+	// NDJSON per-line parse and by ResolveAutoFormat's classification).
+	if _, err := w.dec.Token(); err != io.EOF {
+		if err != nil {
+			return "", fmt.Errorf("parse json content: %w", err)
+		}
+		return "", fmt.Errorf("parse json content: unexpected data after top-level value")
+	}
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(updated); err != nil {
+		return "", fmt.Errorf("marshal transformed json: %w", err)
+	}
+	return strings.TrimSpace(encoded.String()), nil
+}
+
+// jsonLeafWalker decodes a JSON document with a streaming json.Decoder so
+// it can report each string leaf's source position via Decoder.InputOffset,
+// while rebuilding the same map[string]any / []any / string / float64 /
+// bool / nil tree that json.Unmarshal produces (so re-serialisation is
+// byte-identical to TransformJSONStringLeaves).
+type jsonLeafWalker struct {
+	src string
+	dec *json.Decoder
+	fn  func(value string, base int) (string, error)
+}
+
+// parseValue reads exactly one JSON value from the decoder. Decode/syntax
+// errors are wrapped with the "parse json content" prefix; errors returned
+// by fn propagate unwrapped so callers can tell an analyzer failure apart
+// from a malformed document.
+func (w *jsonLeafWalker) parseValue() (any, error) {
+	before := int(w.dec.InputOffset())
+	tok, err := w.dec.Token()
+	if err != nil {
+		return nil, wrapJSONParse(err)
+	}
+	switch t := tok.(type) {
+	case json.Delim:
+		switch t {
+		case '{':
+			obj := map[string]any{}
+			for w.dec.More() {
+				keyTok, err := w.dec.Token()
+				if err != nil {
+					return nil, wrapJSONParse(err)
+				}
+				key, ok := keyTok.(string)
+				if !ok {
+					return nil, wrapJSONParse(fmt.Errorf("object key is not a string"))
+				}
+				val, err := w.parseValue()
+				if err != nil {
+					return nil, err
+				}
+				obj[key] = val
+			}
+			if _, err := w.dec.Token(); err != nil { // closing '}'
+				return nil, wrapJSONParse(err)
+			}
+			return obj, nil
+		case '[':
+			arr := []any{}
+			for w.dec.More() {
+				val, err := w.parseValue()
+				if err != nil {
+					return nil, err
+				}
+				arr = append(arr, val)
+			}
+			if _, err := w.dec.Token(); err != nil { // closing ']'
+				return nil, wrapJSONParse(err)
+			}
+			return arr, nil
+		default:
+			return nil, wrapJSONParse(fmt.Errorf("unexpected delimiter %q", t))
+		}
+	case string:
+		// The token span [before,after) covers optional separators plus the
+		// quoted string; the opening quote is the first '"' in it and the
+		// decoded content starts one byte later.
+		after := int(w.dec.InputOffset())
+		base := before
+		if rel := strings.IndexByte(w.src[before:after], '"'); rel >= 0 {
+			base = before + rel + 1
+		}
+		return w.fn(t, base)
+	default: // float64, bool, nil
+		return t, nil
+	}
+}
+
+func wrapJSONParse(err error) error {
+	return fmt.Errorf("parse json content: %w", err)
+}
+
 // TransformLines splits content on \n, applies fn to each line, and
 // reassembles preserving line terminators. Each line is independently
 // sanitised (ANSI strip + valid UTF-8). Empty lines pass through
@@ -284,6 +401,74 @@ func TransformLines(content string, forceJSON bool, jsonFn, textFn func(string) 
 				return "", fmt.Errorf("ndjson line does not start with { or [: %q", trimmed)
 			} else {
 				processed, err = textFn(cleaned)
+			}
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(processed)
+			out.WriteString(nl)
+		}
+
+		if rel < 0 {
+			break
+		}
+		i += rel + 1
+	}
+	return out.String(), nil
+}
+
+// TransformLinesAt is the offset-aware sibling of TransformLines. It
+// behaves identically (same splitting, sanitisation, JSON/text branch
+// selection and error surface) but additionally passes each line's byte
+// offset in content to the callbacks, so callers can turn line-local
+// offsets into document-relative ones.
+//
+// The reported base is the offset of the RAW line start in content. It is
+// exact for lines that carry no ANSI escapes or invalid UTF-8 (the common
+// case); when SanitizeUTF8/StripANSI rewrite the line, base still points at
+// the line start but per-byte offsets into the cleaned line drift by the
+// removed/replaced bytes.
+func TransformLinesAt(content string, forceJSON bool, jsonFn, textFn func(line string, base int) (string, error)) (string, error) {
+	if content == "" {
+		return content, nil
+	}
+	var out strings.Builder
+	out.Grow(len(content))
+
+	for i := 0; ; {
+		rel := strings.IndexByte(content[i:], '\n')
+		var line, nl string
+		lineStart := i
+		if rel < 0 {
+			line = content[i:]
+		} else {
+			line = content[i : i+rel]
+			nl = "\n"
+		}
+
+		if line == "" {
+			out.WriteString(nl)
+		} else {
+			cleaned := SanitizeUTF8(StripANSI(line))
+			var (
+				processed string
+				err       error
+			)
+			trimmed := strings.TrimSpace(cleaned)
+			looksJSON := len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
+			if looksJSON {
+				processed, err = jsonFn(cleaned, lineStart)
+				if err != nil {
+					if forceJSON {
+						return "", fmt.Errorf("ndjson line is not valid JSON: %w", err)
+					}
+					// logs: fall through to text on JSON parse failure
+					processed, err = textFn(cleaned, lineStart)
+				}
+			} else if forceJSON {
+				return "", fmt.Errorf("ndjson line does not start with { or [: %q", trimmed)
+			} else {
+				processed, err = textFn(cleaned, lineStart)
 			}
 			if err != nil {
 				return "", err
