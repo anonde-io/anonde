@@ -259,13 +259,45 @@ func (v *BoltVault) deleteRaw(tenantID, token string) error {
 	})
 }
 
-// Stats reports entry count from bbolt's KeyN metadata (O(1), no
-// bucket scan) and returns Bytes=-1 because computing the real byte
-// total would require a full bucket walk on every scrape; a non-
-// starter on a multi-MB vault. Operators who want a byte signal can
-// look at the file size on disk, which bbolt grows in page-sized
-// increments and is a strictly better metric than the JSON-payload
-// sum we could compute here.
+// liveEntryCount reports the number of non-expired rows in a bucket and
+// returns Bytes=-1 (see the note below).
+//
+// Fast path — expiry disabled (ttl <= 0): no row can ever be expired
+// (expirationFromNow returns the zero time, which expired() never treats as
+// past), so bbolt's KeyN from Bucket.Stats() IS the exact live count. KeyN is
+// derived from page metadata — O(pages), and crucially it decodes NO row — so
+// a persistent, no-TTL deployment no longer pays a per-row json.Unmarshal on
+// every /metrics scrape.
+//
+// Slow path — a TTL is set: we honor the "Stats drops expired-but-unswept
+// rows" contract (a deliberate choice so the gauge matches what Get would
+// return, not what physically sits on disk ahead of the sweeper), which
+// requires reading each row's expiry. That per-row scan is inherent to the
+// exclude-expired semantics and is kept here.
+//
+// Bytes=-1 because computing the real byte total would require a full bucket
+// walk decoding every payload on every scrape; a non-starter on a multi-MB
+// vault. Operators who want a byte signal can look at the file size on disk,
+// which bbolt grows in page-sized increments.
+func liveEntryCount(db *bolt.DB, bucket []byte, ttl time.Duration) int64 {
+	if ttl <= 0 {
+		return bucketKeyN(db, bucket)
+	}
+	return countLiveEntries(db, bucket)
+}
+
+// bucketKeyN returns bbolt's KeyN for a bucket without decoding any row.
+func bucketKeyN(db *bolt.DB, bucket []byte) int64 {
+	var n int64
+	_ = db.View(func(tx *bolt.Tx) error {
+		if b := tx.Bucket(bucket); b != nil {
+			n = int64(b.Stats().KeyN)
+		}
+		return nil
+	})
+	return n
+}
+
 // countLiveEntries counts the bucket's entries whose envelope has not
 // expired, matching what Get would actually return. bolt's KeyN would
 // over-count rows the background sweeper hasn't reclaimed yet, so we
@@ -295,7 +327,7 @@ func countLiveEntries(db *bolt.DB, bucket []byte) int64 {
 }
 
 func (v *BoltVault) Stats() core.VaultStats {
-	return core.VaultStats{Entries: countLiveEntries(v.db, []byte(bucketVault)), Bytes: -1}
+	return core.VaultStats{Entries: liveEntryCount(v.db, []byte(bucketVault), v.ttl), Bytes: -1}
 }
 
 // ─── BoltStore implements core.Store ───────────────────────────────
@@ -370,9 +402,9 @@ func (s *BoltStore) deleteRaw(tenantID, id string) error {
 	})
 }
 
-// Stats; see BoltVault.Stats for the rationale on Bytes=-1.
+// Stats; see liveEntryCount for the fast/slow-path rationale and Bytes=-1.
 func (s *BoltStore) Stats() core.StoreStats {
-	return core.StoreStats{Entries: countLiveEntries(s.db, []byte(bucketStore)), Bytes: -1}
+	return core.StoreStats{Entries: liveEntryCount(s.db, []byte(bucketStore), s.ttl), Bytes: -1}
 }
 
 // ─── Sweeper ───────────────────────────────────────────────────────
@@ -418,38 +450,73 @@ func runSweeper(stopCh <-chan struct{}, every time.Duration, do func()) {
 	}
 }
 
-// sweepBucket scans a bucket and deletes envelopes whose ExpiresAt is
-// in the past. Done in a single write transaction so concurrent
-// readers see either the pre-sweep or post-sweep view consistently.
+// sweepBatchSize bounds how many rows a single sweep transaction examines.
+// Sweeping in batches keeps the write lock short and the collected-key slice
+// small even against a large expired backlog, instead of holding one write
+// transaction (and one unbounded slice) across the entire bucket.
+const sweepBatchSize = 1024
+
+// sweepBucket deletes every envelope whose ExpiresAt is in the past, in
+// bounded write-transaction batches. Each batch examines at most
+// sweepBatchSize rows, deletes the expired ones it found, commits, then
+// resumes the scan just past the last row it looked at (Cursor.Seek), so no
+// row is decoded twice and the write lock is released between batches. When a
+// batch examines fewer than sweepBatchSize rows the bucket has been fully
+// scanned and the sweep is done.
+//
+// Unlike the old single-transaction sweep this is not atomic across the whole
+// bucket, but that is safe: Get already treats an expired row as not-found
+// regardless of whether the sweeper has physically deleted it yet, so a reader
+// can never observe an expired row as live mid-sweep.
 func sweepBucket(db *bolt.DB, bucket []byte) error {
-	return db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucket)
-		if b == nil {
+	var resumeFrom []byte // nil first batch → start at the beginning
+	for {
+		var (
+			lastKey  []byte
+			examined int
+		)
+		err := db.Update(func(tx *bolt.Tx) error {
+			b := tx.Bucket(bucket)
+			if b == nil {
+				return nil
+			}
+			c := b.Cursor()
+			var k, v []byte
+			if resumeFrom == nil {
+				k, v = c.First()
+			} else {
+				k, v = c.Seek(resumeFrom)
+			}
+			toDelete := make([][]byte, 0, 16)
+			for ; k != nil && examined < sweepBatchSize; k, v = c.Next() {
+				examined++
+				lastKey = append(lastKey[:0], k...) // resume point (own memory)
+				var env envelope
+				if json.Unmarshal(v, &env) != nil {
+					continue
+				}
+				if expired(env.ExpiresAt) {
+					toDelete = append(toDelete, append([]byte(nil), k...))
+				}
+			}
+			for _, dk := range toDelete {
+				if err := b.Delete(dk); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		// Fewer than a full batch examined → reached the end of the bucket.
+		if examined < sweepBatchSize {
 			return nil
 		}
-		c := b.Cursor()
-		// Collect keys to delete first; deleting via cursor mid-iteration
-		// is allowed by bbolt but the docs caution about subtle pitfalls,
-		// and our buckets are tiny so the extra slice is harmless.
-		var toDelete [][]byte
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			var env envelope
-			if json.Unmarshal(v, &env) != nil {
-				continue
-			}
-			if expired(env.ExpiresAt) {
-				keyCopy := make([]byte, len(k))
-				copy(keyCopy, k)
-				toDelete = append(toDelete, keyCopy)
-			}
-		}
-		for _, k := range toDelete {
-			if err := b.Delete(k); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+		// Resume strictly after the last examined row: appending 0x00 yields
+		// the smallest key sorting after lastKey, so Seek skips it.
+		resumeFrom = append(append([]byte(nil), lastKey...), 0x00)
+	}
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
