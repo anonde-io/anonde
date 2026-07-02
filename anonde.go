@@ -25,6 +25,12 @@ func patternRecognizers() []analyzer.EntityRecognizer {
 		recognizers.NewCryptoRecognizer(),
 		recognizers.NewSecretRecognizer(),
 		recognizers.NewDateTimeRecognizer(),
+		// Curated closed-list ORGANIZATION gazetteer (AI vendors + major
+		// tech). Fills the GLiNER recall gap on coined AI-era brands that
+		// carry no org prior (OpenAI/Anthropic/Claude score zero even at
+		// threshold 0.01). Language "*"; a real GLiNER org span still wins
+		// via the NER-preference rule.
+		recognizers.NewWellKnownOrgRecognizer(),
 
 		// United States / English-language clinical
 		recognizers.NewUSSocialSecurityRecognizer(),
