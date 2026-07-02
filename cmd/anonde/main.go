@@ -137,10 +137,19 @@ func main() {
 	httpAPI.SetMaxRequestBytes(maxBytes)
 
 	// ANONDE_MAX_CONCURRENT_REQUESTS gates total in-flight HTTP work.
-	// Unset / 0 / negative = unlimited (current behaviour).
+	// Unset / 0 / negative = unlimited (current behaviour). Recommended
+	// values: patterns-only ~8×vCPU, NER ~1.5×GLINER_POOL_SIZE, and never
+	// above available_RAM/MAX_CONTENT_BYTES so a burst of max-size bodies
+	// can't OOM the host. Full rationale in docs/DEPLOYMENT.md under
+	// "HTTP concurrency budget".
 	concurrencyCap := concurrencyCapFromEnv()
 	if concurrencyCap > 0 {
 		log.Printf("concurrency budget: max %d in-flight requests", concurrencyCap)
+	} else {
+		log.Printf("concurrency budget: UNLIMITED (ANONDE_MAX_CONCURRENT_REQUESTS unset) — " +
+			"set a cap on any internet-facing or memory-constrained deployment: " +
+			"patterns-only ~8×vCPU, NER ~1.5×GLINER_POOL_SIZE, never above " +
+			"available_RAM/MAX_CONTENT_BYTES; see docs/DEPLOYMENT.md")
 	}
 
 	// OpenAI-compatible proxy (POST /v1/chat/completions). Always

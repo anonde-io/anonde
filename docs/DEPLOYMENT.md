@@ -77,9 +77,35 @@ Memory cost is the binding constraint: ~500 MB per BASE instance, ~1.4 GB per LA
 
 ### HTTP concurrency budget
 
+**The default is unlimited. Set `ANONDE_MAX_CONCURRENT_REQUESTS` on any
+internet-facing or memory-constrained deployment.** With no cap, a burst of
+concurrent requests fans out to a goroutine per candidate recognizer per
+request, so live goroutines scale as `requests × recognizers`, and each
+in-flight request can hold up to `MAX_CONTENT_BYTES` (10 MiB default) of
+buffered body. A memory ceiling worth internalising:
+
+```
+peak in-flight memory ≈ ANONDE_MAX_CONCURRENT_REQUESTS × MAX_CONTENT_BYTES
+```
+
+At the 10 MiB default body cap, 32 concurrent requests can pin ~320 MiB before
+any NER model is loaded — enough to OOM a 512 MiB host on its own.
+
 | Var | Default | What |
 |---|---|---|
-| `ANONDE_MAX_CONCURRENT_REQUESTS` | unset (no limit) | Integer ≥ 1 caps in-flight requests at the HTTP layer. Over-cap requests return `HTTP 429 Too Many Requests` with `Retry-After: 1`. Use to backpressure bursts before they queue past the pool and OOM the host. Rule of thumb: set to `1.5 × GLINER_POOL_SIZE`. |
+| `ANONDE_MAX_CONCURRENT_REQUESTS` | unset (no limit) | Integer ≥ 1 caps in-flight requests at the HTTP layer. Over-cap requests return `HTTP 429 Too Many Requests` with `Retry-After: 1` immediately (no queueing). |
+
+Recommended starting points:
+
+| Variant | Suggested value | Reasoning |
+|---|---|---|
+| Patterns-only | `8 × vCPU` (e.g. `16` on a 2-vCPU box) | Regex fan-out is CPU-bound and sub-millisecond; concurrency is limited by cores, not by a model. |
+| NER (GLiNER) | `1.5 × GLINER_POOL_SIZE` | GLiNER pool instances serialise their inference; a little headroom over the pool lets a burst get a fast 429 instead of a deep mutex queue. Memory-bound, not CPU-bound. |
+
+Hard ceiling on any host: keep `ANONDE_MAX_CONCURRENT_REQUESTS ≤ available_RAM
+/ MAX_CONTENT_BYTES` so a burst of maximum-size bodies can't OOM the process.
+On a 256–512 MiB VM at the 10 MiB body cap that ceiling is ~16–32; lower
+`MAX_CONTENT_BYTES` if you need more concurrency than the ceiling allows.
 
 ### ORT session tuning
 
