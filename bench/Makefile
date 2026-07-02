@@ -250,6 +250,11 @@ help:
 	@echo "  finance/legal are wired end-to-end but need a real gold corpus"
 	@echo "  (see the FINANCE/LEGAL SCAFFOLD block in bench/Makefile)"
 	@echo ""
+	@echo "Independent scorer cross-check (opt-in; NOT in the matrix):"
+	@echo "  make verify-official CORPUS=<name> ENGINE=<name>   cross-check compare.py vs nervaluate"
+	@echo "  make verify-official-selftest                      conversion+math self-test (no external lib)"
+	@echo "  (install the library once: pip install nervaluate)"
+	@echo ""
 	@echo "Per-corpus targets also reachable directly:"
 	@echo "  make -C bench/corpora/<NAME> all ANONDE_BACKEND=<mode>"
 	@echo ""
@@ -619,6 +624,40 @@ render:
 	  --label-map $(HERE)scoring/label_map.yaml \
 	  --out $(MATRIX_REPORT) \
 	  --csv $(MATRIX_CSV)
+
+# ---- independent scorer cross-check (opt-in) ----------------------------------
+# Re-score ONE (corpus, engine) pair with a standard, widely-cited span-based
+# NER eval library (nervaluate — SemEval'13 / MUC strict + ent_type schemes)
+# and cross-check compare.py's own strict/partial F1 against it. This makes the
+# bench citable against published de-id baselines (i2b2/n2c2 span-based
+# strict+relaxed) instead of "anonde's homegrown scorer". It is deliberately
+# OUT of the matrix — opt-in, one cell at a time, so the default run is unbloated.
+#
+#   make verify-official CORPUS=openmed ENGINE=anonde-ner
+#
+#   CORPUS  a bench/corpora/<name> dir; its data/corpus.jsonl is the gold.
+#   ENGINE  an engine whose per-cell output data/anonde_<ENGINE>.jsonl exists
+#           (anonde-patterns | anonde-ner | presidio | gliner-py | openai-pf).
+#
+# Install the library once:  pip install nervaluate
+# Without it the run prints the pip line and still shows compare.py's numbers.
+#
+# The char-span -> library-format conversion + math have an inline synthetic
+# self-test that needs NO external library:
+#
+#   make verify-official-selftest
+CORPUS ?= openmed
+ENGINE ?= anonde-ner
+
+.PHONY: verify-official verify-official-selftest
+verify-official:
+	$(PYTHON) $(HERE)scoring/verify_official.py \
+	  --gold $(CORPORA_DIR)/$(CORPUS)/data/corpus.jsonl \
+	  --engine $(ENGINE)=$(CORPORA_DIR)/$(CORPUS)/data/anonde_$(ENGINE).jsonl \
+	  --label-map $(HERE)scoring/label_map.yaml
+
+verify-official-selftest:
+	$(PYTHON) $(HERE)scoring/verify_official.py --selftest
 
 clean:
 	@for c in $(ALL_CORPORA); do \
