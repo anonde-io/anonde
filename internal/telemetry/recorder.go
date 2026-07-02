@@ -37,6 +37,7 @@ func (t *teeRecorder) Request(op string) metrics.RequestSpan {
 	return &teeSpan{
 		inner:     t.inner.Request(op),
 		collector: t.collector,
+		op:        op,
 		start:     time.Now(),
 	}
 }
@@ -60,6 +61,7 @@ func (t *teeRecorder) PolicyDenied(reason string) { t.inner.PolicyDenied(reason)
 type teeSpan struct {
 	inner     metrics.RequestSpan
 	collector *Collector
+	op        string
 	start     time.Time
 }
 
@@ -73,6 +75,9 @@ func (s *teeSpan) AnalyzeDuration(backend string, seconds float64) {
 func (s *teeSpan) Done(status string) {
 	s.inner.Done(status)
 	s.collector.RecordRequest(time.Since(s.start).Seconds(), status)
+	if status == "ok" {
+		s.collector.RecordActivation(s.op)
+	}
 }
 
 // Compile-time interface assertions.

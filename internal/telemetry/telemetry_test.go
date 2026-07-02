@@ -157,6 +157,50 @@ func TestWrapRecorderTeesObservations(t *testing.T) {
 	}
 }
 
+func TestCollectorActivationSticky(t *testing.T) {
+	c := NewCollector()
+	hb0 := c.snapshot(time.Now())
+	if hb0.ActivatedAnonymize || hb0.ActivatedReveal {
+		t.Fatalf("fresh collector should report no activation: %+v", hb0)
+	}
+	c.RecordActivation("ingest")
+	hb1 := c.snapshot(time.Now())
+	if !hb1.ActivatedAnonymize {
+		t.Errorf("ingest should set ActivatedAnonymize")
+	}
+	if hb1.ActivatedReveal {
+		t.Errorf("ingest must not set ActivatedReveal")
+	}
+	hb2 := c.snapshot(time.Now())
+	if !hb2.ActivatedAnonymize {
+		t.Errorf("activation flag must survive snapshot (sticky)")
+	}
+	c.RecordActivation("reveal")
+	c.RecordActivation("delete")
+	hb3 := c.snapshot(time.Now())
+	if !hb3.ActivatedAnonymize || !hb3.ActivatedReveal {
+		t.Errorf("both milestones should be set: %+v", hb3)
+	}
+}
+
+func TestWrapRecorderRecordsActivation(t *testing.T) {
+	collector := NewCollector()
+	wrapped := WrapRecorder(metrics.NewNoop(), collector)
+
+	sp := wrapped.Request("ingest")
+	sp.Done("ok")
+	sp2 := wrapped.Request("reveal")
+	sp2.Done("error")
+
+	hb := collector.snapshot(time.Now())
+	if !hb.ActivatedAnonymize {
+		t.Errorf("successful ingest should set ActivatedAnonymize")
+	}
+	if hb.ActivatedReveal {
+		t.Errorf("failed reveal must not set ActivatedReveal")
+	}
+}
+
 func TestWrapRecorderNoCollectorDegrades(t *testing.T) {
 	inner := metrics.NewNoop()
 	got := WrapRecorder(inner, nil)

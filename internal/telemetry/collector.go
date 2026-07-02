@@ -37,6 +37,9 @@ type Collector struct {
 	latencyN   int  // number of samples currently held (≤ latencyRingSize)
 	latencyIdx int  // next write position (modulo latencyRingSize)
 	latencyAll bool // true once we've wrapped around at least once
+
+	activatedAnonymize bool
+	activatedReveal    bool
 }
 
 // NewCollector returns an initialised Collector with startedAt set
@@ -87,6 +90,20 @@ func (c *Collector) RecordEntity(entityType string) {
 	c.mu.Unlock()
 }
 
+func (c *Collector) RecordActivation(op string) {
+	if op != "ingest" && op != "reveal" {
+		return
+	}
+	c.mu.Lock()
+	switch op {
+	case "ingest":
+		c.activatedAnonymize = true
+	case "reveal":
+		c.activatedReveal = true
+	}
+	c.mu.Unlock()
+}
+
 // snapshot returns a Heartbeat partial filled with the dynamic
 // fields the Collector owns. The caller (sender) merges in the
 // static StaticInfo bundle before sending. Snapshotting RESETS the
@@ -97,11 +114,13 @@ func (c *Collector) snapshot(now time.Time) Heartbeat {
 	defer c.mu.Unlock()
 
 	hb := Heartbeat{
-		UptimeSeconds: int64(now.Sub(c.startedAt).Seconds()),
-		RequestCount:  c.requestCount,
-		ErrorCount:    c.errorCount,
-		EntityCounts:  c.entityCounts,
-		P95LatencyMs:  c.p95Locked(),
+		UptimeSeconds:      int64(now.Sub(c.startedAt).Seconds()),
+		RequestCount:       c.requestCount,
+		ErrorCount:         c.errorCount,
+		EntityCounts:       c.entityCounts,
+		P95LatencyMs:       c.p95Locked(),
+		ActivatedAnonymize: c.activatedAnonymize,
+		ActivatedReveal:    c.activatedReveal,
 	}
 
 	// Reset for the next window. EntityCounts is replaced (not

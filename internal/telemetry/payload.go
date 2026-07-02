@@ -73,6 +73,9 @@ type Heartbeat struct {
 	// sample (see Collector.ringSize). 0 when no requests landed in
 	// the window.
 	P95LatencyMs float64 `json:"p95_latency_ms"`
+
+	ActivatedAnonymize bool `json:"activated_anonymize"`
+	ActivatedReveal    bool `json:"activated_reveal"`
 }
 
 // HeartbeatAllowedFields is the canonical wire-key allowlist. The
@@ -92,4 +95,6 @@ var HeartbeatAllowedFields = map[string]struct{}{
 	"error_count":     {},
 	"entity_counts":   {},
 	"p95_latency_ms":  {},
+	"activated_anonymize": {},
+	"activated_reveal":    {},
 }
