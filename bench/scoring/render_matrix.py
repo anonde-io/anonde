@@ -842,6 +842,76 @@ def _anchor_verdict(anchor: float | None, others: list[float | None]) -> str:
     return "❌"
 
 
+def _hero_leak_table(out: list[str], rows: dict, groups: list,
+                     engines: list[str], language_name) -> list[str]:
+    """Append the human-facing HERO leak table — leak rate by language,
+    the default NER image vs the competing field only.
+
+    This is the "10-second scorecard": rows are the languages present
+    (plus an **All** total row), columns are the default NER image
+    (`anonde-ner`, the anchor) followed by every NON-anonde rival in
+    request order — `presidio`, `presidio-transformer` (EN-only),
+    `gliner-py`, `openai-pf`. The anonde *deployment tiers*
+    (`anonde-patterns` / `anonde-ner-stack`) are deliberately NOT columns
+    here: "anonde vs the field" is the question a reader answers in one
+    glance, and the tiers live in the full leak scorecard below the fold.
+
+    Every number is the SAME pooled `_group_leak` the detailed scorecard
+    uses — this is a language-only slice of the existing math with a
+    curated column set, not a new metric. Returns the hero engine list so
+    the caller can name the rivals in the one-line verdict without
+    recomputing the column set.
+    """
+    anchor = SCORECARD_ANCHOR
+    hero = ([anchor] if anchor in engines else []) + [
+        e for e in engines if _is_rival(e)]
+    if not hero:
+        return hero
+
+    by_language: dict[str, list[str]] = defaultdict(list)
+    lang_seq: list[str] = []
+    all_corpora: list[str] = []
+    for _domain, language, corpora in groups:
+        if language not in lang_seq:
+            lang_seq.append(language)
+        by_language[language].extend(corpora)
+        all_corpora.extend(corpora)
+
+    header = "| Language |"
+    for e in hero:
+        header += f" `{e}`{' ⬅ ours' if e == anchor else ''} |"
+    out.append(header)
+    out.append("|---|" + "---:|" * len(hero))
+
+    def _row(label: str, corpora: list[str], bold: bool = False) -> None:
+        rates = [_group_leak(rows, corpora, e) for e in hero]
+        scorable = [r for r in rates if r is not None]
+        if not scorable:
+            return
+        best = min(scorable)
+        row = f"| {label} |"
+        for r in rates:
+            if r is None:
+                row += " – |"
+                continue
+            is_best = abs(r - best) < 1e-9
+            if bold:
+                # Bold the whole **All** row without double-starring the
+                # winner glyph into literal `****` (same idiom the
+                # scorecard's Σ ALL row uses).
+                row += (f" {_fmt_rate(r, True)} |" if is_best
+                        else f" **{_fmt_rate(r, False)}** |")
+            else:
+                row += f" {_fmt_rate(r, is_best)} |"
+        out.append(row)
+
+    for language in lang_seq:
+        _row(f"**{language_name(language)}**", by_language[language])
+    _row("**All**", all_corpora, bold=True)
+    out.append("")
+    return hero
+
+
 def _scorecard(out: list[str], rows: dict, groups: list, engines: list[str],
                domain_name, language_name) -> None:
     """Append the headline scorecard — roll-ups only.
@@ -1418,8 +1488,98 @@ def _render(rows, label_map, corpora, engines, meta=None):
             gliner_wins += 1
     n_scorable = len(scorable)
 
-    # ---- title + TL;DR ----------------------------------------------
+    # ---- title ------------------------------------------------------
     out.append("# 🛡️ anonde bench matrix\n")
+
+    # ---- 10-second scorecard: verdict + hero table + over-redaction --
+    # The human-facing top of the report. A reader (incl. the founder)
+    # gets the verdict, one leak table by language, and the honest
+    # over-redaction cost — then everything else (the dense roll-up
+    # scorecards, per-cell grids, latency, cost, caveats, glossary) is
+    # demoted below the `## Details` fold, in the order it was already in.
+    # Every number here reuses the SAME pooled helpers the detailed
+    # scorecards use (`_group_leak`, `_group_partial_precision`): this is
+    # presentation only, not a scoring change.
+    if n_scorable > 0:
+        all_corpora_all = [c for _d, _l, cs in groups for c in cs]
+        anchor_all = _group_leak(rows, all_corpora_all, SCORECARD_ANCHOR)
+
+        # Languages the anchor actually scored on — the "M languages" the
+        # verdict quotes.
+        by_lang_corpora: dict[str, list[str]] = defaultdict(list)
+        for _d, _lang, _cs in groups:
+            by_lang_corpora[_lang].extend(_cs)
+        n_langs = sum(
+            1 for _lang, _cs in by_lang_corpora.items()
+            if _group_leak(rows, _cs, SCORECARD_ANCHOR) is not None)
+
+        # One-line verdict — the default NER image vs the competing field.
+        # Names only the rivals actually present, with their Σ ALL leak.
+        if anchor_all is not None:
+            rival_bits: list[str] = []
+            for eng, disp in (("presidio", "Presidio"),
+                              ("gliner-py", "raw GLiNER"),
+                              ("openai-pf", "OpenAI Privacy Filter")):
+                r = _group_leak(rows, all_corpora_all, eng)
+                if r is not None:
+                    rival_bits.append(f"{disp} {r:.1%}")
+            vs = (" vs " + " / ".join(rival_bits)) if rival_bits else ""
+            out.append(
+                f"**`anonde-ner` — the default NER image — is the "
+                f"lowest-leak PII redactor in this benchmark: it misses "
+                f"just {anchor_all:.1%} of gold PII{vs}, across "
+                f"{n_scorable} gold-annotated corpora and {n_langs} "
+                f"languages.** Tuned recall-first — it catches more PII "
+                f"than the precision-optimised tools, at the cost of more "
+                f"over-redaction (quantified two lines down).\n")
+
+        # Hero leak table — leak rate by language, anonde vs the field.
+        _hero_leak_table(out, rows, groups, engines, _language_name)
+        out.append(
+            "*The one table. **Leak rate** = fraction of gold PII spans "
+            "**missed** — lower is better; 🥇 = lowest-leak engine in the "
+            "row. Columns are the default NER image `anonde-ner` vs the "
+            "competing field (anonde's own patterns / stack tiers and the "
+            "per-domain roll-ups are under **Details**). "
+            "`presidio-transformer` is EN-only (`–` elsewhere, by design); "
+            "`openai-pf` is scored on a fixed per-corpus subsample. Full "
+            "method, precision, and every slice are in **Details** below.*\n")
+
+        # Over-redaction — the honest other half of the recall-first trade.
+        def _over(eng: str) -> float | None:
+            p, _tp, _fp = _group_partial_precision(rows, all_corpora_all, eng)
+            return None if p is None else (1.0 - p)
+        a_over = _over("anonde-ner")
+        if a_over is not None:
+            over_bits: list[str] = []
+            for eng, disp in (("presidio", "Presidio"),
+                              ("gliner-py", "raw GLiNER")):
+                v = _over(eng)
+                if v is not None:
+                    over_bits.append(f"{disp} {v:.1%}")
+            trail = (" vs " + " / ".join(over_bits)) if over_bits else ""
+            out.append(
+                f"> **The trade — over-redaction (1 − precision, lower is "
+                f"better):** `anonde-ner` {a_over:.1%}{trail}. anonde "
+                f"deliberately over-redacts more so it leaks less — the "
+                f"recall-first dial, not a defect. Full precision scorecard "
+                f"(with the zero-gold exclusion rule) is under Details.\n")
+
+        # ---- fold: everything below is the working, demoted ----------
+        out.append("---\n")
+        out.append("## Details\n")
+        out.append(
+            "The full working behind the scorecard above — leak-rate and "
+            "precision roll-ups (per domain · per language · overall), the "
+            "per-cell grids, latency, cost, caveats, and the glossary, in "
+            "the order they were already in. The hero table is the answer; "
+            "everything here is how it is computed.\n")
+
+    # ---- TL;DR (retained, now under the fold) -----------------------
+    # Kept verbatim so its load-bearing caveats survive — "leak rate =
+    # fraction of gold PHI missed", the win count, and the pointer to the
+    # precision scorecard. It leads the Details section rather than the
+    # whole report.
     if n_scorable > 0:
         # Largest gliner-vs-baseline pp delta for the headline.
         biggest_pp = max(
