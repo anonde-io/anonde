@@ -104,12 +104,18 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 	sorted = analyzer.RemoveConflicts(sorted)
 	sorted = MergeAdjacentSameType(sorted, text)
 
-	// Process right-to-left so offsets stay valid.
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start > sorted[j].Start })
+	// RemoveConflicts + MergeAdjacentSameType leave `sorted` non-overlapping;
+	// re-assert start-ascending order and build the output in a single
+	// left-to-right pass. Each iteration copies the untouched gap since the
+	// previous replacement and then the replacement itself, so the suffix is
+	// never rewritten per finding (the old right-to-left append copied the
+	// tail every time, O(doc*findings)).
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Start < sorted[j].Start })
 
-	out := make([]byte, len(originalBytes))
-	copy(out, originalBytes)
+	var out strings.Builder
+	out.Grow(len(originalBytes))
 	items := make([]AnonymizedItem, 0, len(sorted))
+	cursor := 0 // count of originalBytes already flushed into out
 
 	for _, r := range sorted {
 		if r.Start < 0 || r.End < 0 || r.Start > r.End || r.End > len(originalBytes) {
@@ -118,23 +124,15 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 				r.Start, r.End, len(originalBytes), r.EntityType,
 			)
 		}
-		// Sorted replacements are applied right-to-left, so spans should still
-		// be valid in the current output buffer.
-		if r.Start > len(out) || r.End > len(out) {
-			return nil, fmt.Errorf(
-				"recognizer span out of output bounds start=%d end=%d output_bytes=%d entity=%q",
-				r.Start, r.End, len(out), r.EntityType,
-			)
-		}
 
 		original := string(originalBytes[r.Start:r.End])
 
 		// Type-level mark-only: a span whose type is in DetectOnlyTypes is left
-		// VERBATIM. The bytes already sit in the output buffer untouched, so we
-		// skip operator lookup entirely and emit no AnonymizedItem — the
-		// caller's reverse map never records it, while the span stays in the
-		// recognizer results they passed in (still detected, still countable on
-		// a leak list / metric).
+		// VERBATIM. Skipped spans do not advance the cursor, so their bytes flow
+		// through unchanged in the next gap copy — we skip operator lookup
+		// entirely and emit no AnonymizedItem, so the caller's reverse map never
+		// records it, while the span stays in the recognizer results they passed
+		// in (still detected, still countable on a leak list / metric).
 		if cfg.DetectOnlyTypes[r.EntityType] {
 			continue
 		}
@@ -169,7 +167,14 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 			return nil, fmt.Errorf("operator %s on %s: %w", op.Name(), r.EntityType, err)
 		}
 
-		out = append(out[:r.Start], append([]byte(replacement), out[r.End:]...)...)
+		out.Write(originalBytes[cursor:r.Start])
+		out.WriteString(replacement)
+		cursor = r.End
+
+		// Item offsets are anchored to the ORIGINAL text: Start is the span's
+		// original start and End is Start+len(replacement). This matches the
+		// prior right-to-left implementation byte-for-byte; the values are not
+		// final-output coordinates, so no shift/delta is applied.
 		items = append(items, AnonymizedItem{
 			Start:        r.Start,
 			End:          r.Start + len(replacement),
@@ -178,13 +183,9 @@ func (e *AnonymizerEngine) Anonymize(text string, results []analyzer.RecognizerR
 			Text:         replacement,
 		})
 	}
+	out.Write(originalBytes[cursor:])
 
-	// Reverse items back to left-to-right order.
-	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
-		items[i], items[j] = items[j], items[i]
-	}
-
-	return &AnonymizerResult{Text: string(out), Items: items}, nil
+	return &AnonymizerResult{Text: out.String(), Items: items}, nil
 }
 
 // MergeAdjacentSameType folds same-type spans separated only by ASCII
