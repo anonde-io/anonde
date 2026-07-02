@@ -556,6 +556,14 @@ func (r *GLiNERRecognizer) init(ctx context.Context) error {
 			[]string{r.onnxOutputName},
 			sessionOpts,
 		)
+		// The constructor has consumed the options; ORT requires callers to
+		// destroy them after session creation. Free on BOTH paths (success and
+		// failure) to avoid a native leak per recognizer init.
+		if sessionOpts != nil {
+			if e := sessionOpts.Destroy(); e != nil {
+				log.Printf("gliner: SessionOptions.Destroy: %v", e)
+			}
+		}
 		if sessErr != nil {
 			r.initErr = fmt.Errorf("gliner: open onnx session %s: %w", onnxFile, sessErr)
 			log.Printf("gliner: INIT FAILED: %v", r.initErr)
