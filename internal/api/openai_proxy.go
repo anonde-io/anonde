@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -49,6 +50,14 @@ const (
 	defaultProxyTenant     = "openai-proxy"
 	defaultUpstreamTimeout = 120 * time.Second
 
+	// defaultProxyMaxResponseBytes caps how much of an upstream response the
+	// proxy buffers before reveal. Inbound bodies are already capped
+	// (http.MaxBytesReader), but the upstream response was read uncapped;
+	// this bounds anonde-side memory against a runaway/hostile provider. 32
+	// MiB is far above any legitimate chat-completion body. Override with
+	// ANONDE_PROXY_MAX_RESPONSE_BYTES.
+	defaultProxyMaxResponseBytes int64 = 32 << 20
+
 	// proxyActor / proxyPurpose are the audit identity recorded on the
 	// reveal call. The proxy round-trip is system-initiated, so these
 	// are fixed rather than caller-supplied.
@@ -82,6 +91,10 @@ type OpenAIProxyConfig struct {
 	// HTTPClient lets callers (and tests) inject a client. Nil means a
 	// default client with RequestTimeout (or 120s) is built.
 	HTTPClient *http.Client
+	// MaxResponseBytes caps how much of the upstream response is buffered
+	// before reveal. <= 0 uses defaultProxyMaxResponseBytes. A response
+	// larger than the cap is rejected (502) rather than read unbounded.
+	MaxResponseBytes int64
 }
 
 // openAIProxy holds the resolved proxy configuration and the core
@@ -89,9 +102,10 @@ type OpenAIProxyConfig struct {
 // any orchestration; anonymizeSegments calls Service.Ingest and
 // revealResponse calls Service.Reveal.
 type openAIProxy struct {
-	svc    *core.Service
-	cfg    OpenAIProxyConfig
-	client *http.Client
+	svc              *core.Service
+	cfg              OpenAIProxyConfig
+	client           *http.Client
+	maxResponseBytes int64
 }
 
 func newOpenAIProxy(svc *core.Service, cfg OpenAIProxyConfig) *openAIProxy {
@@ -110,7 +124,11 @@ func newOpenAIProxy(svc *core.Service, cfg OpenAIProxyConfig) *openAIProxy {
 		}
 		client = &http.Client{Timeout: timeout}
 	}
-	return &openAIProxy{svc: svc, cfg: cfg, client: client}
+	maxResp := cfg.MaxResponseBytes
+	if maxResp <= 0 {
+		maxResp = defaultProxyMaxResponseBytes
+	}
+	return &openAIProxy{svc: svc, cfg: cfg, client: client, maxResponseBytes: maxResp}
 }
 
 // chatCompletions implements POST /v1/chat/completions.
@@ -232,8 +250,14 @@ func (p *openAIProxy) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	defer upstream.Body.Close()
 
-	respBody, err := io.ReadAll(upstream.Body)
+	respBody, err := readCapped(upstream.Body, p.maxResponseBytes)
 	if err != nil {
+		if errors.Is(err, errResponseTooLarge) {
+			writeOpenAIError(w, http.StatusBadGateway, "anonde_error",
+				fmt.Sprintf("upstream response exceeds the %d-byte cap "+
+					"(raise ANONDE_PROXY_MAX_RESPONSE_BYTES)", p.maxResponseBytes))
+			return
+		}
 		writeOpenAIError(w, http.StatusBadGateway, "anonde_error",
 			"read upstream response: "+err.Error())
 		return
@@ -349,6 +373,25 @@ func (p *openAIProxy) revealResponse(ctx context.Context, tenant, id string, bod
 	newChoices, _ := json.Marshal(choices)
 	resp["choices"] = newChoices
 	return json.Marshal(resp)
+}
+
+// errResponseTooLarge signals that the upstream response exceeded the
+// configured buffer cap; surfaced as a 502 rather than a truncated body.
+var errResponseTooLarge = errors.New("upstream response exceeds configured cap")
+
+// readCapped reads r fully but refuses to buffer more than max bytes. It
+// reads one byte past the cap so a body exactly at the cap still succeeds
+// while anything larger returns errResponseTooLarge instead of silently
+// truncating (a truncated JSON body would corrupt reveal / passthrough).
+func readCapped(r io.Reader, max int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, errResponseTooLarge
+	}
+	return b, nil
 }
 
 // forward POSTs the (anonymized) request body to the upstream provider.

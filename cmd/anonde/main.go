@@ -150,10 +150,11 @@ func main() {
 	// any OpenAI-compatible endpoint (e.g. a local Ollama) to retarget.
 	openAIBase := strings.TrimSpace(os.Getenv("ANONDE_OPENAI_BASE_URL"))
 	httpAPI.SetOpenAIProxy(api.OpenAIProxyConfig{
-		UpstreamBaseURL: openAIBase,
-		UpstreamAPIKey:  strings.TrimSpace(os.Getenv("ANONDE_OPENAI_API_KEY")),
-		DefaultTenant:   strings.TrimSpace(os.Getenv("ANONDE_PROXY_TENANT")),
-		RequestTimeout:  durationFromEnv("ANONDE_PROXY_TIMEOUT", 0),
+		UpstreamBaseURL:  openAIBase,
+		UpstreamAPIKey:   strings.TrimSpace(os.Getenv("ANONDE_OPENAI_API_KEY")),
+		DefaultTenant:    strings.TrimSpace(os.Getenv("ANONDE_PROXY_TENANT")),
+		RequestTimeout:   durationFromEnv("ANONDE_PROXY_TIMEOUT", 0),
+		MaxResponseBytes: bytesFromEnv("ANONDE_PROXY_MAX_RESPONSE_BYTES", 0),
 	})
 	if openAIBase == "" {
 		openAIBase = "https://api.openai.com/v1 (default)"
