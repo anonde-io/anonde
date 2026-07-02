@@ -40,9 +40,9 @@ type OCRWord struct {
 // text to an OCRWord, so analyzer findings (which are char-indexed)
 // can be mapped back to page coordinates for drawing.
 type CharSpan struct {
-	Word       OCRWord
-	StartChar  int
-	EndChar    int // exclusive
+	Word      OCRWord
+	StartChar int
+	EndChar   int // exclusive
 }
 
 // PageRaster holds the path to a rasterized PDF page and its OCR words.
@@ -142,7 +142,14 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 		return nil, nil, fmt.Errorf("redact: write pdf: %w", err)
 	}
 
-	pages, err := rasterizePDF(pdfPath, tmpDir, opts.DPI)
+	// Bound the pdftoppm + tesseract subprocesses to the request context so a
+	// disconnect/timeout kills them; a deadline-less request gets the
+	// per-document ocrTimeout backstop. Analyzer / vision inference below keep
+	// the original request context.
+	ocrCtx, cancelOCR := ocrContext(ctx)
+	defer cancelOCR()
+
+	pages, err := rasterizePDF(ocrCtx, pdfPath, tmpDir, opts.DPI)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,7 +166,7 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 		langs = ocrLangs()
 	}
 	for i, p := range pages {
-		words, err := ocrPageTSV(p.PNGPath, langs)
+		words, err := ocrPageTSV(ocrCtx, p.PNGPath, langs)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -352,9 +359,9 @@ func RedactPDFVisual(ctx context.Context, raw []byte, opts RedactPDFOptions) ([]
 	return out.Bytes(), findings, nil
 }
 
-func rasterizePDF(pdfPath, outDir string, dpi int) ([]PageRaster, error) {
+func rasterizePDF(ctx context.Context, pdfPath, outDir string, dpi int) ([]PageRaster, error) {
 	prefix := filepath.Join(outDir, "page")
-	cmd := exec.Command("pdftoppm", "-r", strconv.Itoa(dpi), "-png", pdfPath, prefix)
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-r", strconv.Itoa(dpi), "-png", pdfPath, prefix)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("rasterize: pdftoppm: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -373,8 +380,8 @@ func rasterizePDF(pdfPath, outDir string, dpi int) ([]PageRaster, error) {
 // ocrPageTSV invokes tesseract with TSV output and returns the
 // word-level rows (TSV level 5). Confidence below 0 (header row /
 // block / line rows that have no text) is skipped.
-func ocrPageTSV(image, langs string) ([]OCRWord, error) {
-	cmd := exec.Command("tesseract", image, "stdout", "-l", langs, "--psm", "3", "tsv")
+func ocrPageTSV(ctx context.Context, image, langs string) ([]OCRWord, error) {
+	cmd := exec.CommandContext(ctx, "tesseract", image, "stdout", "-l", langs, "--psm", "3", "tsv")
 	out, err := cmd.Output()
 	if err != nil {
 		stderr := ""

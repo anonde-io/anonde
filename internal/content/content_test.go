@@ -1,6 +1,7 @@
 package content
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -100,7 +101,7 @@ func TestResolveAutoContentFormat_Text(t *testing.T) {
 func TestExtractAnalyzableText_Text(t *testing.T) {
 	t.Parallel()
 	const input = "hello world"
-	got, err := ExtractAnalyzable(input, FormatText)
+	got, err := ExtractAnalyzable(context.Background(), input, FormatText)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestExtractAnalyzableText_Text(t *testing.T) {
 func TestExtractAnalyzableText_JSON(t *testing.T) {
 	t.Parallel()
 	const input = `{"name":"Alice"}`
-	got, err := ExtractAnalyzable(input, FormatJSON)
+	got, err := ExtractAnalyzable(context.Background(), input, FormatJSON)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestExtractAnalyzableText_JSON(t *testing.T) {
 
 func TestExtractAnalyzableText_UnknownFormat(t *testing.T) {
 	t.Parallel()
-	_, err := ExtractAnalyzable("anything", "xml")
+	_, err := ExtractAnalyzable(context.Background(), "anything", "xml")
 	if err == nil {
 		t.Fatal("expected error for unknown format, got nil")
 	}
@@ -134,7 +135,7 @@ func TestExtractAnalyzableText_UnknownFormat(t *testing.T) {
 
 func TestExtractAnalyzableText_PDF_InvalidBase64(t *testing.T) {
 	t.Parallel()
-	_, err := ExtractAnalyzable("not-valid-base64!!!", FormatPDF)
+	_, err := ExtractAnalyzable(context.Background(), "not-valid-base64!!!", FormatPDF)
 	if err == nil {
 		t.Fatal("expected error for invalid base64, got nil")
 	}
@@ -143,7 +144,7 @@ func TestExtractAnalyzableText_PDF_InvalidBase64(t *testing.T) {
 func TestExtractAnalyzableText_PDF_NotAPDF(t *testing.T) {
 	t.Parallel()
 	garbage := base64.StdEncoding.EncodeToString([]byte("this is not a pdf"))
-	_, err := ExtractAnalyzable(garbage, FormatPDF)
+	_, err := ExtractAnalyzable(context.Background(), garbage, FormatPDF)
 	if err == nil {
 		t.Fatal("expected error for non-PDF bytes, got nil")
 	}
@@ -155,7 +156,7 @@ func TestExtractAnalyzableText_PDF_NotAPDF(t *testing.T) {
 
 func TestExtractAnalyzableText_PDF_ExtractsText(t *testing.T) {
 	t.Parallel()
-	text, err := ExtractAnalyzable(pdfFixtureB64(t), FormatPDF)
+	text, err := ExtractAnalyzable(context.Background(), pdfFixtureB64(t), FormatPDF)
 	if err != nil {
 		t.Fatalf("extractAnalyzableText: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestExtractAnalyzableText_PDF_MultiPage(t *testing.T) {
 	twoPagePDF := buildTwoPagePDF(t)
 	b64 := base64.StdEncoding.EncodeToString(twoPagePDF)
 
-	text, err := ExtractAnalyzable(b64, FormatPDF)
+	text, err := ExtractAnalyzable(context.Background(), b64, FormatPDF)
 	if err != nil {
 		t.Fatalf("extractAnalyzableText: %v", err)
 	}

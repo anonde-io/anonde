@@ -215,7 +215,7 @@ func (p *pdfRedactorImpl) redactText(ctx context.Context, raw []byte, req Redact
 	// here. Callers who need per-request languages should use visual
 	// mode, which threads opts.OCRLangs through directly.
 	b64 := base64.StdEncoding.EncodeToString(raw)
-	extracted, err := content.ExtractAnalyzable(b64, content.FormatPDF)
+	extracted, err := content.ExtractAnalyzable(ctx, b64, content.FormatPDF)
 	if err != nil {
 		return nil, RedactStats{}, fmt.Errorf("text mode: extract pdf text: %w", err)
 	}

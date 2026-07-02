@@ -189,7 +189,7 @@ func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (_ *Syn
 		format = content.ResolveAutoFormat(req.Content)
 	}
 
-	analyzableContent, err := content.ExtractAnalyzable(req.Content, format)
+	analyzableContent, err := content.ExtractAnalyzable(ctx, req.Content, format)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +292,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 		format = content.ResolveAutoFormat(req.Content)
 	}
 
-	analyzableContent, err := content.ExtractAnalyzable(req.Content, format)
+	analyzableContent, err := content.ExtractAnalyzable(ctx, req.Content, format)
 	if err != nil {
 		return nil, err
 	}

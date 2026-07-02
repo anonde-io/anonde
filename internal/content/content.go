@@ -12,6 +12,7 @@ package content
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -116,7 +117,10 @@ func SanitizeUTF8(s string) string {
 // ExtractAnalyzable returns the plain-text representation the analyzer
 // can run over. Text / JSON / NDJSON / logs are pass-through; PDFs are
 // base64-decoded and rendered to text page by page.
-func ExtractAnalyzable(content, format string) (string, error) {
+//
+// The context bounds any OCR fallback (pdftoppm + tesseract) so a
+// cancelled request tears down its external work; see OCRPDFBytes.
+func ExtractAnalyzable(ctx context.Context, content, format string) (string, error) {
 	switch format {
 	case FormatText, FormatJSON, FormatNDJSON, FormatLogs:
 		return content, nil
@@ -130,12 +134,17 @@ func ExtractAnalyzable(content, format string) (string, error) {
 		if err != nil {
 			// Some MFP-scanned PDFs have layouts ledongthuc/pdf can't
 			// parse. Try OCR before giving up.
-			if ocrText, ocrErr := OCRPDFBytes(raw); ocrErr == nil && ocrText != "" {
+			if ocrText, ocrErr := OCRPDFBytes(ctx, raw); ocrErr == nil && ocrText != "" {
 				return ocrText, nil
 			}
 			return "", fmt.Errorf("read pdf content: %w", err)
 		}
 		var out strings.Builder
+		// Track the builder's trailing byte instead of materializing the whole
+		// buffer with out.String() every page — the old HasSuffix check made
+		// multi-page extraction near-quadratic. A page separator '\n' is only
+		// written when the buffer is non-empty and doesn't already end in one.
+		lastByteWasNewline := false
 		total := pdfReader.NumPage()
 		for pageNum := 1; pageNum <= total; pageNum++ {
 			page := pdfReader.Page(pageNum)
@@ -146,10 +155,14 @@ func ExtractAnalyzable(content, format string) (string, error) {
 			if err != nil && err != io.EOF {
 				return "", fmt.Errorf("extract pdf page %d text: %w", pageNum, err)
 			}
-			if out.Len() > 0 && !strings.HasSuffix(out.String(), "\n") {
+			if out.Len() > 0 && !lastByteWasNewline {
 				out.WriteByte('\n')
+				lastByteWasNewline = true
 			}
 			out.WriteString(text)
+			if len(text) > 0 {
+				lastByteWasNewline = text[len(text)-1] == '\n'
+			}
 		}
 		extracted := strings.TrimSpace(out.String())
 		// Scanned PDFs (image-only, no text layer) come back empty or
@@ -158,7 +171,7 @@ func ExtractAnalyzable(content, format string) (string, error) {
 		// tesseract aren't installed, so this is safe in the
 		// patterns-only image too.
 		if len(extracted) < ocrTextFloor() {
-			if ocrText, err := OCRPDFBytes(raw); err == nil && ocrText != "" {
+			if ocrText, err := OCRPDFBytes(ctx, raw); err == nil && ocrText != "" {
 				return ocrText, nil
 			}
 		}
@@ -233,45 +246,56 @@ func TransformLines(content string, forceJSON bool, jsonFn, textFn func(string) 
 	var out strings.Builder
 	out.Grow(len(content))
 
-	// strings.SplitAfter keeps the trailing \n on each line, which lets us
-	// reassemble exactly without an off-by-one on the last line.
-	for _, raw := range strings.SplitAfter(content, "\n") {
-		nl := ""
-		line := raw
-		if strings.HasSuffix(line, "\n") {
+	// Stream over newline indexes one line at a time instead of allocating a
+	// full []string via strings.SplitAfter. Each iteration isolates the line
+	// (without its terminator) plus the terminator to re-append, matching
+	// SplitAfter's semantics exactly — including the trailing empty segment
+	// when content ends in '\n', so reassembly stays byte-for-byte identical.
+	for i := 0; ; {
+		rel := strings.IndexByte(content[i:], '\n')
+		var line, nl string
+		if rel < 0 {
+			line = content[i:]
+		} else {
+			line = content[i : i+rel]
 			nl = "\n"
-			line = line[:len(line)-1]
 		}
+
 		if line == "" {
 			out.WriteString(nl)
-			continue
-		}
-		cleaned := SanitizeUTF8(StripANSI(line))
-		var (
-			processed string
-			err       error
-		)
-		trimmed := strings.TrimSpace(cleaned)
-		looksJSON := len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
-		if looksJSON {
-			processed, err = jsonFn(cleaned)
-			if err != nil {
-				if forceJSON {
-					return "", fmt.Errorf("ndjson line is not valid JSON: %w", err)
+		} else {
+			cleaned := SanitizeUTF8(StripANSI(line))
+			var (
+				processed string
+				err       error
+			)
+			trimmed := strings.TrimSpace(cleaned)
+			looksJSON := len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[')
+			if looksJSON {
+				processed, err = jsonFn(cleaned)
+				if err != nil {
+					if forceJSON {
+						return "", fmt.Errorf("ndjson line is not valid JSON: %w", err)
+					}
+					// logs: fall through to text on JSON parse failure
+					processed, err = textFn(cleaned)
 				}
-				// logs: fall through to text on JSON parse failure
+			} else if forceJSON {
+				return "", fmt.Errorf("ndjson line does not start with { or [: %q", trimmed)
+			} else {
 				processed, err = textFn(cleaned)
 			}
-		} else if forceJSON {
-			return "", fmt.Errorf("ndjson line does not start with { or [: %q", trimmed)
-		} else {
-			processed, err = textFn(cleaned)
+			if err != nil {
+				return "", err
+			}
+			out.WriteString(processed)
+			out.WriteString(nl)
 		}
-		if err != nil {
-			return "", err
+
+		if rel < 0 {
+			break
 		}
-		out.WriteString(processed)
-		out.WriteString(nl)
+		i += rel + 1
 	}
 	return out.String(), nil
 }
