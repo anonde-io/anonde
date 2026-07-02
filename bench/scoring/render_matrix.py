@@ -666,6 +666,30 @@ def _group_leak(rows: dict, corpora: list[str], engine: str) -> float | None:
     return leaked / total
 
 
+def _group_strict_f1(rows: dict, corpora: list[str], engine: str) -> float | None:
+    """Pooled (micro) strict F1 over a set of corpora — Σtp / Σfp / Σfn across
+    the per-cell `strict` tallies, then F1. Doc-weighted the same way
+    `_group_leak` pools leak rate (larger corpora count proportionally). None
+    when the engine has no strict tally anywhere in the group (missing cells or
+    empty gold), so callers can pool unconditionally.
+    """
+    tp = fp = fn = 0
+    seen = False
+    for c in corpora:
+        cell = rows.get((c, engine))
+        if cell is None:
+            continue
+        seen = True
+        for (t_tp, t_fp, t_fn) in cell["strict"].values():
+            tp += t_tp
+            fp += t_fp
+            fn += t_fn
+    if not seen or (tp + fp + fn) == 0:
+        return None
+    _p, _r, f1 = _prf(tp, fp, fn)
+    return f1
+
+
 def _fmt_rate(r: float | None, best: bool = False) -> str:
     if r is None:
         return "–"
@@ -903,6 +927,66 @@ def _hero_leak_table(out: list[str], rows: dict, groups: list,
                         else f" **{_fmt_rate(r, False)}** |")
             else:
                 row += f" {_fmt_rate(r, is_best)} |"
+        out.append(row)
+
+    for language in lang_seq:
+        _row(f"**{language_name(language)}**", by_language[language])
+    _row("**All**", all_corpora, bold=True)
+    out.append("")
+    return hero
+
+
+def _hero_strict_f1_table(out: list[str], rows: dict, groups: list,
+                          engines: list[str], language_name) -> list[str]:
+    """Twin of `_hero_leak_table` for the OTHER bulletproof metric: strict
+    (exact span + type, CoNLL) micro-F1 by language, the default NER image vs
+    the field. Higher is better.
+
+    Strict F1 is the accuracy number that reproduces the standard scorer
+    (`nervaluate`, SemEval/MUC) *exactly* — Δ≈0 in `verify_official.py` — so it
+    is the citable complement to leak rate. Being precision-inclusive it also
+    shows the honest cost of recall-first tuning: a tool that over-redacts to
+    leak less scores lower here. Same pooled `strict` tally as the detail grid
+    (`_group_strict_f1`) — presentation only, no new scoring.
+    """
+    anchor = SCORECARD_ANCHOR
+    hero = ([anchor] if anchor in engines else []) + [
+        e for e in engines if _is_rival(e)]
+    if not hero:
+        return hero
+
+    by_language: dict[str, list[str]] = defaultdict(list)
+    lang_seq: list[str] = []
+    all_corpora: list[str] = []
+    for _domain, language, corpora in groups:
+        if language not in lang_seq:
+            lang_seq.append(language)
+        by_language[language].extend(corpora)
+        all_corpora.extend(corpora)
+
+    header = "| Language |"
+    for e in hero:
+        header += f" `{e}`{' ⬅ ours' if e == anchor else ''} |"
+    out.append(header)
+    out.append("|---|" + "---:|" * len(hero))
+
+    def _row(label: str, corpora: list[str], bold: bool = False) -> None:
+        f1s = [_group_strict_f1(rows, corpora, e) for e in hero]
+        scorable = [f for f in f1s if f is not None]
+        if not scorable:
+            return
+        best = max(scorable)
+        row = f"| {label} |"
+        for f in f1s:
+            if f is None:
+                row += " – |"
+                continue
+            txt = f"{f:.3f}"
+            if abs(f - best) < 1e-9 and best > 0:
+                txt = f"**{txt}** 🥇"
+            elif bold:
+                txt = f"**{txt}**"
+            row += f" {txt} |"
         out.append(row)
 
     for language in lang_seq:
@@ -1544,6 +1628,19 @@ def _render(rows, label_map, corpora, engines, meta=None):
             "`presidio-transformer` is EN-only (`–` elsewhere, by design); "
             "`openai-pf` is scored on a fixed per-corpus subsample. Full "
             "method, precision, and every slice are in **Details** below.*\n")
+
+        # Twin hero table — strict F1 by language: the SECOND bulletproof
+        # metric (reproduces the standard scorer exactly; higher is better).
+        _hero_strict_f1_table(out, rows, groups, engines, _language_name)
+        out.append(
+            "*The twin. **Strict F1** = exact span **and** type match (CoNLL) "
+            "— higher is better, 🥇 = best in row. It reproduces the standard "
+            "scorer (`nervaluate`) *exactly* (Δ≈0 in `verify_official.py`), so "
+            "it is the citable accuracy metric alongside leak rate. It is "
+            "precision-inclusive, so it also reflects over-redaction: an "
+            "over-redacting tool can rank lower here than on leak rate, where a "
+            "precision-first rival edges ahead. The lenient overlap view and "
+            "full method are under **Details** / `METHODOLOGY.md`.*\n")
 
         # Over-redaction — the honest other half of the recall-first trade.
         def _over(eng: str) -> float | None:
