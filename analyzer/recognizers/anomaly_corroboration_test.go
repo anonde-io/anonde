@@ -18,6 +18,11 @@ func TestSuppressAnomalyPerson_Gates(t *testing.T) {
 		{"json key colon", `{"Manager": "value"}`, "Manager", true},
 		{"json key quoted", `"Password":"x"`, "Password", true},
 		{"assignment equals", "Timeout=30", "Timeout", true},
+		// Formatted-JSON / spaced surfaces: whitespace before the colon or the
+		// '=' must not defeat the gate.
+		{"spaced json key colon", `{ "Manager" : "value" }`, "Manager", true},
+		{"spaced json key quoted", `"Password" : "x"`, "Password", true},
+		{"spaced assignment equals", "Timeout = 30", "Timeout", true},
 		{"user-agent slash digit", "Mozilla/5.0 (Windows)", "Mozilla", true},
 		{"version slash digit", "Gecko/20100101 Firefox", "Gecko", true},
 		{"contraction ve", "We've shipped it", "We've", true},
@@ -37,6 +42,9 @@ func TestSuppressAnomalyPerson_Gates(t *testing.T) {
 		// Bare colon after a name (salutation) — leaked "Jaclyn54:" until the
 		// colon rule was narrowed to quoted JSON keys only.
 		{"salutation bare colon", "reminder for Jaclyn54: your appt", "Jaclyn54", false},
+		// A spaced bare colon (no quotes) is still NOT a signal — only the
+		// quoted-key form gates, so a salutation with a space stays kept.
+		{"spaced salutation bare colon", "reminder for Jaclyn54 : your appt", "Jaclyn54", false},
 
 		// Name-cue veto keeps a token even with an FP signal present.
 		{"title vetoes equals", "Dr. Rose=active", "Rose", false},
@@ -94,6 +102,9 @@ func TestENAnomaly_StructuralFPsDowngraded(t *testing.T) {
 	for _, tc := range []struct{ text, tok string }{
 		{`{"Manager": "Acme"}`, "Manager"},
 		{`{"Password": "x"}`, "Password"},
+		// Formatted JSON with whitespace before the colon must still suppress.
+		{`{ "Manager" : "Acme" }`, "Manager"},
+		{`{ "Password" : "x" }`, "Password"},
 		{"Mozilla/5.0 compatible", "Mozilla"},
 		{"We've reviewed your file", "We've"},
 	} {
@@ -108,11 +119,11 @@ func TestENAnomaly_RealNamesKept(t *testing.T) {
 	// A bare real name the pattern is the SOLE detector of must survive —
 	// the leak-safety anchor.
 	for _, tc := range []struct{ text, tok string }{
-		{"The patient Smith was admitted today", "Smith"},        // bare surname, prose
-		{"Dr. Rose examined the wound", "Rose"},                  // titled
-		{"Please call Grace about the invoice", "Grace"},         // name-collision word kept
-		{"Mark reviewed the report yesterday", "Mark"},           // name-collision word kept
-		{"He met John yesterday", "John"},                        // bare first name
+		{"The patient Smith was admitted today", "Smith"}, // bare surname, prose
+		{"Dr. Rose examined the wound", "Rose"},           // titled
+		{"Please call Grace about the invoice", "Grace"},  // name-collision word kept
+		{"Mark reviewed the report yesterday", "Mark"},    // name-collision word kept
+		{"He met John yesterday", "John"},                 // bare first name
 	} {
 		got := enAnomalyPersons(t, tc.text)
 		if !got[tc.tok] {
@@ -133,11 +144,11 @@ func TestCollisionWords_StructureNotLexicon(t *testing.T) {
 		tok  string
 		want bool // want KEPT (emitted)
 	}{
-		{"Grace period expires soon", "Grace", true},      // prose → kept (can't drop, would leak "Grace" the name)
-		{`{"Grace": 30}`, "Grace", false},                 // json key → dropped
-		{"Mark the box below", "Mark", true},              // prose → kept
-		{"Mark=true in config", "Mark", false},            // assignment → dropped
-		{"Rose to the occasion", "Rose", true},            // prose → kept
+		{"Grace period expires soon", "Grace", true}, // prose → kept (can't drop, would leak "Grace" the name)
+		{`{"Grace": 30}`, "Grace", false},            // json key → dropped
+		{"Mark the box below", "Mark", true},         // prose → kept
+		{"Mark=true in config", "Mark", false},       // assignment → dropped
+		{"Rose to the occasion", "Rose", true},       // prose → kept
 	}
 	for _, tc := range cases {
 		got := enAnomalyPersons(t, tc.text)

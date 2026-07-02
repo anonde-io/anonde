@@ -14,14 +14,16 @@ import (
 // match natural-language person-name distributions they were trained
 // on.
 //
-// PATTERN PHILOSOPHY: lean toward recall; over-redaction is annoying,
-// under-redaction leaks PII. Scored at 0.50 (below the 0.85 of clean
-// recognizers) so the analyzer's conflict resolver prefers a clean
-// pattern (EMAIL, URL, PHONE) or a confident NER over us, but a span
-// no other recognizer claimed gets through.
+// PATTERN PHILOSOPHY: username-shaped tokens are too weak to emit
+// globally because they collide with protocol fields, model slugs, and
+// code-ish identifiers in LLM/API traffic. Scored at 0.50 and gated by
+// nearby account/social context so the analyzer still catches explicit
+// username fields without redacting every stem+year token.
 //
 // FP guard rails to bound damage:
 //
+//   - Local context must mention username/account/handle/login/profile
+//     or a social/Git hosting cue. Context-free bare forms are skipped.
 //   - Stem ≥ 4 lowercase chars (so 1-3 letter common words like "the",
 //     "and", "for" can't anchor a match).
 //   - For the surname+year form, digit suffix must be 2-4 digits (so
@@ -57,6 +59,27 @@ var (
 	stemDigitRE = regexp.MustCompile(
 		`\b\p{Ll}{4,30}\d{2,4}\b`,
 	)
+
+	usernameContextCues = []string{
+		"username",
+		"user name",
+		"handle",
+		"screen name",
+		"login",
+		"account",
+		"profile",
+		"social",
+		"twitter",
+		"x handle",
+		"instagram",
+		"mastodon",
+		"bluesky",
+		"github",
+		"gitlab",
+		"author",
+		"created by",
+		"posted by",
+	}
 )
 
 // UsernameRecognizer detects synthetic / username-shaped PERSON tokens.
@@ -84,12 +107,22 @@ func (r *UsernameRecognizer) Analyze(_ context.Context, text string, _ []string,
 	}
 	var out []analyzer.RecognizerResult
 	for _, m := range dottedHandleRE.FindAllStringIndex(text, -1) {
+		// Exclude the candidate span itself from the cue search: a dotted id
+		// whose own segment is a cue (github.actions / profile.default /
+		// account.settings) would otherwise self-corroborate as PERSON. Context
+		// must come from OUTSIDE the span.
+		if !hasLocalContextCueExcludingSelf(text, m[0], m[1], 56, 56, usernameContextCues) {
+			continue
+		}
 		out = append(out, analyzer.RecognizerResult{
 			Start: m[0], End: m[1], Score: 0.50,
 			EntityType: "PERSON", RecognizerName: r.Name(),
 		})
 	}
 	for _, m := range stemDigitRE.FindAllStringIndex(text, -1) {
+		if !hasLocalContextCueExcludingSelf(text, m[0], m[1], 56, 56, usernameContextCues) {
+			continue
+		}
 		out = append(out, analyzer.RecognizerResult{
 			Start: m[0], End: m[1], Score: 0.50,
 			EntityType: "PERSON", RecognizerName: r.Name(),

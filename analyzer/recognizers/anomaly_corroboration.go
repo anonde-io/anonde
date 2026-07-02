@@ -100,17 +100,25 @@ func englishContractionSuffix(s string) bool {
 // isASCIIDigit reports whether b is an ASCII digit.
 func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
 
+// isSpaceOrTab reports whether b is an intra-line ASCII whitespace byte. Used to
+// skip formatting whitespace between a JSON key's closing quote and its ':' and
+// before a spaced assignment '='. Newlines are deliberately excluded so gating
+// never reaches across a line boundary.
+func isSpaceOrTab(b byte) bool { return b == ' ' || b == '\t' }
+
 // hasFPStructuralContext reports whether a single capitalised token at
 // text[start:end] sits on an FP-indicating STRUCTURAL surface. Each signal is
 // disjoint from a prose name AND verified leak-byte-identical on ai4privacy_en:
 //
-//   - JSON string key: the token is DOUBLE-QUOTE wrapped and followed by ':'
-//     (`"Manager":`, `"Password":`). A quoted JSON key is a machine label,
+//   - JSON string key: the token is DOUBLE-QUOTE wrapped and followed by ':',
+//     tolerating intra-line whitespace between the closing quote and the colon
+//     (`"Manager":`, `"Password" : "x"`). A quoted JSON key is a machine label,
 //     never a redaction-target name. The bare "Word:" form is deliberately NOT
 //     a signal — a name can be a salutation ("Jaclyn54: your reminder…"), which
 //     leaked one gold span in the bench, so only the quoted-key form is gated.
-//   - assignment: the token is immediately followed by '=' ("Timeout=30"). A
-//     name is a value ("user=Jason"), never the key before '='.
+//   - assignment: the token is a key before '=', tolerating intra-line
+//     whitespace ("Timeout=30", "Timeout = 30"). A name is a value
+//     ("user = Jason"), never the key before '='.
 //   - "/<digit>" version / user-agent path ("Mozilla/5.0", "Gecko/20100101").
 //   - unambiguous English contraction morphology ("We've", "I'm", "Don't").
 //
@@ -124,21 +132,33 @@ func hasFPStructuralContext(text string, start, end int, surface string) bool {
 	if end < 0 || end > len(text) || start < 0 {
 		return false
 	}
-	// JSON string key: `"<Token>":` — opening and closing double quotes plus a
-	// following colon. Unambiguously a machine key.
-	if start > 0 && text[start-1] == '"' &&
-		end+1 < len(text) && text[end] == '"' && text[end+1] == ':' {
-		return true
+	// JSON string key: `"<Token>"` followed by ':' — opening and closing double
+	// quotes plus a colon. Formatted JSON may separate the closing quote from the
+	// colon with spaces/tabs (`"Manager" : "value"`), so skip intra-line
+	// whitespace before the colon check. Unambiguously a machine key either way.
+	if start > 0 && text[start-1] == '"' && end < len(text) && text[end] == '"' {
+		i := end + 1
+		for i < len(text) && isSpaceOrTab(text[i]) {
+			i++
+		}
+		if i < len(text) && text[i] == ':' {
+			return true
+		}
 	}
 	if end < len(text) {
-		switch text[end] {
-		case '=':
+		// assignment: the token is a key before '=' ("Timeout=30", "Timeout =
+		// 30"). Skip intra-line whitespace so spaced assignment labels are gated
+		// too. A name is a value ("user = Jason"), never the key before '='.
+		i := end
+		for i < len(text) && isSpaceOrTab(text[i]) {
+			i++
+		}
+		if i < len(text) && text[i] == '=' {
 			return true
-		case '/':
-			// "/<digit>" — a version / user-agent / path segment.
-			if end+1 < len(text) && isASCIIDigit(text[end+1]) {
-				return true
-			}
+		}
+		// "/<digit>" — a version / user-agent / path segment.
+		if text[end] == '/' && end+1 < len(text) && isASCIIDigit(text[end+1]) {
+			return true
 		}
 	}
 	return false

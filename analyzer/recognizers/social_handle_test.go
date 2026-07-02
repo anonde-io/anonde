@@ -26,15 +26,19 @@ func TestSocialHandleRecognizer(t *testing.T) {
 		{"wnut tokenised space after @", "RT @ beatfaceleah :", []want{{"@ beatfaceleah", "PERSON"}}},
 		{"max length 30 chars after @", "RT @abcdefghijklmnopqrstuvwxyzABCD end.", []want{{"@abcdefghijklmnopqrstuvwxyzABCD", "PERSON"}}},
 
-		// Hashtag; ORGANIZATION.
-		{"plain #hashtag", "Loving #fitnessblender today.", []want{{"#fitnessblender", "ORGANIZATION"}}},
-		{"#hashtag at start", "#nike just dropped a new shoe.", []want{{"#nike", "ORGANIZATION"}}},
-		{"tokenised space after #", "Brand # fitnessblender rocks.", []want{{"# fitnessblender", "ORGANIZATION"}}},
+		// Hashtag; ORGANIZATION only in local social-media context.
+		{"plain #hashtag", "Instagram post: loving #fitnessblender today.", []want{{"#fitnessblender", "ORGANIZATION"}}},
+		{"#hashtag at start", "tweet: #nike just dropped a new shoe.", []want{{"#nike", "ORGANIZATION"}}},
+		{"tokenised space after #", "Brand hashtag # fitnessblender rocks.", []want{{"# fitnessblender", "ORGANIZATION"}}},
+
+		// Self-corroboration guard: a hashtag whose own text IS a cue word must
+		// not authorize itself; context must come from OUTSIDE the span.
+		{"self-cue hashtag with external context", "tweet: #social", []want{{"#social", "ORGANIZATION"}}},
 
 		// Multiple matches across both patterns.
 		{
 			"mixed @ and #",
-			"@alice mentioned #nike yesterday.",
+			"@alice mentioned hashtag #nike yesterday.",
 			[]want{{"@alice", "PERSON"}, {"#nike", "ORGANIZATION"}},
 		},
 
@@ -44,6 +48,11 @@ func TestSocialHandleRecognizer(t *testing.T) {
 		{"starts with digit", "see @123abc here.", nil},
 		{"@ followed by punct", "tag @!foo later.", nil},
 		{"@ at end of text", "tag @", nil},
+		{"hashtag without social context", "Loving #fitnessblender today.", nil},
+		{"markdown heading hashtag", "# Heading in a README.", nil},
+		// Self-corroborating cue-word hashtags with no external social context.
+		{"markdown post heading self-cue", "# Post", nil},
+		{"self-cue hashtag no external context", "See #social in this markdown note", nil},
 		{"hashtag in word", "foo#bar baz.", nil},
 		{"empty string", "", nil},
 	}

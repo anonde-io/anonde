@@ -8,17 +8,14 @@ import (
 )
 
 // Social-media usernames. Twitter/X / Mastodon / Bluesky handles are
-// `@<username>`; bare usernames also appear in mention contexts ("by
-// @user", "from beatfaceleah"). Patterns target the explicit `@`-prefix
-// form (high precision) and a lowercased-handle shape that's common in
-// short social text (e.g. wnut_17). Emits PERSON because that's how
-// account owners are scored in the canonical label map.
+// `@<username>`. The explicit `@`-prefix form emits PERSON because that's
+// how account owners are scored in the canonical label map. Hashtags emit
+// ORGANIZATION only in social-media context.
 //
 // The two-pattern split:
 //   - explicit `@handle`: 0.85, anchored on `@`, can fire anywhere.
-//   - bare handle:        0.55, lowercased + digits, requires
-//                          surrounding social-text cues (mention verbs)
-//                          to escape FP land on normal English prose.
+//   - `#hashtag`:         0.78, requires surrounding social-text cues to
+//                         escape FP land on markdown / prompt text.
 
 var (
 	// Explicit `@handle`; high precision. Twitter limits handles to
@@ -38,6 +35,23 @@ var (
 	socialHashtagRE = regexp.MustCompile(
 		`(?:^|[^A-Za-z0-9_])(#[ \t]?[A-Za-z][A-Za-z0-9_]{2,29})\b`,
 	)
+
+	hashtagContextCues = []string{
+		"hashtag",
+		"tweet",
+		"retweet",
+		"twitter",
+		"x post",
+		"instagram",
+		"mastodon",
+		"bluesky",
+		"social",
+		"tagged",
+		"follow",
+		"post",
+		"posted",
+		"trending",
+	}
 )
 
 // SocialHandleRecognizer detects social-media handles.
@@ -60,9 +74,9 @@ func (r *SocialHandleRecognizer) SupportedEntities() []string {
 // SupportedLanguages; handles are language-agnostic syntactic shapes.
 func (r *SocialHandleRecognizer) SupportedLanguages() []string { return []string{"*"} }
 
-// Analyze emits explicit `@handle` matches. The bare-handle pattern is
-// intentionally NOT emitted as a recognizer hit; its FP risk on normal
-// English prose is too high without local context analysis. Bare
+// Analyze emits explicit `@handle` matches globally. Hashtags only emit
+// as ORGANIZATION when nearby text indicates social-media context; raw
+// markdown headings and arbitrary #tokens are otherwise too noisy. Bare
 // handles are caught by the open-set NER backend when one is loaded.
 func (r *SocialHandleRecognizer) Analyze(_ context.Context, text string, _ []string, _ string) ([]analyzer.RecognizerResult, error) {
 	if text == "" {
@@ -82,6 +96,12 @@ func (r *SocialHandleRecognizer) Analyze(_ context.Context, text string, _ []str
 	}
 	for _, m := range socialHashtagRE.FindAllStringSubmatchIndex(text, -1) {
 		if len(m) < 4 || m[2] < 0 {
+			continue
+		}
+		// Exclude the hashtag span itself from the cue search: otherwise a
+		// hashtag whose own text IS a cue (#social / #tweet / #trending) would
+		// authorize itself as ORGANIZATION with no external social context.
+		if !hasLocalContextCueExcludingSelf(text, m[2], m[3], 56, 56, hashtagContextCues) {
 			continue
 		}
 		out = append(out, analyzer.RecognizerResult{
