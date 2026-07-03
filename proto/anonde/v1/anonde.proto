@@ -170,10 +170,17 @@ service Service {
 // offsets are document-relative for every content_format: for json / ndjson
 // / logs a string leaf or line is located by its source position in the
 // submitted document, so two PII values in different leaves / lines report
-// distinct, increasing offsets rather than both restarting at 0. Offsets are
-// exact for content without JSON escape sequences or ANSI codes (the common
-// case); past such a sequence a per-byte offset can drift by the extra
-// source bytes the sequence occupies.
+// distinct, increasing offsets rather than both restarting at 0.
+//
+// Exactness caveat for byte-slicing consumers: offsets are exact for
+// unescaped JSON string values and for lines carrying no ANSI / control
+// sequences (the common case). They may be APPROXIMATE when the source
+// contains JSON escape sequences (e.g. \" or \n inside a string value),
+// ANSI escape codes, or bytes rewritten by UTF-8 repair — the analyzer runs
+// on the decoded / sanitised text, so while the leaf or line is still
+// located, a per-byte offset past such a sequence can drift by the source
+// bytes it adds or removes. Treat offsets inside escaped / ANSI content as
+// approximate rather than exact slice indices.
 message Finding {
   int32 start = 1;
   int32 end = 2;

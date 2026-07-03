@@ -68,6 +68,97 @@ func TestTransformJSONStringLeavesAt_OutputParity(t *testing.T) {
 	}
 }
 
+// TestTransformJSONStringLeavesAt_DuplicateKeyLastWins pins the fix for the
+// side-effecting-callback regression: the streaming decoder visits every
+// duplicate-key value, but only the retained (last-wins) value may reach fn,
+// because Service.Ingest/Synthesize's callback mints vault entries and appends
+// tokens/findings. A shadowed value must fire NO callback, and the output must
+// stay byte-identical to the map-deduping non-offset sibling.
+func TestTransformJSONStringLeavesAt_DuplicateKeyLastWins(t *testing.T) {
+	t.Parallel()
+	// "a" is duplicated; the shadowed value is the PII-looking one. "b" is a
+	// distinct key so we also confirm normal leaves still fire exactly once.
+	src := `{"a":"alice@example.com","b":"keep","a":"safe"}`
+
+	type leaf struct {
+		value string
+		base  int
+	}
+	var seen []leaf
+	upperAt := func(value string, base int) (string, error) {
+		seen = append(seen, leaf{value, base})
+		return strings.ToUpper(value), nil
+	}
+	got, err := TransformJSONStringLeavesAt(src, upperAt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// (a) exactly one callback per retained value, none for the shadowed one.
+	for _, l := range seen {
+		if l.value == "alice@example.com" {
+			t.Fatalf("shadowed duplicate value fired the callback: %+v", seen)
+		}
+	}
+	var retainedA, retainedB int
+	for _, l := range seen {
+		switch l.value {
+		case "safe":
+			retainedA++
+			// (d) the retained value's offset still slices back correctly.
+			if got := src[l.base : l.base+len(l.value)]; got != l.value {
+				t.Errorf("retained base %d does not locate %q, got %q", l.base, l.value, got)
+			}
+		case "keep":
+			retainedB++
+		default:
+			t.Fatalf("unexpected leaf value %q in %+v", l.value, seen)
+		}
+	}
+	if retainedA != 1 || retainedB != 1 {
+		t.Fatalf("expected one callback per retained key, got a=%d b=%d (%+v)", retainedA, retainedB, seen)
+	}
+
+	// (c) output byte-identical to the non-offset sibling, which dedups via the
+	// json.Unmarshal map before it walks.
+	want, wantErr := TransformJSONStringLeaves(src, func(s string) (string, error) {
+		return strings.ToUpper(s), nil
+	})
+	if wantErr != nil {
+		t.Fatalf("sibling error: %v", wantErr)
+	}
+	if got != want {
+		t.Fatalf("output mismatch\n got %q\nwant %q", got, want)
+	}
+	// The shadowed cleartext must not survive into the output.
+	if strings.Contains(got, "ALICE@EXAMPLE.COM") {
+		t.Fatalf("shadowed value leaked into output: %q", got)
+	}
+}
+
+// TestTransformJSONStringLeavesAt_ShadowedNestedValueNoCallback guards the
+// nested case: when a later duplicate key shadows an OBJECT/ARRAY value, none
+// of the leaves buried inside the dropped subtree may reach fn.
+func TestTransformJSONStringLeavesAt_ShadowedNestedValueNoCallback(t *testing.T) {
+	t.Parallel()
+	src := `{"a":{"deep":"alice@example.com","also":["carol@example.com"]},"a":"safe"}`
+	var seen []string
+	got, err := TransformJSONStringLeavesAt(src, func(value string, _ int) (string, error) {
+		seen = append(seen, value)
+		return value, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(seen) != 1 || seen[0] != "safe" {
+		t.Fatalf("expected only the retained scalar to fire, got %+v", seen)
+	}
+	want, _ := TransformJSONStringLeaves(src, func(s string) (string, error) { return s, nil })
+	if got != want {
+		t.Fatalf("output mismatch\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestTransformJSONStringLeavesAt_InvalidJSON(t *testing.T) {
 	t.Parallel()
 	for _, bad := range []string{"{broken", "", "{}{}", `{"a":1} trailing`} {

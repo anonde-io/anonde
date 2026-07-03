@@ -244,9 +244,18 @@ func transformJSONValue(v any, fn func(string) (string, error)) (any, error) {
 // the finding's byte position in content. For leaves that use JSON
 // escapes the base still locates the leaf, but a per-character mapping
 // past an escape drifts by the escape's extra source bytes.
+//
+// Duplicate object keys follow JSON last-wins: only the retained (final)
+// value for a key is passed to fn. A value shadowed by a later duplicate
+// key is dropped before fn runs, so it yields no callback — and none of
+// fn's side effects (e.g. the vault writes / finding+token accumulation in
+// Service.Ingest / Synthesize). This keeps both the re-serialised output and
+// the set of fn calls in lock-step with the non-offset sibling
+// TransformJSONStringLeaves, which dedups via json.Unmarshal's map before it
+// walks. fn is called on retained leaves in source order.
 func TransformJSONStringLeavesAt(content string, fn func(value string, base int) (string, error)) (string, error) {
 	w := &jsonLeafWalker{src: content, dec: json.NewDecoder(strings.NewReader(content)), fn: fn}
-	updated, err := w.parseValue()
+	tree, err := w.parseValue()
 	if err != nil {
 		return "", err
 	}
@@ -259,6 +268,14 @@ func TransformJSONStringLeavesAt(content string, fn func(value string, base int)
 		}
 		return "", fmt.Errorf("parse json content: unexpected data after top-level value")
 	}
+	// parseValue only builds the lazy tree (buffering the last-wins value per
+	// object key); fn runs here, once per retained leaf in source order, so a
+	// shadowed duplicate never fires it. Resolving only after the trailing-data
+	// check also means an invalid document triggers no callbacks at all.
+	updated, err := w.resolve(tree)
+	if err != nil {
+		return "", err
+	}
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
@@ -268,21 +285,47 @@ func TransformJSONStringLeavesAt(content string, fn func(value string, base int)
 	return strings.TrimSpace(encoded.String()), nil
 }
 
-// jsonLeafWalker decodes a JSON document with a streaming json.Decoder so
-// it can report each string leaf's source position via Decoder.InputOffset,
-// while rebuilding the same map[string]any / []any / string / float64 /
-// bool / nil tree that json.Unmarshal produces (so re-serialisation is
-// byte-identical to TransformJSONStringLeaves).
+// jsonLeafWalker decodes a JSON document with a streaming json.Decoder in two
+// phases. parseValue reports each string leaf's source position via
+// Decoder.InputOffset and builds a lazy tree (pendingLeaf / pendingObj /
+// pendingArr / scalar) that carries those offsets; resolve then applies fn and
+// rebuilds the same map[string]any / []any / string / float64 / bool / nil
+// tree json.Unmarshal produces (so re-serialisation is byte-identical to
+// TransformJSONStringLeaves). Deferring fn to resolve is what lets an object
+// drop a value shadowed by a later duplicate key before it ever reaches fn.
 type jsonLeafWalker struct {
 	src string
 	dec *json.Decoder
 	fn  func(value string, base int) (string, error)
 }
 
-// parseValue reads exactly one JSON value from the decoder. Decode/syntax
-// errors are wrapped with the "parse json content" prefix; errors returned
-// by fn propagate unwrapped so callers can tell an analyzer failure apart
-// from a malformed document.
+// pendingLeaf is a not-yet-transformed JSON string value plus the byte offset
+// in src where its decoded content begins. fn is applied lazily in resolve,
+// never at parse time, so a leaf shadowed by a later duplicate object key
+// (JSON is last-wins) is dropped from the tree before resolve and never
+// reaches fn — no callback, hence none of fn's side effects.
+type pendingLeaf struct {
+	value string
+	base  int
+}
+
+// pendingObj is a JSON object captured in first-occurrence key order with
+// last-wins values. Keeping keys in a slice makes resolve (and therefore fn's
+// call order) follow source order in the common no-duplicate case, matching
+// the pre-lazy behaviour; vals holds only the retained node per key.
+type pendingObj struct {
+	keys []string
+	vals map[string]any
+}
+
+// pendingArr is a JSON array of pending element nodes, resolved in order.
+type pendingArr struct {
+	elems []any
+}
+
+// parseValue reads exactly one JSON value from the decoder into a lazy tree
+// node WITHOUT invoking fn. Decode/syntax errors are wrapped with the "parse
+// json content" prefix. fn (and its unwrapped errors) is deferred to resolve.
 func (w *jsonLeafWalker) parseValue() (any, error) {
 	before := int(w.dec.InputOffset())
 	tok, err := w.dec.Token()
@@ -293,7 +336,7 @@ func (w *jsonLeafWalker) parseValue() (any, error) {
 	case json.Delim:
 		switch t {
 		case '{':
-			obj := map[string]any{}
+			obj := &pendingObj{vals: map[string]any{}}
 			for w.dec.More() {
 				keyTok, err := w.dec.Token()
 				if err != nil {
@@ -307,20 +350,27 @@ func (w *jsonLeafWalker) parseValue() (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				obj[key] = val
+				// Last-wins: a duplicate key overwrites its buffered value,
+				// dropping the earlier node (and every pending leaf under it)
+				// so resolve never applies fn to a shadowed value. First
+				// occurrence fixes the key's slot in source order.
+				if _, dup := obj.vals[key]; !dup {
+					obj.keys = append(obj.keys, key)
+				}
+				obj.vals[key] = val
 			}
 			if _, err := w.dec.Token(); err != nil { // closing '}'
 				return nil, wrapJSONParse(err)
 			}
 			return obj, nil
 		case '[':
-			arr := []any{}
+			arr := &pendingArr{}
 			for w.dec.More() {
 				val, err := w.parseValue()
 				if err != nil {
 					return nil, err
 				}
-				arr = append(arr, val)
+				arr.elems = append(arr.elems, val)
 			}
 			if _, err := w.dec.Token(); err != nil { // closing ']'
 				return nil, wrapJSONParse(err)
@@ -338,9 +388,43 @@ func (w *jsonLeafWalker) parseValue() (any, error) {
 		if rel := strings.IndexByte(w.src[before:after], '"'); rel >= 0 {
 			base = before + rel + 1
 		}
-		return w.fn(t, base)
+		return &pendingLeaf{value: t, base: base}, nil
 	default: // float64, bool, nil
 		return t, nil
+	}
+}
+
+// resolve walks the lazy tree parseValue produced and applies fn to every
+// retained string leaf, returning the json.Unmarshal-shaped tree. Objects are
+// walked in first-occurrence key order and arrays in element order, so fn runs
+// in source order for documents without duplicate keys. fn errors propagate
+// unwrapped so callers can tell an analyzer failure apart from a parse error.
+func (w *jsonLeafWalker) resolve(node any) (any, error) {
+	switch n := node.(type) {
+	case *pendingLeaf:
+		return w.fn(n.value, n.base)
+	case *pendingObj:
+		out := make(map[string]any, len(n.keys))
+		for _, key := range n.keys {
+			val, err := w.resolve(n.vals[key])
+			if err != nil {
+				return nil, err
+			}
+			out[key] = val
+		}
+		return out, nil
+	case *pendingArr:
+		out := make([]any, len(n.elems))
+		for i, elem := range n.elems {
+			val, err := w.resolve(elem)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = val
+		}
+		return out, nil
+	default: // float64, bool, nil
+		return node, nil
 	}
 }
 
