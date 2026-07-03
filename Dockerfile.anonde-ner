@@ -181,6 +181,12 @@ COPY --from=build /out/anonde /anonde
 # divergence entirely.
 COPY --from=build /out/lib/libonnxruntime.so.1 /lib/libonnxruntime.so.1
 COPY --from=build /models /models
+# Third-party attribution for the redistributed artifacts unique to this
+# image — the bundled libonnxruntime.so (MIT, Microsoft), the baked GLiNER
+# + YOLOS model weights (Apache-2.0), and the extra linked Go deps — plus
+# the shared Go-dep notices. Baked in so a `docker pull` user receives them.
+# Debian package licenses ship separately at /usr/share/doc/<pkg>/copyright.
+COPY LICENSE NOTICE /
 
 # SIGNATURE_QUANT must be re-declared here — Docker ARGs don't cross
 # FROM boundaries. Default matches the build arg (fp32) so the runtime

@@ -26,8 +26,14 @@
 docs/
 *.md
 README*
-LICENSE
 *.svg
+
+# DO keep the license + attribution files in the build context so the
+# Dockerfiles' `COPY LICENSE NOTICE /` can bake them into the image — a
+# `docker pull` user never sees the repo. These negations re-include specific
+# files after the broad `*.md` / `LICENSE` excludes above.
+!LICENSE
+!NOTICE
 
 # Bench and validation harnesses (vs/, bench/) — large corpora, not at runtime
 vs/
