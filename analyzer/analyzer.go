@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/anonde-io/anonde/internal/metrics"
 )
@@ -181,6 +183,37 @@ func isNERBasedRecognizer(rec EntityRecognizer) bool {
 	return strings.HasSuffix(rec.Name(), "NERRecognizer")
 }
 
+// isModelBackedRecognizer reports whether rec runs neural/model inference
+// (GLiNER and its pool / ensemble wrappers). It's the superset of the
+// DisableNER name-suffix check and the conflict-resolver's pool-name set,
+// because a pool wrapper's Name() (e.g. "GLiNERPool") does NOT end in
+// "NERRecognizer". These recognizers are few and carry their own internal
+// concurrency, so Analyze keeps them on a dedicated goroutine each rather
+// than having them compete for a slot in the bounded pattern-recognizer
+// pool — a single slow inference must not stall the cheap regex passes.
+func isModelBackedRecognizer(rec EntityRecognizer) bool {
+	return isNERBasedRecognizer(rec) || nerRecognizerNames[rec.Name()]
+}
+
+// patternWorkerCount sizes the pattern-recognizer worker pool to
+// min(GOMAXPROCS, n). Pattern recognizers are CPU-bound regex / vocabulary
+// passes, so sizing to the number of schedulable CPUs keeps them running
+// in parallel while capping the per-request goroutine count at O(CPUs)
+// instead of O(recognizers). Returns 0 for n <= 0 (no work, no workers).
+func patternWorkerCount(n int) int {
+	if n < 1 {
+		return 0
+	}
+	w := runtime.GOMAXPROCS(0)
+	if w < 1 {
+		w = 1
+	}
+	if w > n {
+		w = n
+	}
+	return w
+}
+
 // NewAnalyzerEngine returns an engine backed by the given registry.
 func NewAnalyzerEngine(registry *RecognizerRegistry) *AnalyzerEngine {
 	return &AnalyzerEngine{Registry: registry}
@@ -248,23 +281,73 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		err     error
 	}
 
+	// `ch` is buffered to the full candidate count so every recognizer can
+	// deposit exactly one partial without blocking, even a laggard that
+	// finishes after a ctx-cancelled harvest has already returned.
 	ch := make(chan partial, len(candidates))
 	var wg sync.WaitGroup
+
+	// runOne executes a single recognizer and sends exactly one partial:
+	// a results partial on success, or an error partial if it panics.
+	// The recover is defensive; a misbehaving recognizer (notably upstream
+	// model bindings) must surface as a normal error, not crash the batch
+	// or the worker running it. Exactly-one-send keeps the send count equal
+	// to len(candidates), which is what makes the buffer sizing above sound.
+	runOne := func(r EntityRecognizer) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				ch <- partial{nil, fmt.Errorf("recognizer %s panicked: %v", r.Name(), rec)}
+			}
+		}()
+		res, err := r.Analyze(ctx, text, cfg.Entities, cfg.Language)
+		ch <- partial{res, err}
+	}
+
+	// Split the fan-out. Model-backed recognizers (GLiNER and its pool /
+	// ensemble wrappers) are few and already run their own internal
+	// concurrency, so each keeps a dedicated goroutine — that path is left
+	// exactly as it was. The many CPU-bound pattern recognizers are
+	// dispatched across a fixed worker pool, so per-request goroutine count
+	// is bounded by CPU count instead of growing one-per-recognizer. This
+	// stops live goroutines from scaling as requests × recognizers under
+	// concurrency, without serialising the recognizers or changing results.
+	patternRecs := candidates[:0:0]
 	for _, rec := range candidates {
-		wg.Add(1)
-		go func(r EntityRecognizer) {
-			defer wg.Done()
-			// Defensive recovery; a misbehaving recognizer (notably
-			// upstream model bindings) must not bring down the whole batch.
-			// We surface the panic to the caller as a normal error.
-			defer func() {
-				if rec := recover(); rec != nil {
-					ch <- partial{nil, fmt.Errorf("recognizer %s panicked: %v", r.Name(), rec)}
+		if isModelBackedRecognizer(rec) {
+			wg.Add(1)
+			go func(r EntityRecognizer) {
+				defer wg.Done()
+				runOne(r)
+			}(rec)
+			continue
+		}
+		patternRecs = append(patternRecs, rec)
+	}
+
+	// Bounded worker pool for the pattern recognizers. Each worker pulls
+	// the next recognizer via an atomic index and runs it to completion;
+	// results land on the same buffered `ch` in completion order, so the
+	// drain, the ctx-cancellation harvest, and the RemoveConflicts sort
+	// downstream are all unchanged. Each index is claimed by exactly one
+	// worker, so every recognizer's Analyze runs exactly once on exactly
+	// one goroutine — no shared per-recognizer state is touched
+	// concurrently.
+	if len(patternRecs) > 0 {
+		workers := patternWorkerCount(len(patternRecs))
+		var nextIdx atomic.Int64
+		wg.Add(workers)
+		for w := 0; w < workers; w++ {
+			go func() {
+				defer wg.Done()
+				for {
+					i := int(nextIdx.Add(1)) - 1
+					if i >= len(patternRecs) {
+						return
+					}
+					runOne(patternRecs[i])
 				}
 			}()
-			res, err := r.Analyze(ctx, text, cfg.Entities, cfg.Language)
-			ch <- partial{res, err}
-		}(rec)
+		}
 	}
 	// Wait-or-cancel: spawn a sentinel goroutine that closes `done`
 	// once every recognizer has returned. If `ctx` fires first we stop
