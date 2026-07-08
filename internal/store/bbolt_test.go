@@ -51,7 +51,10 @@ func newTestBoltStore(t *testing.T, ttl time.Duration) (*BoltStore, string) {
 		t.Fatalf("OpenDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	s := NewBoltStore(db, ttl)
+	s, err := NewBoltStore(db, ttl, nil)
+	if err != nil {
+		t.Fatalf("NewBoltStore: %v", err)
+	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s, path
 }

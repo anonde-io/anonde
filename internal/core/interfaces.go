@@ -1,6 +1,9 @@
 package core
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // PolicyAuthorizer gates deanonymization access. Service calls
 // AllowDetokenize before every detokenize/reveal; implementations are
@@ -8,6 +11,19 @@ import "context"
 type PolicyAuthorizer interface {
 	AllowDetokenize(ctx context.Context, req DetokenizeRequest) error
 }
+
+// ErrRecordNotFound is the sentinel a Store.Get MUST wrap (via %w) when
+// no record exists for (tenant, id), as opposed to a backend I/O
+// failure. DeleteAnonymization keys off errors.Is(err,
+// ErrRecordNotFound) to tell an idempotent no-op from a real error to
+// surface.
+var ErrRecordNotFound = errors.New("record not found")
+
+// ErrTokenCollision is returned by Vault.Put when it would overwrite a
+// live (tenant, token) whose cleartext differs — a fail-closed guard so a
+// reset token counter can't make an old document reveal a newer one's
+// cleartext. Service catches it and mints a fresh token.
+var ErrTokenCollision = errors.New("vault token collision")
 
 // VaultStats reports approximate occupancy for the metrics surface.
 // Bytes is best-effort; backends that can't cheaply compute it return

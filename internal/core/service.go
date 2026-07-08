@@ -143,12 +143,13 @@ func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) 
 
 	record, err := s.store.Get(ctx, tenantID, id)
 	if err != nil {
-		// Missing record → nothing to do. The Vault may technically still
-		// hold dangling entries from an interrupted earlier ingest, but
-		// without a record we have no way to enumerate them; that's
-		// acceptable today since the in-memory store dies with the
-		// process. Persisted stores will need a reverse-index.
-		return DeleteResult{}, nil
+		if errors.Is(err, ErrRecordNotFound) {
+			// Missing record → nothing to do. Dangling vault entries from an
+			// interrupted ingest aren't enumerable without a reverse-index.
+			return DeleteResult{}, nil
+		}
+		// A real backend failure is not an idempotent no-op — surface it.
+		return DeleteResult{}, fmt.Errorf("load anonymization for delete: %w", err)
 	}
 
 	seen := make(map[string]struct{}, len(record.Tokens))
@@ -172,6 +173,41 @@ func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) 
 			fmt.Errorf("delete store record: %w", err)
 	}
 	return DeleteResult{Deleted: existed, TokensDeleted: deleted}, nil
+}
+
+// maxMintAttempts bounds the collision-skip loop so a wedged vault can't
+// spin forever; exceeding it is a hard error, never a silent overwrite.
+const maxMintAttempts = 1 << 20
+
+// mintAndStoreToken mints a fresh token and stores its cleartext mapping,
+// guaranteeing the token doesn't already map a DIFFERENT cleartext. The
+// in-memory counter (tokens.go) resets on restart, so a persistent vault
+// could re-mint a live token and overwrite it; the probe skips occupied
+// tokens and the Vault.Put ErrTokenCollision guard is the atomic backstop
+// for the concurrent-mint race.
+func (s *Service) mintAndStoreToken(ctx context.Context, tenantID, entityType, cleartext string) (string, error) {
+	for attempts := 0; attempts < maxMintAttempts; attempts++ {
+		token := s.mintToken(tenantID, entityType)
+		// Occupied (a prior lifecycle minted it): try the next counter value.
+		if _, err := s.vault.Get(ctx, tenantID, token); err == nil {
+			continue
+		}
+		s.metrics.VaultOp("put")
+		err := s.vault.Put(ctx, tenantID, VaultEntry{
+			Token:      token,
+			EntityType: entityType,
+			Cleartext:  cleartext,
+		})
+		if err == nil {
+			return token, nil
+		}
+		if errors.Is(err, ErrTokenCollision) {
+			// Lost the race to a concurrent mint; retry with a new token.
+			continue
+		}
+		return "", fmt.Errorf("store vault mapping: %w", err)
+	}
+	return "", fmt.Errorf("mint token for tenant %q: no free token after %d attempts", tenantID, maxMintAttempts)
 }
 
 func (s *Service) Synthesize(ctx context.Context, req SynthesizeRequest) (_ *SynthesizeResponse, err error) {
@@ -396,16 +432,12 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 			cacheKey := finding.EntityType + "\x00" + cleartext
 			token, hit := docTokenByKey[cacheKey]
 			if !hit {
-				token = s.mintToken(req.TenantID, finding.EntityType)
-				docTokenByKey[cacheKey] = token
-				s.metrics.VaultOp("put")
-				if err := s.vault.Put(ctx, req.TenantID, VaultEntry{
-					Token:      token,
-					EntityType: finding.EntityType,
-					Cleartext:  cleartext,
-				}); err != nil {
-					return "", nil, fmt.Errorf("store vault mapping: %w", err)
+				var mintErr error
+				token, mintErr = s.mintAndStoreToken(ctx, req.TenantID, finding.EntityType, cleartext)
+				if mintErr != nil {
+					return "", nil, mintErr
 				}
+				docTokenByKey[cacheKey] = token
 			}
 			entityOp.byCleartext[cleartext] = token
 			tokens = append(tokens, TokenRef{

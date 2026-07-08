@@ -53,21 +53,31 @@ const (
 	bucketStore = "store"
 )
 
-// envelope is the on-disk record shape. The same struct serves both
-// buckets; the difference is that vault Body is encrypted bytes
-// while store Body is plaintext JSON. Keeping the format identical
-// makes the sweeper schema-blind.
+// envelope is the on-disk record shape for both buckets. Body may be
+// plaintext or AEAD-sealed JSON; Version discriminates. Version and
+// ExpiresAt stay plaintext so the sweeper and Stats never touch Body.
 type envelope struct {
 	Version   uint8     `json:"v"`
 	ExpiresAt time.Time `json:"exp,omitzero"`
 	Body      []byte    `json:"body"`
 }
 
-const envelopeVersion uint8 = 1
+// Body version tags. v1 = plaintext JSON, v2 = AEAD-sealed. The tag (not
+// a try-decrypt heuristic) lets a key-configured BoltStore keep reading
+// pre-existing v1 records while writing new ones sealed. BoltVault keys
+// off its own aead field and stays v1.
+const (
+	envelopeVersion       uint8 = 1
+	envelopeVersionSealed uint8 = 2
+)
 
-// BoltStore is the persistent core.Store implementation.
+// BoltStore is the persistent core.Store implementation. With a key it
+// AEAD-seals each record Body (same cipher as the vault), so at-rest
+// confidentiality covers the store bucket too — notably PDF
+// OriginalBytes. Without a key, records are plaintext JSON (v1).
 type BoltStore struct {
 	db            *bolt.DB
+	aead          *aeadCipher // nil → store records written plaintext
 	ttl           time.Duration
 	sweepInterval time.Duration
 
@@ -145,16 +155,28 @@ func NewBoltVault(db *bolt.DB, ttl time.Duration, key []byte) (*BoltVault, error
 	return v, nil
 }
 
-// NewBoltStore returns a Store backed by the given *bolt.DB.
-func NewBoltStore(db *bolt.DB, ttl time.Duration) *BoltStore {
+// NewBoltStore returns a Store backed by the given *bolt.DB. Pass the
+// same 32-byte key used for the vault (LoadVaultKey) to AES-256-GCM seal
+// record bodies at rest, or nil/empty to store them as plaintext JSON.
+// ttl=0 disables expiry.
+func NewBoltStore(db *bolt.DB, ttl time.Duration, key []byte) (*BoltStore, error) {
+	var aead *aeadCipher
+	if len(key) > 0 {
+		var err error
+		aead, err = newAEAD(key)
+		if err != nil {
+			return nil, err
+		}
+	}
 	s := &BoltStore{
 		db:            db,
+		aead:          aead,
 		ttl:           ttl,
 		sweepInterval: computeSweepInterval(ttl),
 		stopCh:        make(chan struct{}),
 	}
 	s.startSweeperLocked()
-	return s
+	return s, nil
 }
 
 // Close stops the background sweeper and waits for any in-flight
@@ -204,8 +226,42 @@ func (v *BoltVault) Put(_ context.Context, tenantID string, entry core.VaultEntr
 		return fmt.Errorf("marshal vault envelope: %w", err)
 	}
 	return v.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(bucketVault)).Put(vaultKey(tenantID, entry.Token), encoded)
+		b := tx.Bucket([]byte(bucketVault))
+		key := vaultKey(tenantID, entry.Token)
+		// Fail-closed guard (see Service.mintAndStoreToken): never overwrite
+		// a live (tenant, token) whose cleartext differs, or an earlier
+		// document would reveal this one's cleartext. Same-cleartext and
+		// expired/undecodable rows are overwritable; the RMW is atomic in
+		// this txn, closing the concurrent-mint race the probe can't.
+		if raw := b.Get(key); raw != nil {
+			if prev, ok := v.decodeEntry(raw); ok && prev.Cleartext != entry.Cleartext {
+				return core.ErrTokenCollision
+			}
+		}
+		return b.Put(key, encoded)
 	})
+}
+
+// decodeEntry decodes a raw vault envelope into its VaultEntry. ok is
+// false when the row is expired or can't be decoded/decrypted; callers
+// then treat the slot as free (safe to overwrite).
+func (v *BoltVault) decodeEntry(raw []byte) (core.VaultEntry, bool) {
+	var env envelope
+	if json.Unmarshal(raw, &env) != nil || expired(env.ExpiresAt) {
+		return core.VaultEntry{}, false
+	}
+	plaintext := env.Body
+	if v.aead != nil {
+		var err error
+		if plaintext, err = v.aead.open(env.Body); err != nil {
+			return core.VaultEntry{}, false
+		}
+	}
+	var out core.VaultEntry
+	if json.Unmarshal(plaintext, &out) != nil {
+		return core.VaultEntry{}, false
+	}
+	return out, true
 }
 
 func (v *BoltVault) Get(_ context.Context, tenantID, token string) (core.VaultEntry, error) {
@@ -337,10 +393,19 @@ func (s *BoltStore) Put(_ context.Context, record core.StoreRecord) error {
 	if err != nil {
 		return fmt.Errorf("marshal store record: %w", err)
 	}
+	version := envelopeVersion
+	body := payload
+	if s.aead != nil {
+		body, err = s.aead.seal(payload)
+		if err != nil {
+			return fmt.Errorf("seal store record: %w", err)
+		}
+		version = envelopeVersionSealed
+	}
 	env := envelope{
-		Version:   envelopeVersion,
+		Version:   version,
 		ExpiresAt: expirationFromNow(s.ttl),
-		Body:      payload,
+		Body:      body,
 	}
 	encoded, err := json.Marshal(env)
 	if err != nil {
@@ -371,10 +436,26 @@ func (s *BoltStore) Get(_ context.Context, tenantID, id string) (core.StoreRecor
 		if found && expired(env.ExpiresAt) {
 			_ = s.deleteRaw(tenantID, id)
 		}
-		return core.StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
+		return core.StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q: %w", id, tenantID, core.ErrRecordNotFound)
 	}
+	body := env.Body
+	if env.Version == envelopeVersionSealed {
+		// Written sealed (a key was configured at write time). Reading it
+		// back requires the key; without one the row is opaque by design.
+		if s.aead == nil {
+			return core.StoreRecord{}, fmt.Errorf("store record %q is encrypted but no store key is configured", id)
+		}
+		var derr error
+		body, derr = s.aead.open(env.Body)
+		if derr != nil {
+			return core.StoreRecord{}, fmt.Errorf("decrypt store record: %w", derr)
+		}
+	}
+	// Version 1 (or legacy 0) → plaintext Body, decoded directly even when
+	// a key is now configured, so enabling encryption keeps old records
+	// readable.
 	var out core.StoreRecord
-	if err := json.Unmarshal(env.Body, &out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return core.StoreRecord{}, fmt.Errorf("unmarshal store record: %w", err)
 	}
 	return out, nil

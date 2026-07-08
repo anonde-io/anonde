@@ -68,7 +68,7 @@ func (s *testStore) Get(_ context.Context, tenantID, id string) (StoreRecord, er
 	defer s.mu.Unlock()
 	r, ok := s.m[tenantID+":"+id]
 	if !ok {
-		return StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q", id, tenantID)
+		return StoreRecord{}, fmt.Errorf("anonymization %q not found for tenant %q: %w", id, tenantID, ErrRecordNotFound)
 	}
 	return r, nil
 }

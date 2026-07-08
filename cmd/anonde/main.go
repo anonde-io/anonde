@@ -955,7 +955,7 @@ func selectStoreBackend(vaultTTL, storeTTL time.Duration) (core.Vault, core.Stor
 				log.Fatalf("STORE_BACKEND=bbolt: %v", err)
 			}
 		} else {
-			log.Printf("STORE_BACKEND=bbolt: ANONDE_VAULT_KEY not set; vault stored UNENCRYPTED at %s", path)
+			log.Printf("STORE_BACKEND=bbolt: ANONDE_VAULT_KEY not set; vault + store records (incl. PDF originals) stored UNENCRYPTED at %s", path)
 		}
 		db, err := store.OpenDB(path)
 		if err != nil {
@@ -966,14 +966,23 @@ func selectStoreBackend(vaultTTL, storeTTL time.Duration) (core.Vault, core.Stor
 			_ = db.Close()
 			log.Fatalf("init bolt vault: %v", err)
 		}
-		anonStore := store.NewBoltStore(db, storeTTL)
+		// Same key as the vault: when set, store-record bodies (including
+		// PDF original bytes) are AES-256-GCM sealed at rest, closing the
+		// gap where a vault key encrypted only the vault bucket.
+		anonStore, err := store.NewBoltStore(db, storeTTL, key)
+		if err != nil {
+			_ = db.Close()
+			log.Fatalf("init bolt store: %v", err)
+		}
 
 		// LRU cache in front of the vault to absorb the N-token-per-
 		// reveal read amplification. Default 10k entries (~2 MB of
 		// VaultEntry structs); ANONDE_VAULT_CACHE_SIZE=0 disables the
 		// wrapper entirely and serves all reads through bbolt.
 		cacheSize := intFromEnv("ANONDE_VAULT_CACHE_SIZE", 10_000)
-		vault := store.NewCachedVault(boltVault, cacheSize)
+		// Pass vaultTTL so a cached hit can't outlive the vault TTL that
+		// expired the underlying row.
+		vault := store.NewCachedVaultWithTTL(boltVault, cacheSize, vaultTTL)
 		label := "bbolt:" + path
 		if key == nil {
 			label += " (plaintext)"

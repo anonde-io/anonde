@@ -131,9 +131,12 @@ func TestBoltVault_StatsNoTTLUsesKeyN(t *testing.T) {
 	if got := v.Stats().Entries; got != 5 {
 		t.Fatalf("entries = %d, want 5", got)
 	}
-	// Overwriting an existing token must not change the count.
+	// Overwriting an existing token must not change the count. Uses the
+	// SAME cleartext ("x") because Put now fail-closed rejects a rewrite
+	// that would change a live token's cleartext (ErrTokenCollision); an
+	// idempotent same-cleartext rewrite still exercises the KeyN path.
 	if err := v.Put(ctx, "demo", core.VaultEntry{
-		Token: "T0", EntityType: "EMAIL_ADDRESS", Cleartext: "y",
+		Token: "T0", EntityType: "EMAIL_ADDRESS", Cleartext: "x",
 	}); err != nil {
 		t.Fatalf("Put overwrite: %v", err)
 	}

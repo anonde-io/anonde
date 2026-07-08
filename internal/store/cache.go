@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 
@@ -33,61 +34,84 @@ import (
 //     last step, a racing Get between underlying-delete and
 //     cache-delete would serve stale plaintext.
 //
-// This wrapper is correct for TTL=0 (no expiry, current default).
-// With non-zero TTL, the underlying expires rows but the cache
-// doesn't; a tradeoff documented at NewCachedVault. Memory backend
-// users don't need this wrapper.
+// TTL correctness: each entry carries an expiry stamped from the vault's
+// TTL (see NewCachedVaultWithTTL); an expired hit is a miss, so a warm
+// cache can't outlive the vault TTL. TTL=0 means no expiry.
 //
 // Concurrency: the LRU is goroutine-safe. We add a small RWMutex
 // around the Delete-then-Delete sequence to keep the ordering
 // guarantee under concurrent Get calls.
 type CachedVault struct {
 	underlying core.Vault
-	cache      *lru.Cache[string, core.VaultEntry]
+	cache      *lru.Cache[string, cachedEntry]
+	ttl        time.Duration
 	mu         sync.RWMutex
 }
 
-// NewCachedVault wraps v with an LRU cache of the given size. size=0
-// returns the underlying vault unchanged; size<0 is a programmer error
-// surfaced via panic at startup (callers should validate env input).
-//
-// Caveat with TTL: if the underlying has TTL>0, an entry can expire
-// in the underlying while still sitting in this cache. The cached
-// hit would serve stale plaintext until LRU eviction takes it. For
-// strict TTL correctness with a cache, the underlying TTL should
-// match a cache-side TTL (not implemented; today's default is TTL=0
-// so this is a non-issue).
+// cachedEntry pairs a vault value with the wall-clock instant it must no
+// longer be served from cache. A zero expiresAt means "never expires"
+// (TTL=0).
+type cachedEntry struct {
+	entry     core.VaultEntry
+	expiresAt time.Time
+}
+
+func (e cachedEntry) expired(now time.Time) bool {
+	return !e.expiresAt.IsZero() && now.After(e.expiresAt)
+}
+
+// NewCachedVault wraps v with an LRU cache of the given size and no
+// cache-side expiry (TTL=0). Kept for callers that don't run a vault
+// TTL; NewCachedVaultWithTTL is the TTL-aware form.
 func NewCachedVault(v core.Vault, size int) core.Vault {
+	return NewCachedVaultWithTTL(v, size, 0)
+}
+
+// NewCachedVaultWithTTL wraps v with an LRU cache of the given size,
+// expiring cached entries after ttl so a hit can never outlive the
+// underlying vault's TTL. Pass the same ttl the underlying vault was
+// built with. size=0 returns the underlying vault unchanged; size<0 is a
+// programmer error surfaced via panic at startup (callers should
+// validate env input).
+func NewCachedVaultWithTTL(v core.Vault, size int, ttl time.Duration) core.Vault {
 	if size == 0 {
 		return v
 	}
 	if size < 0 {
 		panic(fmt.Sprintf("CachedVault: negative size %d", size))
 	}
-	c, err := lru.New[string, core.VaultEntry](size)
+	c, err := lru.New[string, cachedEntry](size)
 	if err != nil {
 		// lru.New only errors on size<=0; we've already filtered that.
 		// Panic surfaces a programmer error rather than a silent fail.
 		panic(fmt.Sprintf("CachedVault: %v", err))
 	}
-	return &CachedVault{underlying: v, cache: c}
+	return &CachedVault{underlying: v, cache: c, ttl: ttl}
 }
 
 func (c *CachedVault) Put(ctx context.Context, tenantID string, entry core.VaultEntry) error {
+	// Stamp expiry before the underlying write so the cache copy expires
+	// at or before the underlying row, never after.
+	expiresAt := c.expiryFrom(time.Now())
 	// Write-through: underlying first. If it fails, leave the cache
 	// untouched so a subsequent Get retries the underlying instead of
 	// serving a value the persistent store never accepted.
 	if err := c.underlying.Put(ctx, tenantID, entry); err != nil {
 		return err
 	}
-	c.cache.Add(cacheKey(tenantID, entry.Token), entry)
+	c.cache.Add(cacheKey(tenantID, entry.Token), cachedEntry{entry: entry, expiresAt: expiresAt})
 	return nil
 }
 
 func (c *CachedVault) Get(ctx context.Context, tenantID, token string) (core.VaultEntry, error) {
 	key := cacheKey(tenantID, token)
-	if e, ok := c.cache.Get(key); ok {
-		return e, nil
+	if ce, ok := c.cache.Get(key); ok {
+		if !ce.expired(time.Now()) {
+			return ce.entry, nil
+		}
+		// Expired: evict and fall through to the underlying, which applies
+		// its own TTL check and returns not-found (and lazily drops it).
+		c.cache.Remove(key)
 	}
 	c.mu.RLock()
 	e, err := c.underlying.Get(ctx, tenantID, token)
@@ -95,8 +119,17 @@ func (c *CachedVault) Get(ctx context.Context, tenantID, token string) (core.Vau
 	if err != nil {
 		return core.VaultEntry{}, err
 	}
-	c.cache.Add(key, e)
+	c.cache.Add(key, cachedEntry{entry: e, expiresAt: c.expiryFrom(time.Now())})
 	return e, nil
+}
+
+// expiryFrom returns the cache-entry expiry for a value observed at now,
+// or the zero time when no TTL is configured (never expire).
+func (c *CachedVault) expiryFrom(now time.Time) time.Time {
+	if c.ttl <= 0 {
+		return time.Time{}
+	}
+	return now.Add(c.ttl)
 }
 
 // Stats forwards to the underlying. The cache itself does not add
