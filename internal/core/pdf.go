@@ -135,9 +135,20 @@ func (s *Service) RedactPDF(ctx context.Context, tenantID string, raw []byte, op
 // GetOriginalPDF returns the original (pre-anonymization) PDF bytes for
 // a stored anonymization. NotFound when the record doesn't exist, has
 // expired, or was created via the text path (no OriginalBytes).
+//
+// Returning original bytes IS a detokenize (it hands back cleartext), so
+// it clears the same PolicyAuthorizer gate as Service.Detokenize. The
+// check lives here — in the service layer every transport (REST direct
+// handler, gRPC, Connect) funnels through — so no /reveal-pdf surface can
+// bypass a denying policy. Checked before the store lookup so a denied
+// caller can't even probe record existence.
 func (s *Service) GetOriginalPDF(ctx context.Context, tenantID, id string) ([]byte, error) {
 	if tenantID == "" || id == "" {
 		return nil, fmt.Errorf("tenant_id and id are required")
+	}
+	if err := s.policy.AllowDetokenize(ctx, DetokenizeRequest{TenantID: tenantID, ID: id}); err != nil {
+		s.metrics.PolicyDenied("authorizer_denied")
+		return nil, fmt.Errorf("%w: %v", ErrPolicyDenied, err)
 	}
 	rec, err := s.store.Get(ctx, tenantID, id)
 	if err != nil {

@@ -201,8 +201,14 @@ func (s *HTTPServer) revealPDF(w http.ResponseWriter, r *http.Request) {
 		// 500 for an expired/deleted id. The error body keeps the
 		// detail for debugging.
 		code := http.StatusNotFound
-		if errors.Is(err, core.ErrPDFRedactorUnconfigured) {
+		switch {
+		case errors.Is(err, core.ErrPDFRedactorUnconfigured):
 			code = http.StatusNotImplemented
+		case errors.Is(err, core.ErrPolicyDenied):
+			// Policy runs before the store lookup, so a 403 here does not
+			// leak whether the id exists — it mirrors the text detokenize
+			// path's PermissionDenied.
+			code = http.StatusForbidden
 		}
 		http.Error(w, err.Error(), code)
 		return
