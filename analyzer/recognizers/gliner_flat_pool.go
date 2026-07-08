@@ -43,13 +43,13 @@
 //
 // Naming caveat
 // -------------
-// `Name()` returns "GLiNERFlatPool"; it does NOT end in
-// "NERRecognizer", which means the analyzer engine's `DisableNER`
-// suffix-check WILL NOT suppress the pool. Callers that want
-// per-request NER disable while using the pool must enforce it higher
-// in the stack (e.g. skip dispatching to the pool when
-// `req.DisableNER` is set). The conflict resolver knows about the
-// pool name explicitly (see analyzer/result.go::nerRecognizerNames).
+// `Name()` returns "GLiNERFlatPool"; it does NOT end in "NERRecognizer",
+// so the analyzer engine's narrow suffix check alone would miss it. The
+// pool is registered in analyzer/result.go::nerRecognizerNames, which the
+// engine's `DisableNER` filter consults via isModelBackedRecognizer — so
+// `req.DisableNER` DOES suppress the pool (no per-request enforcement
+// higher in the stack is needed). The conflict resolver uses the same set
+// for its NER-preference rule.
 //
 // Integration
 // -----------
@@ -154,12 +154,11 @@ func (p *GLiNERFlatPool) Size() int { return p.size }
 
 // Name returns "GLiNERFlatPool".
 //
-// Note: this does NOT end in "NERRecognizer", which means the analyzer
-// engine's DisableNER suffix-check will NOT suppress the pool. See the
-// package-level godoc for guidance on enforcing DisableNER higher in
-// the stack when using the pool. The conflict resolver
-// (analyzer/result.go::nerRecognizerNames) knows this name
-// explicitly so the NER-preferred entity rule still applies.
+// Note: this does NOT end in "NERRecognizer", so it is registered in
+// analyzer/result.go::nerRecognizerNames; the engine's DisableNER filter
+// consults that set (via isModelBackedRecognizer) and DOES suppress the
+// pool. The same set drives the conflict resolver's NER-preferred entity
+// rule.
 func (p *GLiNERFlatPool) Name() string { return "GLiNERFlatPool" }
 
 // SupportedEntities returns the canonical entity set every instance

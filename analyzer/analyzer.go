@@ -95,8 +95,12 @@ type AnalysisConfig struct {
 	ScoreThreshold float64
 	// RemoveConflicts removes overlapping spans, keeping the best one.
 	RemoveConflicts bool
-	// DisableNER skips model-backed NER recognizers (recognizers whose name
-	// ends in "NERRecognizer", e.g. GLiNERRecognizer).
+	// DisableNER skips model-backed NER recognizers: both those whose name
+	// ends in "NERRecognizer" (e.g. GLiNERRecognizer) AND the pool / ensemble
+	// wrappers registered in nerRecognizerNames (GLiNERPool, GLiNERFlatPool)
+	// whose Name() does NOT carry that suffix. Filtering uses the superset
+	// predicate isModelBackedRecognizer, so pooled inference is skipped too and
+	// disable_ner never silently runs an expensive neural pool.
 	// Use when you want maximum throughput and don't need a neural model
 	// loaded or called.
 	//
@@ -251,7 +255,13 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	if cfg.DisableNER {
 		filtered := candidates[:0:0]
 		for _, rec := range candidates {
-			if isNERBasedRecognizer(rec) {
+			// isModelBackedRecognizer (not the narrow isNERBasedRecognizer
+			// suffix check) so pool / ensemble wrappers whose Name() does NOT
+			// end in "NERRecognizer" (GLiNERPool, GLiNERFlatPool) are skipped
+			// too. It is a strict superset — isNERBasedRecognizer(rec) ||
+			// nerRecognizerNames[rec.Name()] — so this only ADDS skips and can
+			// never drop a legitimate pattern recognizer.
+			if isModelBackedRecognizer(rec) {
 				continue
 			}
 			filtered = append(filtered, rec)
