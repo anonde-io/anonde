@@ -677,7 +677,7 @@ jobs:
       # NOT want to ship that REPORT_MATRIX.
       - name: Open PR with refreshed REPORT_MATRIX
         if: success()
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           add-paths: bench/REPORT_MATRIX.md
           branch: bench/auto-update-matrix
