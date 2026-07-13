@@ -102,6 +102,9 @@ func (s *Service) RedactPDF(ctx context.Context, tenantID string, raw []byte, op
 	if tenantID == "" {
 		return "", nil, RedactStats{}, fmt.Errorf("tenant_id is required")
 	}
+	if err := validateIdentifier("tenant_id", tenantID); err != nil {
+		return "", nil, RedactStats{}, err
+	}
 	if len(raw) == 0 {
 		return "", nil, RedactStats{}, fmt.Errorf("empty PDF body")
 	}
@@ -145,6 +148,12 @@ func (s *Service) RedactPDF(ctx context.Context, tenantID string, raw []byte, op
 func (s *Service) GetOriginalPDF(ctx context.Context, tenantID, id string) ([]byte, error) {
 	if tenantID == "" || id == "" {
 		return nil, fmt.Errorf("tenant_id and id are required")
+	}
+	if err := validateIdentifier("tenant_id", tenantID); err != nil {
+		return nil, err
+	}
+	if err := validateIdentifier("id", id); err != nil {
+		return nil, err
 	}
 	if err := s.policy.AllowDetokenize(ctx, DetokenizeRequest{TenantID: tenantID, ID: id}); err != nil {
 		s.metrics.PolicyDenied("authorizer_denied")

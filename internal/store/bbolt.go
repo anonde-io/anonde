@@ -610,10 +610,10 @@ func storeKey(tenantID, id string) []byte {
 	return compositeKey(tenantID, id)
 }
 
-// compositeKey builds tenant\x00field. The leading 2-byte length
-// prefix on the tenant guards against ambiguity if someone ever stores
-// a NUL byte in a tenant (proto3 strings are valid UTF-8 by spec, but
-// belt-and-braces).
+// compositeKey builds tenant\x00field. The 2-byte length prefix pins the
+// tenant boundary (a NUL in either half is harmless), but is collision-free
+// only while len(tenantID) fits the uint16 — the core service guarantees
+// that by capping caller identifiers at maxIdentifierBytes (4096).
 func compositeKey(tenantID, field string) []byte {
 	var buf bytes.Buffer
 	buf.Grow(2 + len(tenantID) + 1 + len(field))

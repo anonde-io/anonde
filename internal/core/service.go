@@ -40,6 +40,26 @@ type Service struct {
 
 var ErrPolicyDenied = errors.New("policy denied")
 
+// maxIdentifierBytes bounds a caller-supplied tenant_id / id. Keeping it
+// well under the bbolt composite key's uint16 tenant-length prefix (65536)
+// makes that on-disk key collision-free by invariant. 4096 is far above
+// any real identifier.
+const maxIdentifierBytes = 4096
+
+// validateIdentifier rejects a caller-supplied tenant_id / id that is
+// over-long or NUL-bearing — the two inputs that could forge a colliding
+// composite key. Empty passes on purpose: the required check is each
+// method's job, and an empty id is legal on Ingest, which mints one.
+func validateIdentifier(name, value string) error {
+	if len(value) > maxIdentifierBytes {
+		return fmt.Errorf("%s exceeds %d bytes", name, maxIdentifierBytes)
+	}
+	if strings.IndexByte(value, 0x00) >= 0 {
+		return fmt.Errorf("%s must not contain a NUL byte", name)
+	}
+	return nil
+}
+
 // NewService wires the orchestration spine. The metrics Recorder is
 // the last parameter so callers that don't care can pass
 // metrics.NewNoop(); that's also what the no-instrumentation library
@@ -139,6 +159,12 @@ func (s *Service) DeleteAnonymization(ctx context.Context, tenantID, id string) 
 	defer func() { span.Done(statusFromErr(err)) }()
 	if tenantID == "" || id == "" {
 		return DeleteResult{}, fmt.Errorf("tenant_id and id are required")
+	}
+	if err := validateIdentifier("tenant_id", tenantID); err != nil {
+		return DeleteResult{}, err
+	}
+	if err := validateIdentifier("id", id); err != nil {
+		return DeleteResult{}, err
 	}
 
 	record, err := s.store.Get(ctx, tenantID, id)
@@ -325,6 +351,12 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 	defer func() { span.Done(statusFromErr(err)) }()
 	if req.TenantID == "" || req.Content == "" {
 		return nil, fmt.Errorf("tenant_id and content are required")
+	}
+	if err := validateIdentifier("tenant_id", req.TenantID); err != nil {
+		return nil, err
+	}
+	if err := validateIdentifier("id", req.ID); err != nil {
+		return nil, err
 	}
 	// Caller-supplied ID is the round-trip key (replayable from logs);
 	// empty means the caller doesn't care, so mint a Stripe-style
@@ -540,6 +572,12 @@ func (s *Service) Detokenize(ctx context.Context, req DetokenizeRequest) (_ *Det
 	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" {
 		return nil, fmt.Errorf("tenant_id, id, actor and purpose are required")
 	}
+	if err := validateIdentifier("tenant_id", req.TenantID); err != nil {
+		return nil, err
+	}
+	if err := validateIdentifier("id", req.ID); err != nil {
+		return nil, err
+	}
 	if len(req.Tokens) == 0 {
 		return nil, fmt.Errorf("at least one token is required")
 	}
@@ -585,6 +623,26 @@ func (s *Service) Reveal(ctx context.Context, req RevealRequest) (_ *RevealRespo
 	defer func() { span.Done(statusFromErr(err)) }()
 	if req.TenantID == "" || req.ID == "" || req.Actor == "" || req.Purpose == "" || req.Content == "" {
 		return nil, fmt.Errorf("tenant_id, id, actor, purpose and content are required")
+	}
+	if err := validateIdentifier("tenant_id", req.TenantID); err != nil {
+		return nil, err
+	}
+	if err := validateIdentifier("id", req.ID); err != nil {
+		return nil, err
+	}
+
+	// Gate policy BEFORE store.Get (mirroring GetOriginalPDF): closes the
+	// existence oracle (denied caller distinguishing missing vs existing id)
+	// and the zero-token early return below, which skips the inner
+	// Detokenize gate. That inner check stays (redundant but harmless).
+	if err := s.policy.AllowDetokenize(ctx, DetokenizeRequest{
+		TenantID: req.TenantID,
+		ID:       req.ID,
+		Actor:    req.Actor,
+		Purpose:  req.Purpose,
+	}); err != nil {
+		s.metrics.PolicyDenied("authorizer_denied")
+		return nil, fmt.Errorf("%w: %v", ErrPolicyDenied, err)
 	}
 
 	record, err := s.store.Get(ctx, req.TenantID, req.ID)
