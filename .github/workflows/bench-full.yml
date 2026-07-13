@@ -228,7 +228,7 @@ jobs:
 
       - name: Cache libonnxruntime
         id: ort-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.ORT_LIB_DIR }}
           key: libonnxruntime-${{ env.ORT_VERSION }}-linux-x64
@@ -319,13 +319,13 @@ jobs:
       # purge-and-re-download repair (bench/tools/prefetch) is the in-run
       # safety net; this bump is what lets the repaired dir actually persist.
       - name: Cache HuggingFace model cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-cache-gliner-pii-base-v3
 
       - name: Cache anonde model cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/anonde/models
           key: anonde-models-gliner-pii-base-v3
@@ -353,7 +353,7 @@ jobs:
       # predictions from the prior run and the latency
       # table in REPORT_MATRIX.md silently keeps reporting old numbers.
       - name: Cache corpus data
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: bench/corpora/${{ matrix.corpus }}/data
           # bench/Makefile must be in the hash inputs: the per-cell make
