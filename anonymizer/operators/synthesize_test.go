@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -63,6 +64,57 @@ func ibanValid(s string) bool {
 
 // ── entity-type coverage ──────────────────────────────────────────────────────
 
+// TestSynthesize_FallbackScramblesAlphabeticPII pins the fix for the leak
+// where the unrecognised-type fallback only randomised digits and kept every
+// letter verbatim, so alphabetic PII (SECRET, PROFESSION, NRP, custom
+// deny-list entities, alphanumeric licences / regional IDs) survived the
+// "synthesized" output unchanged. The fallback must now replace letters too,
+// while preserving character class, case, and separators.
+func TestSynthesize_FallbackScramblesAlphabeticPII(t *testing.T) {
+	s := &Synthesize{}
+	cases := []struct{ entityType, in string }{
+		{"SECRET", "sk-LiveSecretTokenABCDEFGH"},
+		{"PROFESSION", "Neurosurgeon"},
+		{"NRP", "Norwegian"},
+		{"CUSTOM", "ProjectNightingale"},
+		{"US_DRIVER_LICENSE", "D1234567AB"},
+		{"NON_LATIN", "Müllerstraße"}, // non-ASCII letters must not survive either
+	}
+	for _, tc := range cases {
+		t.Run(tc.entityType, func(t *testing.T) {
+			out := mustSynthesize(t, s, tc.in, tc.entityType)
+			if out == tc.in {
+				t.Fatalf("%s: output identical to input %q — PII survived verbatim", tc.entityType, tc.in)
+			}
+			inR, outR := []rune(tc.in), []rune(out)
+			if len(inR) != len(outR) {
+				t.Fatalf("%s: rune length changed %d->%d; structure not preserved", tc.entityType, len(inR), len(outR))
+			}
+			for i, ir := range inR {
+				or := outR[i]
+				switch {
+				case unicode.IsDigit(ir):
+					if !unicode.IsDigit(or) {
+						t.Fatalf("%s: pos %d digit %q became non-digit %q", tc.entityType, i, ir, or)
+					}
+				case unicode.IsLetter(ir):
+					if !unicode.IsLetter(or) {
+						t.Fatalf("%s: pos %d letter %q became non-letter %q", tc.entityType, i, ir, or)
+					}
+					// A non-ASCII letter must be replaced (mapped to ASCII), never kept.
+					if ir > unicode.MaxASCII && or == ir {
+						t.Fatalf("%s: pos %d non-ASCII letter %q survived verbatim", tc.entityType, i, ir)
+					}
+				default:
+					if ir != or {
+						t.Fatalf("%s: separator at pos %d changed %q->%q", tc.entityType, i, ir, or)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestSynthesize_Person(t *testing.T) {
 	op := &Synthesize{}
 	v := mustSynthesize(t, op, "John Smith", "PERSON")
@@ -86,11 +138,11 @@ func TestSynthesize_CreditCard_Luhn(t *testing.T) {
 	op := &Synthesize{}
 	// Test various input formats.
 	inputs := []string{
-		"4111111111111111",         // Visa 16-digit bare
-		"4111 1111 1111 1111",      // Visa with spaces
-		"4111-1111-1111-1111",      // Visa with dashes
-		"378282246310005",           // Amex 15-digit
-		"3782 822463 10005",         // Amex formatted
+		"4111111111111111",    // Visa 16-digit bare
+		"4111 1111 1111 1111", // Visa with spaces
+		"4111-1111-1111-1111", // Visa with dashes
+		"378282246310005",     // Amex 15-digit
+		"3782 822463 10005",   // Amex formatted
 	}
 	for _, in := range inputs {
 		v := mustSynthesize(t, op, in, "CREDIT_CARD")
@@ -234,7 +286,7 @@ func TestSynthesize_URL(t *testing.T) {
 func TestSynthesize_Crypto(t *testing.T) {
 	op := &Synthesize{}
 	cases := []string{
-		"1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf​Na", // Bitcoin legacy (length may vary)
+		"1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf​Na",        // Bitcoin legacy (length may vary)
 		"0x742d35Cc6634C0532925a3b844Bc454e4438f44e", // Ethereum
 		"bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", // Bech32
 	}
@@ -274,10 +326,17 @@ func TestSynthesize_ITIN(t *testing.T) {
 
 func TestSynthesize_Unknown_PreservesFormat(t *testing.T) {
 	op := &Synthesize{}
-	v := mustSynthesize(t, op, "AB-1234-CD", "SOME_CUSTOM_TYPE")
-	// Letters should be kept, digits replaced.
-	if !strings.HasPrefix(v, "AB-") || !strings.HasSuffix(v, "-CD") {
-		t.Errorf("format skeleton not preserved: %q", v)
+	const in = "AB-1234-CD"
+	v := mustSynthesize(t, op, in, "SOME_CUSTOM_TYPE")
+	// Separators are kept and each position keeps its character class, but
+	// letters are scrambled too (not kept verbatim) — keeping them would leak
+	// alphabetic PII through the fallback.
+	if v == in {
+		t.Fatalf("output identical to input %q — letters survived verbatim (leak)", in)
+	}
+	skeleton := regexp.MustCompile(`^[A-Z][A-Z]-\d{4}-[A-Z][A-Z]$`)
+	if !skeleton.MatchString(v) {
+		t.Errorf("character-class skeleton not preserved: %q", v)
 	}
 }
 

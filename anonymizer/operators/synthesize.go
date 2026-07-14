@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 // Synthesize replaces PII with realistic synthetic data of the same entity type,
@@ -151,9 +152,43 @@ func synthesizeEntity(rng *rand.Rand, text, entityType string) (string, error) {
 	case "US_ITIN":
 		return synUSITIN(rng), nil
 	default:
-		// Preserve format for any unrecognised type (US_BANK_NUMBER, driver licences, etc.)
-		return synDigitPreserve(rng, text), nil
+		// No type-specific generator (SECRET, PROFESSION, NRP, custom
+		// deny-list entities, driver licences, regional IDs, …). Scramble
+		// every letter AND digit so no part of the original survives —
+		// synDigitPreserve alone keeps letters verbatim, which leaks any
+		// alphabetic PII through the "synthesized" output.
+		return synScramble(rng, text), nil
 	}
+}
+
+// synScramble replaces every letter and digit with a random same-class
+// character — a letter becomes a random ASCII letter of the same case, a
+// digit becomes a random digit — while separators, punctuation and
+// whitespace are kept. Unlike synDigitPreserve it does NOT preserve
+// letters, so no substring of the original survives. Letter detection is
+// Unicode-aware (a non-ASCII letter is still replaced, mapped to an ASCII
+// letter) so the fallback is leak-safe for every script anonde handles,
+// not just Latin. This is the safe fallback for alphabetic / alphanumeric
+// types that have no realistic type-specific generator.
+func synScramble(rng *rand.Rand, text string) string {
+	const lower = "abcdefghijklmnopqrstuvwxyz"
+	const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	out := make([]rune, 0, len(text))
+	for _, r := range text {
+		switch {
+		case unicode.IsDigit(r):
+			out = append(out, rune('0'+rng.Intn(10)))
+		case unicode.IsLetter(r):
+			if unicode.IsUpper(r) {
+				out = append(out, rune(upper[rng.Intn(len(upper))]))
+			} else {
+				out = append(out, rune(lower[rng.Intn(len(lower))]))
+			}
+		default:
+			out = append(out, r)
+		}
+	}
+	return string(out)
 }
 
 // synDigitPreserve randomizes digits while keeping the format skeleton intact
