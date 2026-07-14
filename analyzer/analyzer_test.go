@@ -2,16 +2,18 @@ package analyzer
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
 
 type stubRecognizer struct {
-	name       string
-	entities   []string
-	languages  []string
-	results    []RecognizerResult
-	callCount  int
+	name      string
+	entities  []string
+	languages []string
+	results   []RecognizerResult
+	err       error // when set, Analyze returns this error
+	callCount int
 }
 
 func (s *stubRecognizer) Name() string                 { return s.name }
@@ -19,6 +21,9 @@ func (s *stubRecognizer) SupportedEntities() []string  { return s.entities }
 func (s *stubRecognizer) SupportedLanguages() []string { return s.languages }
 func (s *stubRecognizer) Analyze(_ context.Context, _ string, _ []string, _ string) ([]RecognizerResult, error) {
 	s.callCount++
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.results, nil
 }
 
@@ -49,6 +54,62 @@ func TestAnalyze_DisableNERSkipsAllNERRecognizers(t *testing.T) {
 
 	if localNER.callCount != 0 || remoteNER.callCount != 0 {
 		t.Fatalf("expected all NER recognizers to be skipped, got local=%d remote=%d", localNER.callCount, remoteNER.callCount)
+	}
+}
+
+// TestAnalyze_NERFailureFailsClosed pins the silent-fallback fix: when a
+// model-backed (NER) recognizer errors, Analyze must fail the whole request
+// rather than quietly return the pattern recognizers' findings — patterns
+// cover none of PERSON/ORG/LOC, so degrading to patterns-only would leak
+// exactly what NER catches. A pattern recognizer error alongside it stays
+// tolerated.
+func TestAnalyze_NERFailureFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	nerErr := errors.New("onnx inference failed")
+	failingNER := &stubRecognizer{
+		name:      "GLiNERPool", // model-backed (in nerRecognizerNames)
+		entities:  []string{"PERSON"},
+		languages: []string{"en"},
+		err:       nerErr,
+	}
+	okPattern := &stubRecognizer{
+		name:      "EmailRecognizer",
+		entities:  []string{"EMAIL_ADDRESS"},
+		languages: []string{"en"},
+		results:   []RecognizerResult{{Start: 0, End: 5, Score: 0.9, EntityType: "EMAIL_ADDRESS", RecognizerName: "EmailRecognizer"}},
+	}
+
+	reg := NewRecognizerRegistry()
+	reg.Add(failingNER)
+	reg.Add(okPattern)
+
+	res, err := NewAnalyzerEngine(reg).Analyze(context.Background(), "text here", AnalysisConfig{Language: "en"})
+	if err == nil {
+		t.Fatalf("expected fail-closed error on NER failure; got nil (res=%d findings — SILENT LEAK)", len(res))
+	}
+	if !errors.Is(err, nerErr) {
+		t.Fatalf("error must wrap the underlying NER failure; got %v", err)
+	}
+	if res != nil {
+		t.Fatalf("fail-closed must return no results; got %d", len(res))
+	}
+
+	// Control: a PATTERN recognizer error alongside a working one is tolerated
+	// (findings still returned, no error) — only NER failures fail closed.
+	failingPattern := &stubRecognizer{
+		name: "BrokenPatternRecognizer", entities: []string{"PHONE"}, languages: []string{"en"},
+		err: errors.New("regex blew up"),
+	}
+	reg2 := NewRecognizerRegistry()
+	reg2.Add(failingPattern)
+	reg2.Add(okPattern)
+	got, err := NewAnalyzerEngine(reg2).Analyze(context.Background(), "text here", AnalysisConfig{Language: "en"})
+	if err != nil {
+		t.Fatalf("a single pattern-recognizer error must be tolerated, not fail the request; got %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatalf("expected the surviving pattern recognizer's findings; got none")
 	}
 }
 

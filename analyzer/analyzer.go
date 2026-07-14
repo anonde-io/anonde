@@ -287,8 +287,9 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	}
 
 	type partial struct {
-		results []RecognizerResult
-		err     error
+		results     []RecognizerResult
+		err         error
+		modelBacked bool // came from a NER/model recognizer (fail-closed on error)
 	}
 
 	// `ch` is buffered to the full candidate count so every recognizer can
@@ -303,14 +304,17 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	// model bindings) must surface as a normal error, not crash the batch
 	// or the worker running it. Exactly-one-send keeps the send count equal
 	// to len(candidates), which is what makes the buffer sizing above sound.
+	// modelBacked is tagged on every partial so the harvest can fail closed
+	// on a NER failure instead of silently degrading to patterns-only.
 	runOne := func(r EntityRecognizer) {
+		ner := isModelBackedRecognizer(r)
 		defer func() {
 			if rec := recover(); rec != nil {
-				ch <- partial{nil, fmt.Errorf("recognizer %s panicked: %v", r.Name(), rec)}
+				ch <- partial{nil, fmt.Errorf("recognizer %s panicked: %v", r.Name(), rec), ner}
 			}
 		}()
 		res, err := r.Analyze(ctx, text, cfg.Entities, cfg.Language)
-		ch <- partial{res, err}
+		ch <- partial{res, err, ner}
 	}
 
 	// Split the fan-out. Model-backed recognizers (GLiNER and its pool /
@@ -391,15 +395,34 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 		// switching to a different receive pattern below.
 	}
 
-	// Per-recognizer failures must not destroy partial results: a flaky NER
-	// backend should not erase findings produced by the pattern recognizers
-	// that ran successfully alongside it. Errors are aggregated and surfaced
-	// only if EVERY recognizer failed.
+	// Failure handling splits by recognizer kind:
+	//   * A pattern recognizer error is tolerated — one flaky regex pass must
+	//     not erase the findings the others produced. These surface only if
+	//     EVERY recognizer failed.
+	//   * A model-backed (NER) recognizer error FAILS CLOSED — patterns cover
+	//     none of PERSON/ORG/LOC, so degrading to patterns-only would silently
+	//     leak exactly the entities NER exists to catch. A configured NER
+	//     backend that errors must fail the request, never return quietly.
 	var (
 		all     []RecognizerResult
 		errs    []error
+		nerErrs []error
 		okCount int
 	)
+	recordPartial := func(p partial) {
+		if p.err != nil {
+			if p.modelBacked {
+				log.Printf("analyzer: NER recognizer failed (failing closed): %v", p.err)
+				nerErrs = append(nerErrs, p.err)
+				return
+			}
+			log.Printf("analyzer: pattern recognizer error (tolerated): %v", p.err)
+			errs = append(errs, p.err)
+			return
+		}
+		okCount++
+		all = append(all, p.results...)
+	}
 	// Two drain modes:
 	//   * ctxErr == nil: `ch` is closed; classic range drains all results.
 	//   * ctxErr != nil: `ch` is NOT closed (slow goroutines may still
@@ -407,30 +430,25 @@ func (e *AnalyzerEngine) Analyze(ctx context.Context, text string, cfg AnalysisC
 	//     buffer right now and bails.
 	if ctxErr == nil {
 		for p := range ch {
-			if p.err != nil {
-				log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
-				errs = append(errs, p.err)
-				continue
-			}
-			okCount++
-			all = append(all, p.results...)
+			recordPartial(p)
 		}
 	} else {
 	drain:
 		for {
 			select {
 			case p := <-ch:
-				if p.err != nil {
-					log.Printf("analyzer: recognizer error (swallowed): %v", p.err)
-					errs = append(errs, p.err)
-					continue
-				}
-				okCount++
-				all = append(all, p.results...)
+				recordPartial(p)
 			default:
 				break drain
 			}
 		}
+	}
+	// Fail closed on any NER failure: a configured model backend that errored
+	// means PERSON/ORG/LOC coverage is missing, and returning the successful
+	// pattern findings anyway would silently leak. This is the runtime guard
+	// behind the boot-time NER verification (ner_verify.go).
+	if len(nerErrs) > 0 {
+		return nil, fmt.Errorf("NER recognizer failed, refusing patterns-only result: %w", nerErrs[0])
 	}
 	if okCount == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("all recognizers failed: %v", errs[0])

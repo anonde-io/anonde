@@ -45,37 +45,35 @@ func (okPatternRecognizer) Analyze(_ context.Context, _ string, _ []string, _ st
 	return []RecognizerResult{{Start: 0, End: 4, Score: 0.9, EntityType: "EMAIL_ADDRESS", RecognizerName: "FakePatternRecognizer"}}, nil
 }
 
-// TestAnalyze_SwallowsNERLoadFailure documents the bug VerifyNERBackend
-// exists to catch: when a NER recognizer fails to load but a pattern
-// recognizer succeeds alongside it, engine.Analyze returns the
-// patterns-only findings with NO error. This is the silent fallback —
-// asserting it here pins the behaviour the boot-time guard works around.
-func TestAnalyze_SwallowsNERLoadFailure(t *testing.T) {
+// TestAnalyze_FailsClosedOnNERLoadFailure pins the runtime fix for the
+// silent-fallback bug: when a NER recognizer fails to load but a pattern
+// recognizer succeeds alongside it, engine.Analyze must FAIL CLOSED — return
+// an error wrapping the load failure and NO results — rather than quietly
+// hand back patterns-only findings that omit PERSON/ORG/LOC. This closes the
+// gap the boot-time VerifyNERBackend guard used to merely work around.
+func TestAnalyze_FailsClosedOnNERLoadFailure(t *testing.T) {
 	reg := NewRecognizerRegistry()
 	reg.Add(&failingNERRecognizer{name: "GLiNERRecognizer"})
 	reg.Add(okPatternRecognizer{})
 	engine := NewAnalyzerEngine(reg)
 
 	results, err := engine.Analyze(context.Background(), "test text with PII", AnalysisConfig{Language: "en"})
-	if err != nil {
-		t.Fatalf("engine.Analyze returned an error (%v); the bug is that it does NOT — "+
-			"the NER failure is swallowed and patterns-only results come back clean", err)
+	if err == nil {
+		t.Fatalf("engine.Analyze must fail closed on a NER load failure; got nil error and %d "+
+			"patterns-only results (SILENT LEAK — PERSON/ORG/LOC omitted)", len(results))
 	}
-	if len(results) == 0 {
-		t.Fatal("expected patterns-only results to survive the NER failure")
+	if !errors.Is(err, errFakeNERLoad) {
+		t.Fatalf("the fail-closed error must wrap the underlying NER load failure; got %v", err)
 	}
-	// Confirm the surviving findings are patterns-only (NER produced nothing).
-	for _, r := range results {
-		if r.RecognizerName == "GLiNERRecognizer" {
-			t.Fatalf("did not expect any finding from the failing NER recognizer; got %+v", r)
-		}
+	if results != nil {
+		t.Fatalf("fail-closed must return no results; got %d", len(results))
 	}
 }
 
-// TestVerifyNERBackend_FailsLoudOnLoadFailure is the load-bearing test:
+// TestVerifyNERBackend_FailsLoudOnLoadFailure is the boot-time guard:
 // a forced NER-load failure must make VerifyNERBackend return an error
-// (so the server / bench runner can fail closed), even though
-// engine.Analyze for the same engine succeeds (see the test above).
+// (so the server / bench runner can fail closed at startup, before serving
+// any traffic — complementing the runtime fail-closed in Analyze above).
 func TestVerifyNERBackend_FailsLoudOnLoadFailure(t *testing.T) {
 	reg := NewRecognizerRegistry()
 	failing := &failingNERRecognizer{name: "GLiNERRecognizer"}
