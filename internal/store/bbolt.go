@@ -210,14 +210,19 @@ func (v *BoltVault) Put(_ context.Context, tenantID string, entry core.VaultEntr
 		return fmt.Errorf("marshal vault entry: %w", err)
 	}
 	body := payload
+	version := envelopeVersion
 	if v.aead != nil {
 		body, err = v.aead.seal(payload)
 		if err != nil {
 			return fmt.Errorf("seal vault entry: %w", err)
 		}
+		// Tag sealed bodies v2 so a reader decides encryption from the tag,
+		// not from whether a key happens to be configured now. This keeps a
+		// legacy plaintext (v1) mapping readable after a key is first added.
+		version = envelopeVersionSealed
 	}
 	env := envelope{
-		Version:   envelopeVersion,
+		Version:   version,
 		ExpiresAt: expirationFromNow(v.ttl),
 		Body:      body,
 	}
@@ -250,18 +255,42 @@ func (v *BoltVault) decodeEntry(raw []byte) (core.VaultEntry, bool) {
 	if json.Unmarshal(raw, &env) != nil || expired(env.ExpiresAt) {
 		return core.VaultEntry{}, false
 	}
-	plaintext := env.Body
-	if v.aead != nil {
-		var err error
-		if plaintext, err = v.aead.open(env.Body); err != nil {
-			return core.VaultEntry{}, false
-		}
+	plaintext, err := v.openVaultBody(env)
+	if err != nil {
+		return core.VaultEntry{}, false
 	}
 	var out core.VaultEntry
 	if json.Unmarshal(plaintext, &out) != nil {
 		return core.VaultEntry{}, false
 	}
 	return out, true
+}
+
+// openVaultBody returns the plaintext JSON of a vault envelope, deciding
+// decryption from the version tag rather than from whether a key is
+// configured now. A v2 body is sealed and requires the key. A v1 body is
+// legacy and ambiguous — the vault sealed bodies but tagged them v1 before
+// the versioned scheme, so a v1 body may be plaintext (written keyless) OR
+// ciphertext (written with a key). When a key is set we therefore try to
+// decrypt a v1 body and fall back to treating it as plaintext if the AEAD
+// authentication fails (GCM makes a plaintext-vs-ciphertext mixup detectable,
+// not silent). This keeps every pre-existing vault readable — plaintext or
+// encrypted — and fixes the bug where adding a key made legacy plaintext
+// mappings unreadable. New writes are unambiguous (v1 plaintext / v2 sealed).
+func (v *BoltVault) openVaultBody(env envelope) ([]byte, error) {
+	if env.Version == envelopeVersionSealed {
+		if v.aead == nil {
+			return nil, fmt.Errorf("vault entry is encrypted but no vault key is configured")
+		}
+		return v.aead.open(env.Body)
+	}
+	if v.aead != nil {
+		if pt, err := v.aead.open(env.Body); err == nil {
+			return pt, nil // legacy sealed-but-v1 body
+		}
+		// AEAD auth failed → this v1 body is legacy plaintext, not ciphertext.
+	}
+	return env.Body, nil
 }
 
 func (v *BoltVault) Get(_ context.Context, tenantID, token string) (core.VaultEntry, error) {
@@ -290,13 +319,9 @@ func (v *BoltVault) Get(_ context.Context, tenantID, token string) (core.VaultEn
 		}
 		return core.VaultEntry{}, fmt.Errorf("token %q not found for tenant %q", token, tenantID)
 	}
-	plaintext := env.Body
-	if v.aead != nil {
-		var err error
-		plaintext, err = v.aead.open(env.Body)
-		if err != nil {
-			return core.VaultEntry{}, fmt.Errorf("decrypt vault entry: %w", err)
-		}
+	plaintext, err := v.openVaultBody(env)
+	if err != nil {
+		return core.VaultEntry{}, fmt.Errorf("decrypt vault entry: %w", err)
 	}
 	var out core.VaultEntry
 	if err := json.Unmarshal(plaintext, &out); err != nil {
