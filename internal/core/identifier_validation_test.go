@@ -58,6 +58,23 @@ func TestService_RejectsOverlongAndNULIdentifiers(t *testing.T) {
 			_, err := svc.DeleteAnonymization(ctx, "acme", "i\x00d")
 			return err
 		}},
+		// SaveRecord / GetRecord are the precomputed-record escape hatch and
+		// must enforce the same invariant, or a caller could write/read a
+		// colliding composite-key input the other paths reject.
+		{"saverecord_nul_tenant", func() error {
+			return svc.SaveRecord(ctx, StoreRecord{TenantID: nul, ID: "i"})
+		}},
+		{"saverecord_overlong_id", func() error {
+			return svc.SaveRecord(ctx, StoreRecord{TenantID: "acme", ID: longID})
+		}},
+		{"getrecord_nul_tenant", func() error {
+			_, err := svc.GetRecord(ctx, nul, "i")
+			return err
+		}},
+		{"getrecord_overlong_id", func() error {
+			_, err := svc.GetRecord(ctx, "acme", longID)
+			return err
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

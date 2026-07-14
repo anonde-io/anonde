@@ -130,6 +130,12 @@ func (s *Service) SaveRecord(ctx context.Context, rec StoreRecord) error {
 	if rec.TenantID == "" || rec.ID == "" {
 		return fmt.Errorf("tenant_id and id are required")
 	}
+	if err := validateIdentifier("tenant_id", rec.TenantID); err != nil {
+		return err
+	}
+	if err := validateIdentifier("id", rec.ID); err != nil {
+		return err
+	}
 	return s.store.Put(ctx, rec)
 }
 
@@ -139,6 +145,12 @@ func (s *Service) SaveRecord(ctx context.Context, rec StoreRecord) error {
 func (s *Service) GetRecord(ctx context.Context, tenantID, id string) (StoreRecord, error) {
 	if tenantID == "" || id == "" {
 		return StoreRecord{}, fmt.Errorf("tenant_id and id are required")
+	}
+	if err := validateIdentifier("tenant_id", tenantID); err != nil {
+		return StoreRecord{}, err
+	}
+	if err := validateIdentifier("id", id); err != nil {
+		return StoreRecord{}, err
 	}
 	return s.store.Get(ctx, tenantID, id)
 }
