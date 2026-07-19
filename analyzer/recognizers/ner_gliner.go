@@ -140,17 +140,17 @@ const (
 
 	// defaultGLiNERMaxChunks caps how many sliding-window chunks a single
 	// Analyze() call will inference through. At the default chunk size of
-	// 1200 bytes this corresponds to ~80 KB of NER coverage per doc;
-	// inputs larger than that fall back to pattern-only coverage for the
-	// tail (pattern recognizers still run on the full text, so structured
-	// PII, emails, phones, IDs, is never silently dropped). 64 chunks
-	// at ~150-600 ms per chunk caps p95 wall-clock at ~10-40 sec, an
-	// order of magnitude under the previous unbounded behaviour where
-	// pmc_de docs hit 50 sec.
+	// 1200 bytes this corresponds to ~80 KB of NER coverage per doc. An
+	// input larger than that FAILS CLOSED (Analyze returns an error) rather
+	// than silently NER-covering only the head and leaving the tail to
+	// pattern-only coverage — that would drop the PERSON/ORG/LOC GLiNER alone
+	// catches, a silent leak. 64 chunks at ~150-600 ms per chunk caps p95
+	// wall-clock at ~10-40 sec, an order of magnitude under the previous
+	// unbounded behaviour where pmc_de docs hit 50 sec.
 	//
 	// Override via GLiNERConfig.MaxChunks. Setting it to 0 keeps the
-	// default; setting a negative value disables the cap entirely (only
-	// useful for offline batch jobs that don't have SLO concerns).
+	// default; setting a negative value disables the cap entirely (process
+	// every chunk — for offline batch jobs without SLO concerns).
 	defaultGLiNERMaxChunks = 64
 )
 
@@ -640,26 +640,20 @@ func (r *GLiNERRecognizer) Analyze(ctx context.Context, text string, entities []
 	}
 	chunks := chunkForNER(text, chunkChars, chunkOverlap)
 
-	// Cap chunk count to bound worst-case latency. Inputs longer than
-	// the cap retain pattern-recognizer coverage (the pattern path runs
-	// on the full text, not chunked); only NER coverage for the tail
-	// is dropped. This is the right trade-off vs the previous unbounded
-	// behaviour where one 200 KB clinical document blocked the
-	// recognizer for ~50 sec (see pmc_de bench tail).
+	// Cap chunk count to bound worst-case latency. Rather than silently
+	// NER-covering only the first maxChunks chunks — which would leave the
+	// tail with pattern-only coverage and drop the PERSON/ORG/LOC that GLiNER
+	// alone catches (a silent leak) — fail closed: the analyzer turns this
+	// error into a failed request. Operators raise MaxChunks (accepting the
+	// latency, e.g. the ~50 sec a 200 KB clinical doc took under the old
+	// unbounded path) or set it negative to disable the cap; a caller wanting
+	// pattern-only coverage passes disable_ner.
 	maxChunks := r.cfg.MaxChunks
 	if maxChunks == 0 {
 		maxChunks = defaultGLiNERMaxChunks
 	}
-	if maxChunks > 0 && len(chunks) > maxChunks {
-		droppedChunks := len(chunks) - maxChunks
-		droppedBytes := 0
-		for _, c := range chunks[maxChunks:] {
-			droppedBytes += len(c.Text)
-		}
-		log.Printf("gliner: doc exceeds max_chunks=%d (text_bytes=%d total_chunks=%d); "+
-			"dropping last %d chunks (%d bytes uncovered by NER, patterns still run on full doc)",
-			maxChunks, len(text), len(chunks), droppedChunks, droppedBytes)
-		chunks = chunks[:maxChunks]
+	if err := chunkCapError(len(chunks), maxChunks, len(text)); err != nil {
+		return nil, err
 	}
 
 	cands := make([]nerCand, 0, len(chunks)*8)

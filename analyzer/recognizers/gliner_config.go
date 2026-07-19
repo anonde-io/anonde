@@ -94,11 +94,12 @@ type GLiNERConfig struct {
 	ChunkOverlap int
 
 	// MaxChunks caps the number of sliding-window chunks one Analyze()
-	// call inferences through. Documents that exceed the cap get
-	// partial NER coverage (the first MaxChunks chunks); pattern
-	// recognizers still run on the full text so structured PII is
-	// preserved end-to-end. Default 64 (~80 KB of text at the default
-	// ChunkChars). Set to a negative value to disable the cap.
+	// call inferences through. An input that exceeds the cap FAILS CLOSED
+	// (Analyze returns an error) rather than getting silent partial NER
+	// coverage that would leak the PERSON/ORG/LOC in the uncovered tail.
+	// Default 64 (~80 KB of text at the default ChunkChars). Raise it to
+	// process larger inputs (accepting the latency), or set a negative
+	// value to disable the cap and process every chunk.
 	MaxChunks int
 
 	// SharedLibraryPath optionally overrides the onnxruntime shared
