@@ -400,6 +400,27 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 	// cleartext within one doc gets one token) and as the reveal source.
 	docTokenByKey := map[string]string{} // key = entityType+"\x00"+cleartext
 
+	// mintedTokens records every vault entry created during THIS ingest so a
+	// failure after minting (analyze / anonymize / store error) can roll them
+	// back. Token mappings are written to the vault before the record that
+	// references them, so without rollback a failed ingest strands cleartext
+	// PII in the vault with no record — never enumerable, never cleaned up.
+	// committed flips true only once the record is durably stored.
+	mintedTokens := make([]string, 0, 16)
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// Best-effort rollback on a detached context so a cancelled request
+		// still cleans up. A stranded cleartext mapping is worse than a
+		// redundant delete of a token nothing else references (minting skips
+		// occupied tokens, so these are unique to this ingest).
+		for _, tok := range mintedTokens {
+			_ = s.vault.Delete(context.Background(), req.TenantID, tok)
+		}
+	}()
+
 	// Language resolution: explicit request value wins. Otherwise auto-
 	// detect from the document's analyzable text. Fall back to the
 	// configured default only when detection returns "" (very short or
@@ -482,6 +503,7 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 					return "", nil, mintErr
 				}
 				docTokenByKey[cacheKey] = token
+				mintedTokens = append(mintedTokens, token)
 			}
 			entityOp.byCleartext[cleartext] = token
 			tokens = append(tokens, TokenRef{
@@ -556,6 +578,17 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 		return nil, fmt.Errorf("unsupported content_format %q", req.ContentFormat)
 	}
 
+	// Replace contract: capture any record we're about to overwrite so its
+	// vault tokens — orphaned the moment the new record replaces it — can be
+	// deleted after the new one commits. Without this, re-ingesting an id
+	// leaves the previous mapping's cleartext retained forever, unrevealable.
+	var replacedTokens []TokenRef
+	if prev, gerr := s.store.Get(ctx, req.TenantID, id); gerr == nil {
+		replacedTokens = prev.Tokens
+	} else if !errors.Is(gerr, ErrRecordNotFound) {
+		return nil, fmt.Errorf("check existing anonymization: %w", gerr)
+	}
+
 	record := StoreRecord{
 		TenantID:          req.TenantID,
 		ID:                id,
@@ -565,6 +598,21 @@ func (s *Service) Ingest(ctx context.Context, req IngestRequest) (_ *IngestRespo
 	}
 	if err := s.store.Put(ctx, record); err != nil {
 		return nil, fmt.Errorf("store anonymization: %w", err)
+	}
+	// Record is durable: the minted tokens are now referenced, so cancel the
+	// rollback, then delete the replaced record's now-orphaned tokens.
+	committed = true
+	if len(replacedTokens) > 0 {
+		newTokens := make(map[string]struct{}, len(tokens))
+		for _, tr := range tokens {
+			newTokens[tr.Token] = struct{}{}
+		}
+		for _, tr := range replacedTokens {
+			if _, reused := newTokens[tr.Token]; reused {
+				continue // the new record still uses it (defensive; minting avoids this)
+			}
+			_ = s.vault.Delete(context.Background(), req.TenantID, tr.Token)
+		}
 	}
 
 	span.BytesOut(len(anonymizedContent))
