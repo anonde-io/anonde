@@ -34,6 +34,54 @@ func DefaultContextEnhancement() ContextEnhancement {
 	return ContextEnhancement{WindowChars: 80, Boost: 0.35}
 }
 
+// sameSentenceContextRecognizers lists recognizers whose findings may only be
+// corroborated within their own sentence. The bare-PERSON path emits any 1-4
+// capitalised tokens at 0.25 and depends on the boost to surface at all, so a
+// cue about one sentence's subject promotes an unrelated token in the next.
+// Structured types keep the full window, where a neighbouring cue is valid.
+var sameSentenceContextRecognizers = map[string]bool{
+	"ENAnomalyRecognizer": true,
+}
+
+// sentenceTailOf returns the tail of before lying in the finding's own
+// sentence. Terminators require trailing whitespace so decimals, emails and
+// dotted hostnames do not split.
+func sentenceTailOf(before string) string {
+	cut := 0
+	for i := 0; i < len(before); i++ {
+		c := before[i]
+		if c == '\n' {
+			cut = i + 1
+			continue
+		}
+		if c == '.' || c == '!' || c == '?' {
+			if i+1 < len(before) && isSpaceByte(before[i+1]) {
+				cut = i + 2
+			}
+		}
+	}
+	return before[cut:]
+}
+
+func sentenceHeadOf(after string) string {
+	for i := 0; i < len(after); i++ {
+		c := after[i]
+		if c == '\n' {
+			return after[:i]
+		}
+		if c == '.' || c == '!' || c == '?' {
+			if i+1 >= len(after) || isSpaceByte(after[i+1]) {
+				return after[:i]
+			}
+		}
+	}
+	return after
+}
+
+func isSpaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\v' || b == '\f'
+}
+
 // EnhanceWithContext boosts scores of findings whose surrounding-text window
 // contains any of the entity's context keywords. The boost is additive and
 // capped at 1.0. Findings without matching keywords are unchanged.
@@ -83,6 +131,10 @@ func EnhanceWithContext(text string, results []RecognizerResult, keywordsByEntit
 		// can never self-confirm.
 		before := lower[start:fStart]
 		after := lower[fEnd:end]
+		if sameSentenceContextRecognizers[r.RecognizerName] {
+			before = sentenceTailOf(before)
+			after = sentenceHeadOf(after)
+		}
 		if hasAnyWord(before, kws) || hasAnyWord(after, kws) {
 			results[i].Score = math.Min(r.Score+cfg.Boost, 1.0)
 		}
