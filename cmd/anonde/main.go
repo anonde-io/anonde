@@ -32,10 +32,6 @@ func main() {
 	addr := listenAddr()
 	analyzerEngine, backendName, modelName := analyzerFromEnv()
 
-	// Fail-closed NER verification before serving traffic; see
-	// verifyNERBackendOrFail (and the ANONDE_ALLOW_NER_FALLBACK escape hatch).
-	verifyNERBackendOrFail(analyzerEngine, backendName)
-
 	// One-shot bootstrap used by Dockerfile.anonde-ner: initialise the
 	// active analyzer, run one trivial inference call to force the NER
 	// backend to download / cache its model into GLINER_MODELS_DIR, then
@@ -43,17 +39,6 @@ func main() {
 	// and never needs network access at startup.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("DOWNLOAD_MODELS_ONLY")), "1") {
 		downloadModelsAndExit(analyzerEngine)
-	}
-
-	// WARMUP_ON_START=1 runs one trivial Analyze synchronously before the
-	// HTTP server starts listening. For NER backends this forces the
-	// sync.Once-gated ONNX session creation to happen at boot; failure
-	// (typically OOM under-provisioning) is then visible in machine boot
-	// logs instead of as a stuck first user request, and the first real
-	// request sees ~150 ms latency instead of 5–30 s. No-op overhead on
-	// patterns-only backends.
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("WARMUP_ON_START")), "1") {
-		warmupAnalyzer(analyzerEngine)
 	}
 
 	vaultTTL := durationFromEnv("ANONDE_VAULT_TTL", 0)
@@ -230,6 +215,28 @@ func main() {
 	// boot's last_heartbeat check makes that safe.
 	stopTelemetry := telemetry.Start(context.Background(), telemetryCfg)
 	defer stopTelemetry()
+
+	// Bind the listener before the model-load gates so the port is open
+	// while they run, with /healthz reporting 503 until they pass. An
+	// unbound port reads as an unreachable machine to a proxy front-end,
+	// which surfaces to callers as an opaque error, not "still booting".
+	httpAPI.SetReady(false)
+
+	go func() {
+		// Still fail-closed: a verification failure exits non-zero, it
+		// just does so with the port bound.
+		verifyNERBackendOrFail(analyzerEngine, backendName)
+
+		// Forces the sync.Once-gated ONNX session creation now so the
+		// first real request sees ~150 ms instead of 5-30 s. Keep
+		// ANONDE_WARMUP_TIMEOUT above the observed load time.
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("WARMUP_ON_START")), "1") {
+			warmupAnalyzer(analyzerEngine)
+		}
+
+		httpAPI.SetReady(true)
+		log.Printf("anonde server ready: analyzer gates passed, /healthz now 200")
+	}()
 
 	log.Printf("anonde server listening on %s (max_request_bytes=%d backend=%s model=%s store=%s)",
 		addr, maxBytes, backendName, modelName, storeName)
@@ -440,7 +447,15 @@ func warmupAnalyzer(engine *analyzer.AnalyzerEngine) {
 	if err != nil {
 		log.Fatalf("analyzer warmup failed after %s: %v", time.Since(start), err)
 	}
-	log.Printf("analyzer warmup complete in %s", time.Since(start))
+	// Analyze harvests partial results when the deadline fires instead of
+	// erroring, so a nil err does not prove the model is primed.
+	if ctx.Err() != nil {
+		log.Printf("WARNING: analyzer warmup TIMED OUT after %s (%v): model is NOT primed; "+
+			"raise ANONDE_WARMUP_TIMEOUT above the observed load time or scale the machine",
+			time.Since(start), ctx.Err())
+	} else {
+		log.Printf("analyzer warmup complete in %s", time.Since(start))
+	}
 
 	// Pool pre-warm: the single Analyze above only initialised the first
 	// pool instance. Walk the registry and call Warmup on every pool so

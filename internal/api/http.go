@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -52,10 +53,13 @@ type HTTPServer struct {
 	grpcServer      *GRPCServer
 	proxy           *openAIProxy
 	maxRequestBytes int64
+
+	// ready gates what /healthz reports. See SetReady.
+	ready atomic.Bool
 }
 
 func NewHTTPServer(svc *core.Service) *HTTPServer {
-	return &HTTPServer{
+	s := &HTTPServer{
 		svc:           svc,
 		connectServer: NewConnectServer(svc),
 		grpcServer:    NewGRPCServer(svc),
@@ -65,6 +69,10 @@ func NewHTTPServer(svc *core.Service) *HTTPServer {
 		proxy:           newOpenAIProxy(svc, OpenAIProxyConfig{}),
 		maxRequestBytes: DefaultMaxRequestBytes,
 	}
+	// Ready by default, so an embedder that never calls SetReady gets the
+	// same unconditional 200 from /healthz as before this gate existed.
+	s.ready.Store(true)
+	return s
 }
 
 // SetMaxRequestBytes overrides the per-request body cap. Use 0 to disable.
@@ -244,10 +252,27 @@ func (s *HTTPServer) limitBody(next http.Handler) http.Handler {
 	})
 }
 
+// healthz reports liveness and analyzer readiness: 503 "starting" while
+// the boot-time model-load gates run, 200 once they pass. Reporting
+// not-ready on a bound port lets health-gated routing hold traffic off a
+// booting instance; an unbound port instead reads as an unreachable
+// machine to a proxy front-end.
 func (s *HTTPServer) healthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if !s.ready.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "starting"})
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// SetReady toggles what /healthz reports. Safe to call from any
+// goroutine. A server starts out ready, so only callers that bind the
+// listener before finishing initialisation need this.
+func (s *HTTPServer) SetReady(ready bool) {
+	s.ready.Store(ready)
 }
 
 // Audit-log heartbeat cadence. Hardcoded by design — these are
@@ -302,9 +327,9 @@ func newRequestID() string {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status       int
-	bytesOut     int64
-	wroteHeader  bool
+	status      int
+	bytesOut    int64
+	wroteHeader bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
