@@ -92,9 +92,9 @@ var validatedStructuredRecognizers = map[string]bool{
 	// failure, so a finding proves the surface passed — qualifies for the
 	// carve-out (keeps a valid NPI/DEA/MBI from being restyled when GLiNER
 	// mislabels its surface as a fuzzy PERSON/ORG in clinical text).
-	"USNPIRecognizer":                  true,
-	"USDEARecognizer":                  true,
-	"USMBIRecognizer":                  true,
+	"USNPIRecognizer": true,
+	"USDEARecognizer": true,
+	"USMBIRecognizer": true,
 }
 
 // isValidatedStructured reports whether r came from a checksum/validator-
@@ -266,16 +266,30 @@ func shouldReplace(kept, candidate RecognizerResult) bool {
 
 	// Both findings target the same entity type AND it's a type where
 	// we prefer NER; NER wins over pattern, otherwise score decides.
+	//
+	// Leak-safety invariant, as in the carve-outs above: NER preference must
+	// never shrink coverage. Same type means the NER span adds no type
+	// judgement, so when the pattern span strictly contains it, letting NER
+	// win drops the overhang unredacted. Length compared strictly because
+	// ContainedIn is inclusive and equal spans must fall through.
 	if kept.EntityType == candidate.EntityType && prefersNERFor(kept.EntityType) {
 		keptNER := isNERRecognizer(kept)
 		candNER := isNERRecognizer(candidate)
 		if candNER && !keptNER {
+			if candidate.ContainedIn(kept) && spanLen(kept) > spanLen(candidate) {
+				return false
+			}
 			return true
 		}
 		if keptNER && !candNER {
+			if kept.ContainedIn(candidate) && spanLen(candidate) > spanLen(kept) {
+				return true
+			}
 			return false
 		}
 		// same class on both sides; fall through to score.
 	}
 	return candidate.Score > kept.Score
 }
+
+func spanLen(r RecognizerResult) int { return r.End - r.Start }
