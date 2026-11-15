@@ -1,30 +1,30 @@
 # 🛡️ anonde bench matrix
 
-**`anonde-ner` — the default NER image — is the lowest-leak PII redactor in this benchmark: it misses just 11.1% of gold PII vs Presidio 41.7% / raw GLiNER 33.1% / OpenAI Privacy Filter 24.0%, across 29 gold-annotated corpora and 5 languages.** Tuned recall-first — it catches more PII than the precision-optimised tools, at the cost of more over-redaction (quantified two lines down).
+**`anonde-ner` — the default NER image — is the lowest-leak PII redactor in this benchmark: it misses just 11.5% of gold PII vs Presidio 42.4% / raw GLiNER 33.4% / OpenAI Privacy Filter 24.2%, across 28 gold-annotated corpora and 5 languages.** Tuned recall-first — it catches more PII than the precision-optimised tools, at the cost of more over-redaction (quantified two lines down).
 
 | Language | `anonde-ner` ⬅ ours | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|
-| **English** | **10.0%** 🥇 | 36.5% | 39.8% | 19.5% |
-| **German** | **6.4%** 🥇 | 38.3% | 31.9% | 28.8% |
+| **English** | **10.0%** 🥇 | 36.5% | 39.8% | 19.4% |
+| **German** | **7.1%** 🥇 | 40.0% | 32.7% | 30.5% |
 | **Spanish** | **15.8%** 🥇 | 47.0% | 29.3% | 25.8% |
 | **French** | **13.9%** 🥇 | 43.1% | 30.7% | 21.1% |
 | **Italian** | **14.6%** 🥇 | 48.5% | 33.8% | 21.0% |
-| **All** | **11.1%** 🥇 | **41.7%** | **33.1%** | **24.0%** |
+| **All** | **11.5%** 🥇 | **42.4%** | **33.4%** | **24.2%** |
 
 *The one table. **Leak rate** = fraction of gold PII spans **missed** — lower is better; 🥇 = lowest-leak engine in the row. Columns are the default NER image `anonde-ner` vs the competing field (anonde's own patterns / stack tiers and the per-domain roll-ups are under **Details**). `presidio-transformer` is EN-only (`–` elsewhere, by design); `openai-pf` is scored on a fixed per-corpus subsample. Full method, precision, and every slice are in **Details** below.*
 
 | Language | `anonde-ner` ⬅ ours | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|
 | **English** | **0.627** 🥇 | 0.404 | 0.441 | 0.002 |
-| **German** | **0.596** 🥇 | 0.385 | 0.479 | 0.006 |
+| **German** | **0.589** 🥇 | 0.365 | 0.475 | 0.006 |
 | **Spanish** | **0.555** 🥇 | 0.345 | 0.511 | 0.000 |
 | **French** | **0.683** 🥇 | 0.340 | 0.536 | 0.003 |
 | **Italian** | **0.634** 🥇 | 0.320 | 0.480 | 0.004 |
-| **All** | **0.612** 🥇 | **0.365** | **0.486** | **0.003** |
+| **All** | **0.611** 🥇 | **0.359** | **0.485** | **0.003** |
 
 *The twin. **Strict F1** = exact span **and** type match (CoNLL) — higher is better, 🥇 = best in row. It reproduces the standard scorer (`nervaluate`) *exactly* (Δ≈0 in `verify_official.py`), so it is the citable accuracy metric alongside leak rate. It is precision-inclusive, so it also reflects over-redaction: an over-redacting tool can rank lower here than on leak rate, where a precision-first rival edges ahead. The lenient overlap view and full method are under **Details** / `METHODOLOGY.md`.*
 
-> **The trade — over-redaction (1 − precision, lower is better):** `anonde-ner` 30.1% vs Presidio 41.8% / raw GLiNER 20.8%. anonde deliberately over-redacts more so it leaks less — the recall-first dial, not a defect. Full precision scorecard (with the zero-gold exclusion rule) is under Details.
+> **The trade — over-redaction (1 − precision, lower is better):** `anonde-ner` 30.2% vs Presidio 42.4% / raw GLiNER 21.2%. anonde deliberately over-redacts more so it leaks less — the recall-first dial, not a defect. Full precision scorecard (with the zero-gold exclusion rule) is under Details.
 
 ---
 
@@ -32,7 +32,7 @@
 
 The full working behind the scorecard above — leak-rate and precision roll-ups (per domain · per language · overall), the per-cell grids, latency, cost, caveats, and the glossary, in the order they were already in. The hero table is the answer; everything here is how it is computed.
 
-> **TL;DR** — `anonde-ner` (the default NER image, `ghcr.io/anonde-io/anonde-ner`) is the lowest-leak engine on **28 of 29** gold-annotated corpora. Biggest absolute improvement over the best baseline: **+24.1pp** in leak rate. Strict F1 trades exact-byte alignment for catching more PHI — the right trade-off for a redactor, not a benchmark gaming exercise. The inverse cost — over-redaction / false positives — now has its own **Precision scorecard** directly below this leak-rate one (partial, overlap-based precision per engine, roll-up rows + a per-cell grid in the Detailed breakdown); read it to compare how much each engine over-redacts.
+> **TL;DR** — `anonde-ner` (the default NER image, `ghcr.io/anonde-io/anonde-ner`) is the lowest-leak engine on **27 of 28** gold-annotated corpora. Biggest absolute improvement over the best baseline: **+24.1pp** in leak rate. Strict F1 trades exact-byte alignment for catching more PHI — the right trade-off for a redactor, not a benchmark gaming exercise. The inverse cost — over-redaction / false positives — now has its own **Precision scorecard** directly below this leak-rate one (partial, overlap-based precision per engine, roll-up rows + a per-cell grid in the Detailed breakdown); read it to compare how much each engine over-redacts.
 
 ## 🎯 Scorecard · leak rate roll-ups
 
@@ -40,18 +40,18 @@ The one table. Roll-up rows only (per domain · per language · overall); the pe
 
 | Slice | Scope | `anonde-ner` ⬅︎ anonde (default NER) | `anonde-patterns` | `presidio` | `gliner-py` | `openai-pf` | Verdict |
 |---|---|---:|---:|---:|---:|---:|:--:|
-| **Σ ALL** | **all** | **11.1%** 🥇 | **46.8%** | **41.7%** | **33.1%** | **24.0%** | ✅ |
+| **Σ ALL** | **all** | **11.5%** 🥇 | **48.5%** | **42.4%** | **33.4%** | **24.2%** | ✅ |
 | | | | | | | | |
 | _Σ Clinical / medical de-identification_ | _all langs_ | **11.3%** 🥇 | 48.3% | 31.1% | 28.0% | 27.3% | ✅ |
-| _Σ Legal / administrative_ | _all langs_ | **2.8%** 🥇 | 23.1% | 29.6% | 21.5% | 36.7% | ✅ |
-| _Σ Retail finance_ | _all langs_ | **8.1%** 🥇 | 25.7% | 21.3% | 23.5% | 18.9% | ✅ |
-| _Σ Enterprise logs_ | _all langs_ | **13.3%** 🥇 | 29.5% | 31.5% | 73.2% | 15.3% | ✅ |
+| _Σ Legal / administrative_ | _all langs_ | **2.8%** 🥇 | 23.1% | 29.6% | 21.5% | 36.6% | ✅ |
+| _Σ Retail finance_ | _all langs_ | **10.2%** 🥇 | 32.7% | 19.9% | 22.7% | 18.4% | ✅ |
+| _Σ Enterprise logs_ | _all langs_ | **13.3%** 🥇 | 29.5% | 31.5% | 73.2% | 15.2% | ✅ |
 | _Σ General structured PII_ | _all langs_ | **13.5%** 🥇 | 62.8% | 57.8% | 34.7% | 18.8% | ✅ |
 | _Σ Academic NER (newswire / social)_ | _all langs_ | **5.9%** 🥇 | 68.4% | 18.3% | 13.8% | 72.7% | ✅ |
-| _Σ Adversarial / out-of-distribution_ | _all langs_ | **8.0%** 🥇 | 12.7% | 37.5% | 43.6% | 32.1% | ✅ |
+| _Σ Adversarial / out-of-distribution_ | _all langs_ | **8.1%** 🥇 | 12.7% | 37.5% | 43.5% | 31.8% | ✅ |
 | | | | | | | | |
-| _Σ all domains_ | _English_ | **10.0%** 🥇 | 39.2% | 36.5% | 39.8% | 19.5% | ✅ |
-| _Σ all domains_ | _German_ | **6.4%** 🥇 | 25.0% | 38.3% | 31.9% | 28.8% | ✅ |
+| _Σ all domains_ | _English_ | **10.0%** 🥇 | 39.2% | 36.5% | 39.8% | 19.4% | ✅ |
+| _Σ all domains_ | _German_ | **7.1%** 🥇 | 28.0% | 40.0% | 32.7% | 30.5% | ✅ |
 | _Σ all domains_ | _Spanish_ | **15.8%** 🥇 | 69.9% | 47.0% | 29.3% | 25.8% | ✅ |
 | _Σ all domains_ | _French_ | **13.9%** 🥇 | 63.6% | 43.1% | 30.7% | 21.1% | ✅ |
 | _Σ all domains_ | _Italian_ | **14.6%** 🥇 | 58.6% | 48.5% | 33.8% | 21.0% | ✅ |
@@ -64,25 +64,25 @@ Partial precision = fraction of redacted spans that overlap a real PII span; the
 
 | Slice | Scope | `anonde-ner` ⬅︎ anonde (default NER) | `anonde-patterns` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---|---:|---:|---:|---:|---:|
-| **Σ ALL** | **all** | **69.9% (27955 fp)** | **83.5% (8002 fp)** 🥇 | **58.2% (26881 fp)** | **79.2% (12759 fp)** | **75.2% (4696 fp)** |
+| **Σ ALL** | **all** | **69.8% (27091 fp)** | **83.9% (7330 fp)** 🥇 | **57.6% (26290 fp)** | **78.8% (12491 fp)** | **73.9% (4616 fp)** |
 | | | | | | | |
-| _Σ Clinical / medical de-identification_ | _all langs_ | 64.0% (7474 fp) | 80.0% (2048 fp) | 53.2% (8508 fp) | **88.5% (1491 fp)** 🥇 | 88.4% (735 fp) |
-| _Σ Legal / administrative_ | _all langs_ | 42.8% (4162 fp) | **81.5% (582 fp)** 🥇 | 47.4% (2242 fp) | 45.5% (3315 fp) | 75.9% (228 fp) |
-| _Σ Retail finance_ | _all langs_ | 87.5% (1615 fp) | 90.7% (937 fp) | 79.4% (2391 fp) | **92.0% (957 fp)** 🥇 | 83.5% (879 fp) |
-| _Σ Enterprise logs_ | _all langs_ | 73.8% (1003 fp) | **84.3% (476 fp)** 🥇 | 57.3% (1554 fp) | 75.9% (243 fp) | 30.2% (2497 fp) |
-| _Σ General structured PII_ | _all langs_ | 71.6% (11176 fp) | 81.8% (2811 fp) | 54.5% (8863 fp) | 78.3% (5131 fp) | **93.1% (113 fp)** 🥇 |
+| _Σ Clinical / medical de-identification_ | _all langs_ | 64.0% (7474 fp) | 80.0% (2048 fp) | 53.2% (8508 fp) | **88.5% (1491 fp)** 🥇 | 88.3% (740 fp) |
+| _Σ Legal / administrative_ | _all langs_ | 42.8% (4162 fp) | **81.5% (582 fp)** 🥇 | 47.4% (2242 fp) | 45.5% (3315 fp) | 76.1% (227 fp) |
+| _Σ Retail finance_ | _all langs_ | 92.3% (731 fp) | **96.2% (263 fp)** 🥇 | 80.6% (1788 fp) | 92.6% (691 fp) | 80.5% (779 fp) |
+| _Σ Enterprise logs_ | _all langs_ | 73.8% (1003 fp) | **84.3% (476 fp)** 🥇 | 57.3% (1554 fp) | 75.9% (243 fp) | 30.1% (2510 fp) |
+| _Σ General structured PII_ | _all langs_ | 71.6% (11177 fp) | 81.8% (2811 fp) | 54.5% (8863 fp) | 78.3% (5131 fp) | **93.1% (113 fp)** 🥇 |
 | _Σ Academic NER (newswire / social)_ | _all langs_ | 38.6% (1472 fp) | 41.7% (329 fp) | **71.5% (378 fp)** 🥇 | 57.9% (829 fp) | 69.4% (37 fp) |
-| _Σ Adversarial / out-of-distribution_ | _all langs_ | 83.6% (1053 fp) | **86.5% (819 fp)** 🥇 | 49.6% (2945 fp) | 79.8% (793 fp) | 79.9% (207 fp) |
+| _Σ Adversarial / out-of-distribution_ | _all langs_ | 83.3% (1072 fp) | **86.4% (821 fp)** 🥇 | 49.5% (2957 fp) | 79.9% (791 fp) | 79.7% (210 fp) |
 | | | | | | | |
-| _Σ all domains_ | _English_ | 68.9% (5626 fp) | 77.8% (2514 fp) | 65.2% (4281 fp) | **79.4% (2240 fp)** 🥇 | 53.4% (2695 fp) |
-| _Σ all domains_ | _German_ | 69.0% (10096 fp) | 79.9% (4624 fp) | 58.9% (9006 fp) | 79.2% (4342 fp) | **85.7% (934 fp)** 🥇 |
+| _Σ all domains_ | _English_ | 68.9% (5627 fp) | 77.8% (2514 fp) | 65.2% (4281 fp) | **79.4% (2240 fp)** 🥇 | 53.3% (2708 fp) |
+| _Σ all domains_ | _German_ | 68.3% (9231 fp) | 80.1% (3952 fp) | 56.8% (8415 fp) | 77.8% (4074 fp) | **83.9% (841 fp)** 🥇 |
 | _Σ all domains_ | _Spanish_ | 68.0% (5187 fp) | **97.1% (127 fp)** 🥇 | 51.6% (5758 fp) | 80.9% (2131 fp) | 76.5% (505 fp) |
 | _Σ all domains_ | _French_ | 75.9% (3080 fp) | **95.8% (191 fp)** 🥇 | 56.5% (4116 fp) | 81.0% (1782 fp) | 87.5% (270 fp) |
 | _Σ all domains_ | _Italian_ | 70.3% (3966 fp) | **89.7% (546 fp)** 🥇 | 57.7% (3720 fp) | 75.1% (2264 fp) | 87.4% (292 fp) |
 
 > **Reading this table** — a cell of `92.0% (40 fp)` means 92% of the spans that engine redacted overlapped real PII; the remaining 8% (40 absolute spans) were over-redaction. Recall (leak rate) is in the scorecard above; this is the other half of the trade-off.
 
-> **Why some predictions are not counted** — a `(corpus, entity-type)` cell where the gold annotates **zero** spans of that type (`tp + fn == 0`) is *unscoreable for precision*: with no gold of that type present, every prediction there is mechanically a false positive against absent gold — a **schema gap** (e.g. a corpus that annotates PERSON but not LOCATION), not real over-redaction. Such cells are **excluded** from the precision pool above, and an empty-gold corpus (every type zero-gold) drops out entirely. This is a scorecard-aggregation choice only — the raw per-type counts stay intact in `results_matrix.csv`, and **leak-rate / recall are untouched** (they score against the full gold). Excluded here: **125 (corpus, type) cells** across **1 empty-gold corpora**. For full transparency, the raw Σ ALL precision *including* every zero-gold cell: `anonde-ner` 62.5% (38995 fp) · `anonde-patterns` 80.0% (10150 fp) · `presidio` 47.9% (40737 fp) · `gliner-py` 67.5% (23469 fp) · `openai-pf` 69.6% (6221 fp).
+> **Why some predictions are not counted** — a `(corpus, entity-type)` cell where the gold annotates **zero** spans of that type (`tp + fn == 0`) is *unscoreable for precision*: with no gold of that type present, every prediction there is mechanically a false positive against absent gold — a **schema gap** (e.g. a corpus that annotates PERSON but not LOCATION), not real over-redaction. Such cells are **excluded** from the precision pool above, and an empty-gold corpus (every type zero-gold) drops out entirely. This is a scorecard-aggregation choice only — the raw per-type counts stay intact in `results_matrix.csv`, and **leak-rate / recall are untouched** (they score against the full gold). Excluded here: **123 (corpus, type) cells** across **1 empty-gold corpora**. For full transparency, the raw Σ ALL precision *including* every zero-gold cell: `anonde-ner` 62.3% (37801 fp) · `anonde-patterns` 80.6% (9147 fp) · `presidio` 47.3% (39648 fp) · `gliner-py` 66.9% (22976 fp) · `openai-pf` 68.0% (6137 fp).
 
 <details><summary>Engine profiles · what each column means</summary>
 
@@ -124,21 +124,21 @@ Detail behind the scorecard roll-ups: one row per populated `(domain, language)`
 | Domain | Language | `anonde-ner` ⬅︎ anonde (default NER) | `anonde-patterns` | `presidio` | `gliner-py` | `openai-pf` | Verdict |
 |---|---|---:|---:|---:|---:|---:|:--:|
 | **Clinical / medical de-identification** | English | **1.7%** 🥇 | 13.4% | 20.3% | 23.3% | 24.6% | ✅ |
-| **Clinical / medical de-identification** | German | **4.6%** 🥇 | 9.0% | 30.9% | 34.2% | 30.1% | ✅ |
+| **Clinical / medical de-identification** | German | **4.6%** 🥇 | 9.0% | 30.9% | 34.2% | 30.0% | ✅ |
 | **Clinical / medical de-identification** | Spanish | **17.8%** 🥇 | 79.6% | 38.4% | 23.7% | 31.7% | ✅ |
 | **Clinical / medical de-identification** | French | **11.5%** 🥇 | 61.4% | 28.2% | 25.3% | 21.8% | ✅ |
 | **Clinical / medical de-identification** | Italian | **16.2%** 🥇 | 59.7% | 28.5% | 35.2% | 25.1% | ✅ |
 | **Legal / administrative** | English | 8.4% | 48.9% | **6.2%** 🥇 | 10.7% | 76.9% | ❌ |
-| **Legal / administrative** | German | **1.1%** 🥇 | 11.4% | 26.7% | 23.8% | 32.8% | ✅ |
+| **Legal / administrative** | German | **1.1%** 🥇 | 11.4% | 26.7% | 23.8% | 32.6% | ✅ |
 | **Legal / administrative** | Spanish | **6.5%** 🥇 | 100.0% | 59.1% | 18.3% | 93.8% | ✅ |
 | **Legal / administrative** | French | **11.4%** 🥇 | 75.2% | 44.9% | 16.3% | 95.5% | ✅ |
 | **Legal / administrative** | Italian | **5.5%** 🥇 | 40.4% | 67.1% | 6.2% | 50.0% | ✅ |
 | **Retail finance** | English | **2.9%** 🥇 | 30.0% | 10.3% | 20.6% | 18.5% | ✅ |
-| **Retail finance** | German | **2.4%** 🥇 | 3.4% | 24.1% | 22.6% | 21.1% | ✅ |
+| **Retail finance** | German | 4.2% | **3.8%** 🥇 | 21.4% | 17.2% | 22.2% | ✅ |
 | **Retail finance** | Spanish | **16.4%** 🥇 | 46.4% | 18.5% | 25.4% | 17.6% | ✅ |
 | **Retail finance** | French | **15.9%** 🥇 | 44.6% | 19.4% | 23.9% | 19.3% | ✅ |
 | **Retail finance** | Italian | **11.7%** 🥇 | 39.5% | 29.6% | 26.4% | 14.1% | ✅ |
-| **Enterprise logs** | English | **13.3%** 🥇 | 29.5% | 31.5% | 73.2% | 15.3% | ✅ |
+| **Enterprise logs** | English | **13.3%** 🥇 | 29.5% | 31.5% | 73.2% | 15.2% | ✅ |
 | **General structured PII** | English | **13.5%** 🥇 | 51.4% | 56.0% | 35.0% | 15.5% | ✅ |
 | **General structured PII** | German | **10.7%** 🥇 | 59.8% | 58.4% | 33.0% | 23.6% | ✅ |
 | **General structured PII** | Spanish | **14.2%** 🥇 | 68.9% | 61.0% | 34.6% | 17.5% | ✅ |
@@ -146,7 +146,7 @@ Detail behind the scorecard roll-ups: one row per populated `(domain, language)`
 | **General structured PII** | Italian | **15.0%** 🥇 | 63.9% | 59.6% | 36.0% | 21.2% | ✅ |
 | **Academic NER (newswire / social)** | English | **6.6%** 🥇 | 92.0% | 17.4% | 11.8% | 71.9% | ✅ |
 | **Academic NER (newswire / social)** | German | **5.2%** 🥇 | 47.7% | 19.1% | 15.5% | 73.4% | ✅ |
-| **Adversarial / out-of-distribution** | German | **8.0%** 🥇 | 12.7% | 37.5% | 43.6% | 32.1% | ✅ |
+| **Adversarial / out-of-distribution** | German | **8.1%** 🥇 | 12.7% | 37.5% | 43.5% | 31.8% | ✅ |
 
 ## Per-cell precision · domain × language
 
@@ -155,29 +155,29 @@ Detail behind the precision scorecard: one row per populated `(domain, language)
 | Domain | Language | `anonde-ner` ⬅︎ anonde (default NER) | `anonde-patterns` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---|---:|---:|---:|---:|---:|
 | **Clinical / medical de-identification** | English | 69.0% (991 fp) | 71.7% (780 fp) | 78.3% (458 fp) | 93.9% (126 fp) | **99.1% (9 fp)** 🥇 |
-| **Clinical / medical de-identification** | German | 53.3% (2896 fp) | 74.2% (1158 fp) | 44.6% (2796 fp) | 87.7% (334 fp) | **87.7% (269 fp)** 🥇 |
+| **Clinical / medical de-identification** | German | 53.3% (2896 fp) | 74.2% (1158 fp) | 44.6% (2796 fp) | **87.7% (334 fp)** 🥇 | 87.4% (275 fp) |
 | **Clinical / medical de-identification** | Spanish | 58.2% (2759 fp) | **98.5% (16 fp)** 🥇 | 44.0% (3307 fp) | 82.1% (806 fp) | 69.8% (314 fp) |
 | **Clinical / medical de-identification** | French | 82.8% (421 fp) | **97.4% (24 fp)** 🥇 | 59.4% (966 fp) | 97.0% (58 fp) | 92.1% (83 fp) |
-| **Clinical / medical de-identification** | Italian | 82.4% (407 fp) | 92.9% (70 fp) | 64.2% (981 fp) | 90.5% (167 fp) | **94.3% (60 fp)** 🥇 |
+| **Clinical / medical de-identification** | Italian | 82.4% (407 fp) | 92.9% (70 fp) | 64.2% (981 fp) | 90.5% (167 fp) | **94.4% (59 fp)** 🥇 |
 | **Legal / administrative** | English | 17.1% (763 fp) | 60.5% (62 fp) | 18.9% (693 fp) | 21.7% (637 fp) | **100.0% (0 fp)** 🥇 |
-| **Legal / administrative** | German | 65.4% (1357 fp) | **81.7% (518 fp)** 🥇 | 67.0% (842 fp) | 65.8% (1135 fp) | 78.9% (189 fp) |
+| **Legal / administrative** | German | 65.4% (1357 fp) | **81.7% (518 fp)** 🥇 | 67.0% (842 fp) | 65.8% (1135 fp) | 79.1% (187 fp) |
 | **Legal / administrative** | Spanish | 18.3% (259 fp) | – | 6.5% (145 fp) | **23.6% (194 fp)** 🥇 | 11.1% (16 fp) |
 | **Legal / administrative** | French | 22.2% (809 fp) | **98.8% (1 fp)** 🥇 | 35.6% (224 fp) | 28.0% (582 fp) | 0.0% (8 fp) |
-| **Legal / administrative** | Italian | 10.0% (974 fp) | **98.8% (1 fp)** 🥇 | 5.1% (338 fp) | 13.2% (767 fp) | 28.6% (15 fp) |
+| **Legal / administrative** | Italian | 10.0% (974 fp) | **98.8% (1 fp)** 🥇 | 5.1% (338 fp) | 13.2% (767 fp) | 27.3% (16 fp) |
 | **Retail finance** | English | **92.7% (147 fp)** 🥇 | 91.8% (120 fp) | 80.7% (398 fp) | 91.7% (161 fp) | 82.1% (137 fp) |
-| **Retail finance** | German | 80.2% (1121 fp) | 85.1% (786 fp) | 78.9% (891 fp) | **90.0% (460 fp)** 🥇 | 88.5% (240 fp) |
+| **Retail finance** | German | 89.4% (237 fp) | **94.7% (112 fp)** 🥇 | 84.0% (288 fp) | 90.4% (194 fp) | 81.7% (140 fp) |
 | **Retail finance** | Spanish | 93.9% (102 fp) | **99.2% (8 fp)** 🥇 | 78.8% (397 fp) | 94.5% (96 fp) | 80.1% (159 fp) |
-| **Retail finance** | French | 94.8% (92 fp) | **100.0% (0 fp)** 🥇 | 82.8% (317 fp) | 93.5% (122 fp) | 80.3% (161 fp) |
+| **Retail finance** | French | 94.8% (92 fp) | **100.0% (0 fp)** 🥇 | 82.8% (317 fp) | 93.5% (122 fp) | 80.4% (161 fp) |
 | **Retail finance** | Italian | 91.8% (153 fp) | **98.1% (23 fp)** 🥇 | 76.0% (388 fp) | 93.2% (118 fp) | 78.5% (182 fp) |
-| **Enterprise logs** | English | 73.8% (1003 fp) | **84.3% (476 fp)** 🥇 | 57.3% (1554 fp) | 75.9% (243 fp) | 30.2% (2497 fp) |
-| **General structured PII** | English | 70.7% (2073 fp) | 74.4% (971 fp) | 67.8% (970 fp) | 83.4% (696 fp) | **92.3% (30 fp)** 🥇 |
+| **Enterprise logs** | English | 73.8% (1003 fp) | **84.3% (476 fp)** 🥇 | 57.3% (1554 fp) | 75.9% (243 fp) | 30.1% (2510 fp) |
+| **General structured PII** | English | 70.7% (2074 fp) | 74.4% (971 fp) | 67.8% (970 fp) | 83.4% (696 fp) | **92.3% (30 fp)** 🥇 |
 | **General structured PII** | German | 68.5% (2846 fp) | 71.6% (1119 fp) | 61.4% (1362 fp) | 77.8% (1168 fp) | **94.6% (14 fp)** 🥇 |
 | **General structured PII** | Spanish | 72.9% (2067 fp) | **95.5% (103 fp)** 🥇 | 51.8% (1909 fp) | 77.8% (1035 fp) | 94.5% (16 fp) |
 | **General structured PII** | French | 76.7% (1758 fp) | 93.1% (166 fp) | 46.7% (2609 fp) | 78.7% (1020 fp) | **93.6% (18 fp)** 🥇 |
 | **General structured PII** | Italian | 69.9% (2432 fp) | 84.9% (452 fp) | 50.6% (2013 fp) | 74.2% (1212 fp) | **91.3% (35 fp)** 🥇 |
 | **Academic NER (newswire / social)** | English | 40.6% (649 fp) | 19.8% (105 fp) | **67.2% (208 fp)** 🥇 | 56.6% (377 fp) | 62.7% (22 fp) |
 | **Academic NER (newswire / social)** | German | 37.0% (823 fp) | 48.3% (224 fp) | 75.4% (170 fp) | 58.9% (452 fp) | **75.8% (15 fp)** 🥇 |
-| **Adversarial / out-of-distribution** | German | 83.6% (1053 fp) | **86.5% (819 fp)** 🥇 | 49.6% (2945 fp) | 79.8% (793 fp) | 79.9% (207 fp) |
+| **Adversarial / out-of-distribution** | German | 83.3% (1072 fp) | **86.4% (821 fp)** 🥇 | 49.5% (2957 fp) | 79.9% (791 fp) | 79.7% (210 fp) |
 
 ## Clinical / medical de-identification · English
 
@@ -201,7 +201,7 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `synth_clinical_en` | 8.9% | **1.7%** 🥇 | 26.7% | 26.4% | 17.4% |
+| `synth_clinical_en` | 8.9% | **1.7%** 🥇 | 26.7% | 26.4% | 17.6% |
 
 ## Clinical / medical de-identification · German
 
@@ -213,7 +213,7 @@ A gold PHI span is *leaked* when **no** predicted span overlaps it — 'did we m
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `openmed` | 21.6% | **11.7%** 🥇 | 33.9% | 49.7% | 35.6% |
+| `openmed` | 21.6% | **11.7%** 🥇 | 33.9% | 49.7% | 35.4% |
 | `synth_clinical` | 1.8% | **0.5%** 🥇 | 29.1% | 25.4% | 23.5% |
 
 > **Partial coverage** — some engines were benchmarked on a fixed subsample, not every gold doc:
@@ -227,7 +227,7 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `openmed` | 21.1% | **11.6%** 🥇 | 35.5% | 50.5% | 34.1% |
+| `openmed` | 21.1% | **11.6%** 🥇 | 35.5% | 50.5% | 33.8% |
 | `synth_clinical` | 0.4% | **0.1%** 🥇 | 33.3% | 27.5% | 17.6% |
 
 ## Clinical / medical de-identification · Spanish
@@ -301,7 +301,7 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `synth_clinical_it` | 55.0% | **15.5%** 🥇 | 31.9% | 38.7% | 17.9% |
+| `synth_clinical_it` | 55.0% | **15.5%** 🥇 | 31.9% | 38.7% | 17.8% |
 
 ## Legal / administrative · English
 
@@ -337,7 +337,7 @@ A gold PHI span is *leaked* when **no** predicted span overlaps it — 'did we m
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `legal_de` | 6.5% | **0.5%** 🥇 | 24.5% | 25.4% | 31.3% |
+| `legal_de` | 6.5% | **0.5%** 🥇 | 24.5% | 25.4% | 31.1% |
 | `mapa_de` | 51.6% | **6.2%** 🥇 | 44.8% | 10.4% | 85.0% |
 
 > **Partial coverage** — some engines were benchmarked on a fixed subsample, not every gold doc:
@@ -351,7 +351,7 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `legal_de` | 5.1% | **0.5%** 🥇 | 32.9% | 33.3% | 17.1% |
+| `legal_de` | 5.1% | **0.5%** 🥇 | 32.9% | 33.3% | 16.7% |
 | `mapa_de` | 36.4% | **5.5%** 🥇 | 52.0% | 8.4% | 68.8% |
 
 ## Legal / administrative · Spanish
@@ -444,12 +444,10 @@ A gold PHI span is *leaked* when **no** predicted span overlaps it — 'did we m
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `finance_de` | 3.2% | **1.2%** 🥇 | 25.9% | 26.2% | 20.5% |
 | `synth_finance_de` | **3.8%** 🥇 | 4.2% | 21.4% | 17.2% | 22.2% |
 
 > **Partial coverage** — some engines were benchmarked on a fixed subsample, not every gold doc:
 >
-> - `openai-pf` on `finance_de`: scored on **40/150 docs** (deterministic subsample — metrics above are over those 40 docs only, not the full corpus).
 > - `openai-pf` on `synth_finance_de`: scored on **40/120 docs** (deterministic subsample — metrics above are over those 40 docs only, not the full corpus).
 
 ### Severity-weighted leak rate · lower is better
@@ -458,7 +456,6 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `finance_de` | 3.3% | **0.8%** 🥇 | 30.2% | 29.2% | 16.7% |
 | `synth_finance_de` | 6.2% | **4.9%** 🥇 | 23.0% | 17.2% | 9.9% |
 
 ## Retail finance · Spanish
@@ -543,7 +540,7 @@ A gold PHI span is *leaked* when **no** predicted span overlaps it — 'did we m
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `synth_logs` | 29.5% | **13.3%** 🥇 | 31.5% | 73.2% | 15.3% |
+| `synth_logs` | 29.5% | **13.3%** 🥇 | 31.5% | 73.2% | 15.2% |
 
 > **Partial coverage** — some engines were benchmarked on a fixed subsample, not every gold doc:
 >
@@ -555,7 +552,7 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `synth_logs` | 35.0% | 16.4% | 39.6% | 79.7% | **7.7%** 🥇 |
+| `synth_logs` | 35.0% | 16.4% | 39.6% | 79.7% | **7.5%** 🥇 |
 
 ## General structured PII · English
 
@@ -741,7 +738,7 @@ A gold PHI span is *leaked* when **no** predicted span overlaps it — 'did we m
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `adversarial_de` | 12.7% | **8.0%** 🥇 | 37.5% | 43.6% | 32.1% |
+| `adversarial_de` | 12.7% | **8.1%** 🥇 | 37.5% | 43.5% | 31.8% |
 
 > **Partial coverage** — some engines were benchmarked on a fixed subsample, not every gold doc:
 >
@@ -753,7 +750,7 @@ Each leaked span weighted by compliance tier — direct identifiers (PERSON, EMA
 
 | Corpus | `anonde-patterns` | `anonde-ner` | `presidio` | `gliner-py` | `openai-pf` |
 |---|---:|---:|---:|---:|---:|
-| `adversarial_de` | 12.3% | **8.1%** 🥇 | 40.8% | 44.2% | 28.3% |
+| `adversarial_de` | 12.2% | **8.1%** 🥇 | 40.8% | 44.1% | 27.4% |
 
 ## Latency · per-document p50 / p95
 
@@ -761,36 +758,35 @@ Wall-clock per `engine.Analyze(doc)` call. p50 = steady-state, p95 = tail (the S
 
 | Corpus | `anonde-patterns` p50 / p95 | `anonde-ner` p50 / p95 | `presidio` p50 / p95 | `gliner-py` p50 / p95 | `openai-pf` p50 / p95 |
 |---|---:|---:|---:|---:|---:|
-| `synth_clinical_en` | 3 ms / 4 ms | 477 ms / 734 ms | 42 ms / 57 ms | 535 ms / 672 ms | 1.5 s / 2.0 s |
-| `openmed` | 7 ms / 21 ms | 1.2 s / 4.1 s | 99 ms / 262 ms | 2.4 s / 14.6 s | 2.0 s / 5.2 s |
-| `synth_clinical` | 3 ms / 4 ms | 474 ms / 737 ms | 44 ms / 57 ms | 633 ms / 935 ms | 1.6 s / 2.3 s |
-| `pharmaconer_es` | 4 ms / 9 ms | 1.0 s / 2.2 s | 59 ms / 140 ms | 1.3 s / 4.9 s | 4.0 s / 8.7 s |
-| `meddocan_es` | 4 ms / 8 ms | 875 ms / 1.7 s | 58 ms / 110 ms | 1.4 s / 4.0 s | 1.3 s / 2.0 s |
-| `synth_clinical_fr` | 2 ms / 3 ms | 627 ms / 808 ms | 49 ms / 68 ms | 670 ms / 1.0 s | 1.9 s / 2.6 s |
-| `synth_clinical_it` | 2 ms / 2 ms | 427 ms / 722 ms | 38 ms / 52 ms | 605 ms / 941 ms | 641 ms / 744 ms |
-| `mapa_en` | 1 ms / 2 ms | 88 ms / 223 ms | 9 ms / 23 ms | 134 ms / 258 ms | 307 ms / 600 ms |
-| `legal_de` | 2 ms / 3 ms | 372 ms / 473 ms | 29 ms / 41 ms | 462 ms / 584 ms | 495 ms / 581 ms |
-| `mapa_de` | 0 ms / 1 ms | 51 ms / 99 ms | 6 ms / 11 ms | 155 ms / 251 ms | 142 ms / 232 ms |
-| `mapa_es` | 1 ms / 1 ms | 129 ms / 327 ms | 11 ms / 28 ms | 218 ms / 430 ms | 360 ms / 827 ms |
-| `mapa_fr` | 0 ms / 1 ms | 118 ms / 244 ms | 8 ms / 21 ms | 186 ms / 317 ms | 236 ms / 400 ms |
-| `mapa_it` | 0 ms / 1 ms | 122 ms / 233 ms | 10 ms / 18 ms | 205 ms / 309 ms | 361 ms / 666 ms |
-| `synth_finance_en` | 2 ms / 3 ms | 290 ms / 482 ms | 31 ms / 55 ms | 366 ms / 577 ms | 793 ms / 969 ms |
-| `finance_de` | 2 ms / 3 ms | 402 ms / 553 ms | 32 ms / 49 ms | 462 ms / 657 ms | 626 ms / 706 ms |
-| `synth_finance_de` | 2 ms / 3 ms | 218 ms / 342 ms | 20 ms / 41 ms | 264 ms / 439 ms | 518 ms / 618 ms |
-| `synth_finance_es` | 1 ms / 2 ms | 316 ms / 460 ms | 22 ms / 40 ms | 387 ms / 612 ms | 409 ms / 489 ms |
-| `synth_finance_fr` | 1 ms / 2 ms | 386 ms / 541 ms | 34 ms / 58 ms | 505 ms / 752 ms | 915 ms / 1.2 s |
-| `synth_finance_it` | 1 ms / 2 ms | 371 ms / 526 ms | 31 ms / 56 ms | 449 ms / 727 ms | 964 ms / 1.3 s |
-| `synth_logs` | 4 ms / 9 ms | 749 ms / 1.5 s | 60 ms / 151 ms | 1.4 s / 5.1 s | 7.6 s / 10.7 s |
-| `ai4privacy_en` | 1 ms / 2 ms | 220 ms / 327 ms | 21 ms / 30 ms | 307 ms / 430 ms | 625 ms / 838 ms |
-| `ai4privacy_de` | 1 ms / 1 ms | 95 ms / 137 ms | 11 ms / 16 ms | 239 ms / 324 ms | 230 ms / 259 ms |
-| `ai4privacy_es` | 0 ms / 1 ms | 98 ms / 144 ms | 12 ms / 16 ms | 248 ms / 342 ms | 238 ms / 281 ms |
-| `ai4privacy_fr` | 1 ms / 1 ms | 244 ms / 337 ms | 25 ms / 36 ms | 341 ms / 449 ms | 635 ms / 834 ms |
-| `ai4privacy_it` | 1 ms / 1 ms | 223 ms / 319 ms | 15 ms / 22 ms | 291 ms / 399 ms | 370 ms / 406 ms |
-| `conll2003_en` | 0 ms / 1 ms | 67 ms / 121 ms | 7 ms / 13 ms | 152 ms / 203 ms | 168 ms / 341 ms |
-| `wnut_17` | 0 ms / 1 ms | 39 ms / 74 ms | 5 ms / 9 ms | 137 ms / 195 ms | 109 ms / 157 ms |
-| `wikiann_de` | 0 ms / 1 ms | 66 ms / 104 ms | 5 ms / 9 ms | 150 ms / 186 ms | 123 ms / 300 ms |
-| `germeval_14` | 0 ms / 1 ms | 40 ms / 60 ms | 4 ms / 6 ms | 134 ms / 168 ms | 100 ms / 170 ms |
-| `adversarial_de` | 2 ms / 3 ms | 442 ms / 659 ms | 36 ms / 47 ms | 622 ms / 1.3 s | 714 ms / 832 ms |
+| `synth_clinical_en` | 2 ms / 3 ms | 453 ms / 705 ms | 34 ms / 46 ms | 497 ms / 629 ms | 612 ms / 686 ms |
+| `openmed` | 9 ms / 28 ms | 1.4 s / 4.7 s | 127 ms / 323 ms | 2.9 s / 17.9 s | 7.9 s / 22.4 s |
+| `synth_clinical` | 3 ms / 4 ms | 457 ms / 700 ms | 44 ms / 55 ms | 613 ms / 914 ms | 1.5 s / 2.3 s |
+| `pharmaconer_es` | 4 ms / 8 ms | 1.0 s / 2.3 s | 60 ms / 146 ms | 1.5 s / 5.0 s | 4.1 s / 8.9 s |
+| `meddocan_es` | 3 ms / 6 ms | 754 ms / 1.4 s | 46 ms / 89 ms | 1.2 s / 3.5 s | 1.1 s / 1.8 s |
+| `synth_clinical_fr` | 2 ms / 3 ms | 624 ms / 827 ms | 49 ms / 69 ms | 666 ms / 1.1 s | 1.8 s / 2.6 s |
+| `synth_clinical_it` | 1 ms / 2 ms | 276 ms / 478 ms | 27 ms / 36 ms | 380 ms / 627 ms | 562 ms / 635 ms |
+| `mapa_en` | 1 ms / 2 ms | 81 ms / 207 ms | 8 ms / 22 ms | 131 ms / 255 ms | 269 ms / 553 ms |
+| `legal_de` | 2 ms / 3 ms | 256 ms / 322 ms | 25 ms / 34 ms | 314 ms / 391 ms | 495 ms / 559 ms |
+| `mapa_de` | 1 ms / 2 ms | 120 ms / 234 ms | 9 ms / 18 ms | 200 ms / 311 ms | 328 ms / 584 ms |
+| `mapa_es` | 1 ms / 2 ms | 138 ms / 347 ms | 11 ms / 30 ms | 223 ms / 449 ms | 358 ms / 826 ms |
+| `mapa_fr` | 0 ms / 1 ms | 118 ms / 252 ms | 8 ms / 21 ms | 185 ms / 314 ms | 240 ms / 403 ms |
+| `mapa_it` | 0 ms / 1 ms | 71 ms / 134 ms | 5 ms / 9 ms | 104 ms / 159 ms | 224 ms / 321 ms |
+| `synth_finance_en` | 2 ms / 3 ms | 299 ms / 499 ms | 30 ms / 54 ms | 366 ms / 586 ms | 762 ms / 955 ms |
+| `synth_finance_de` | 2 ms / 3 ms | 330 ms / 521 ms | 29 ms / 59 ms | 396 ms / 633 ms | 896 ms / 1.2 s |
+| `synth_finance_es` | 1 ms / 1 ms | 145 ms / 216 ms | 17 ms / 30 ms | 329 ms / 523 ms | 295 ms / 338 ms |
+| `synth_finance_fr` | 1 ms / 2 ms | 352 ms / 487 ms | 28 ms / 47 ms | 423 ms / 635 ms | 469 ms / 534 ms |
+| `synth_finance_it` | 1 ms / 2 ms | 377 ms / 567 ms | 33 ms / 58 ms | 462 ms / 741 ms | 1.0 s / 1.3 s |
+| `synth_logs` | 3 ms / 6 ms | 454 ms / 866 ms | 34 ms / 85 ms | 781 ms / 3.2 s | 1.3 s / 1.9 s |
+| `ai4privacy_en` | 1 ms / 2 ms | 227 ms / 334 ms | 21 ms / 29 ms | 309 ms / 432 ms | 625 ms / 842 ms |
+| `ai4privacy_de` | 1 ms / 1 ms | 108 ms / 156 ms | 13 ms / 18 ms | 259 ms / 357 ms | 252 ms / 288 ms |
+| `ai4privacy_es` | 1 ms / 1 ms | 237 ms / 346 ms | 18 ms / 26 ms | 323 ms / 448 ms | 681 ms / 803 ms |
+| `ai4privacy_fr` | 1 ms / 1 ms | 245 ms / 344 ms | 26 ms / 36 ms | 333 ms / 439 ms | 656 ms / 861 ms |
+| `ai4privacy_it` | 0 ms / 1 ms | 143 ms / 203 ms | 10 ms / 14 ms | 180 ms / 244 ms | 344 ms / 393 ms |
+| `conll2003_en` | 0 ms / 1 ms | 71 ms / 122 ms | 8 ms / 14 ms | 156 ms / 208 ms | 181 ms / 361 ms |
+| `wnut_17` | 0 ms / 1 ms | 79 ms / 141 ms | 6 ms / 11 ms | 155 ms / 213 ms | 161 ms / 230 ms |
+| `wikiann_de` | 0 ms / 1 ms | 44 ms / 67 ms | 3 ms / 5 ms | 84 ms / 103 ms | 101 ms / 208 ms |
+| `germeval_14` | 0 ms / 1 ms | 39 ms / 64 ms | 4 ms / 7 ms | 130 ms / 171 ms | 101 ms / 187 ms |
+| `adversarial_de` | 2 ms / 3 ms | 295 ms / 438 ms | 22 ms / 30 ms | 351 ms / 803 ms | 573 ms / 660 ms |
 
 <details><summary>Cost reference · USD per million characters</summary>
 
@@ -872,4 +868,4 @@ in this matrix: `openmed` (GraSCCo PHI), `synth_clinical`,
 </details>
 
 ---
-*Generated by `bench/scoring/render_matrix.py` over 150 cells. Full per-entity-type breakdown in `results_matrix.csv`.*
+*Generated by `bench/scoring/render_matrix.py` over 145 cells. Full per-entity-type breakdown in `results_matrix.csv`.*
