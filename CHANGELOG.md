@@ -245,6 +245,12 @@ version is `0.1.1`.
   logging success when `ANONDE_WARMUP_TIMEOUT` expires.
 - **Native memory leak on analyzer rebuild** when any `ANONDE_ORT_*`
   knob is set (ONNX Runtime session options were never released).
+- **Building `Dockerfile.anonde-ner` from source works again.**
+  `github.com/microsoft/onnxruntime` went offline on 2026-11-18, which
+  broke the `libonnxruntime` download. The build now fetches the same
+  library from Microsoft's `Microsoft.ML.OnnxRuntime` NuGet package and
+  checks its SHA256. The bytes are identical to the library in
+  `anonde-ner:0.1.1`.
 
 ### Security
 
