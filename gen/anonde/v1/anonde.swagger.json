@@ -89,7 +89,7 @@
           },
           {
             "name": "scoreThreshold",
-            "description": "Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;\nhoisted to top-level fields because grpc-gateway can't bind nested\nmessage fields from URL query parameters cleanly). Unset fields fall\nback to the server-side defaults baked at boot time. When\nscore_threshold_set is true the value must be > 0 — an explicit 0\n(or negative) is rejected with InvalidArgument.",
+            "description": "Analyzer knobs (analogous to AnalyzerOptions for the text endpoint;\nhoisted to top-level fields because grpc-gateway can't bind nested\nmessage fields from URL query parameters cleanly). Unset fields fall\nback to the server-side defaults baked at boot time. When\nscore_threshold_set is true the value must be \u003e 0 — an explicit 0\n(or negative) is rejected with InvalidArgument.",
             "in": "query",
             "required": false,
             "type": "number",
@@ -509,7 +509,7 @@
         "scoreThreshold": {
           "type": "number",
           "format": "double",
-          "description": "Minimum confidence score. Set score_threshold_set to apply an\nexplicit threshold; otherwise the service default is used. When\nscore_threshold_set is true the value must be > 0 — an explicit 0\n(or negative) is rejected with InvalidArgument rather than silently\ndisabling the score filter."
+          "description": "Minimum confidence score. Set score_threshold_set to apply an\nexplicit threshold; otherwise the service default is used. When\nscore_threshold_set is true the value must be \u003e 0 — an explicit 0\n(or negative) is rejected with InvalidArgument rather than silently\ndisabling the score filter."
         },
         "scoreThresholdSet": {
           "type": "boolean"
@@ -662,14 +662,14 @@
           "type": "string"
         }
       },
-      "description": "Finding is one detected PII span. Mirrors analyzer.RecognizerResult."
+      "description": "Finding is one detected PII span. Mirrors analyzer.RecognizerResult.\n\nstart / end are byte offsets into the SUBMITTED document (the analyzer\ninput) — where the PII was detected — not indices into the anonymized /\nsynthesized output (token replacement shifts those positions). The\noffsets are document-relative for every content_format: for json / ndjson\n/ logs a string leaf or line is located by its source position in the\nsubmitted document, so two PII values in different leaves / lines report\ndistinct, increasing offsets rather than both restarting at 0.\n\nExactness caveat for byte-slicing consumers: offsets are exact for\nunescaped JSON string values and for lines carrying no ANSI / control\nsequences (the common case). They may be APPROXIMATE when the source\ncontains JSON escape sequences (e.g. \\\" or \\n inside a string value),\nANSI escape codes, or bytes rewritten by UTF-8 repair — the analyzer runs\non the decoded / sanitised text, so while the leaf or line is still\nlocated, a per-byte offset past such a sequence can drift by the source\nbytes it adds or removes. Treat offsets inside escaped / ANSI content as\napproximate rather than exact slice indices."
     },
     "v1GetVersionResponse": {
       "type": "object",
       "properties": {
         "analyzerBackend": {
           "type": "string",
-          "description": "analyzer_backend = patterns | gliner | gliner-flat | gliner-stack."
+          "description": "analyzer_backend = patterns | gliner | gliner-flat."
         },
         "model": {
           "type": "string",
@@ -785,7 +785,7 @@
           "format": "int32"
         }
       },
-      "description": "TokenRef is one minted token tied to a finding offset."
+      "description": "TokenRef is one minted token tied to a detected span. start / end use the\nsame document-relative byte-offset convention as Finding.start / end (see\nabove): the position of the detected cleartext in the SUBMITTED document,\nnot an index into anonymized_content."
     }
   }
 }

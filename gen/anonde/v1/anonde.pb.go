@@ -90,6 +90,24 @@ func (HealthCheckResponse_ServingStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 // Finding is one detected PII span. Mirrors analyzer.RecognizerResult.
+//
+// start / end are byte offsets into the SUBMITTED document (the analyzer
+// input) — where the PII was detected — not indices into the anonymized /
+// synthesized output (token replacement shifts those positions). The
+// offsets are document-relative for every content_format: for json / ndjson
+// / logs a string leaf or line is located by its source position in the
+// submitted document, so two PII values in different leaves / lines report
+// distinct, increasing offsets rather than both restarting at 0.
+//
+// Exactness caveat for byte-slicing consumers: offsets are exact for
+// unescaped JSON string values and for lines carrying no ANSI / control
+// sequences (the common case). They may be APPROXIMATE when the source
+// contains JSON escape sequences (e.g. \" or \n inside a string value),
+// ANSI escape codes, or bytes rewritten by UTF-8 repair — the analyzer runs
+// on the decoded / sanitised text, so while the leaf or line is still
+// located, a per-byte offset past such a sequence can drift by the source
+// bytes it adds or removes. Treat offsets inside escaped / ANSI content as
+// approximate rather than exact slice indices.
 type Finding struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -169,7 +187,10 @@ func (x *Finding) GetRecognizerName() string {
 	return ""
 }
 
-// TokenRef is one minted token tied to a finding offset.
+// TokenRef is one minted token tied to a detected span. start / end use the
+// same document-relative byte-offset convention as Finding.start / end (see
+// above): the position of the detected cleartext in the SUBMITTED document,
+// not an index into anonymized_content.
 type TokenRef struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -1098,7 +1119,7 @@ type GetVersionResponse struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// analyzer_backend = patterns | gliner | gliner-flat | gliner-stack.
+	// analyzer_backend = patterns | gliner | gliner-flat.
 	AnalyzerBackend string `protobuf:"bytes,1,opt,name=analyzer_backend,json=analyzerBackend,proto3" json:"analyzer_backend,omitempty"`
 	// model name reported by the backend, empty for patterns.
 	Model string `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`

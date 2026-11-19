@@ -241,6 +241,7 @@ non-zero TTL is set) or deleted.
 | `ANONDE_OCR_LANGS` | `eng+deu+fra+spa+ita+ron` | Tesseract language string. Restrict to known-corpus languages (e.g. `eng` alone) for faster OCR; each loaded model costs ~30–50 MB RAM. |
 | `ANONDE_OCR_DPI` | `300` | Rasterisation DPI passed to `pdftoppm -r`. Drop to `200` for faster OCR on clean scans; raise to `400+` for low-quality photographs of documents. |
 | `ANONDE_OCR_TEXT_FLOOR` | `64` | Byte threshold below which the text-layer extraction is treated as empty and OCR fires. Small floor catches PDFs whose text layer holds only stray whitespace / single-line metadata. |
+| `ANONDE_OCR_TIMEOUT` | `5m` | Per-document backstop for the `pdftoppm` / `tesseract` subprocesses, applied only when the request context carries no deadline of its own. Go duration (`90s`, `10m`); `0` / `off` / `none` disables the backstop. OCR subprocesses always stop when the request is cancelled. |
 
 Tesseract page-segmentation mode is fixed at PSM 3 (fully automatic);
 this preserves table-row reading order on multi-column scans like

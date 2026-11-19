@@ -45,6 +45,7 @@ rejected with a clear error until Anthropic routing lands in v0.2.
 | `ANONDE_OPENAI_API_KEY` | _(empty)_ | Forwarded as `Authorization: Bearer`. Leave empty for keyless upstreams like Ollama. |
 | `ANONDE_PROXY_TENANT` | `openai-proxy` | Vault tenant when a request carries no `X-Anonde-Tenant` header. |
 | `ANONDE_PROXY_TIMEOUT` | `120s` | Upstream request timeout (shared across all proxied providers). |
+| `ANONDE_PROXY_MAX_RESPONSE_BYTES` | `33554432` (32 MiB) | Cap on the upstream response body the proxy buffers before reveal, as a plain byte count. A larger response fails with `502` rather than being truncated. `0` keeps the default. |
 
 **Known limitation (v0.1):** non-streaming only. A `stream: true` request
 is rejected with a clear error rather than silently downgraded.

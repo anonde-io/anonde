@@ -26,6 +26,8 @@ Fields sent:
 | `error_count` | `3` |
 | `entity_counts` | `{"PERSON": 412, "EMAIL_ADDRESS": 89}` |
 | `p95_latency_ms` | `42.1` |
+| `activated_anonymize` | `true` once any create-anonymization request has succeeded since the process started |
+| `activated_reveal` | `true` once any reveal request has succeeded since the process started |
 
 No input text, output text, token values, vault contents, IP
 addresses, hostnames, tenant IDs, document IDs, actors, or purposes
